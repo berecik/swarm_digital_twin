@@ -2,13 +2,14 @@
 
 This document tracks the high-level testing status and provides detailed explanations of the verification suite across the Virtual Drone Crowd project.
 
-## 🧪 Current Status (2026-01-14)
+## 🧪 Current Status (2026-03-23)
 
 | Module | Unit Tests | Integration Tests | SITL / Hardware | Status |
 | :--- | :---: | :---: | :---: | :--- |
 | `sar_swarm_control` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM Verified. |
 | `sar_perception` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
+| **Drone Physics** (Python) | ✅ Pass (19) | ✅ Pass (Scenario) | N/A | Full rigid-body sim verified |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `sar_swarm_control` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -71,7 +72,46 @@ The following tests verify the AI-driven human detection and 3D localization log
     - **Purpose**: Verifies the extraction sequence state machine (IDLE -> EN_ROUTE -> DESCENDING -> LIFTING -> RETURN -> IDLE).
     - **Verification**: Validates correctness of the `transition()` function and `next_state()` logic.
 
-### 4. `sar_simulation` (Python Swarm Sim)
+### 4. `sar_simulation` — Drone Physics Engine (`test_drone_physics.py`)
+
+Run with: `./run_scenario.sh --test` or `pytest sar_swarm_ws/src/sar_simulation/test_drone_physics.py`
+
+#### A. Rotation Math
+- **`test_identity`**: `euler_to_rotation(0,0,0)` produces identity matrix.
+- **`test_roundtrip`**: Euler → rotation → Euler → rotation roundtrip (50 random angles, atol=1e-10).
+- **`test_orthogonality`**: Rotation matrix satisfies R·R^T = I and det(R) = 1.
+
+#### B. Gravity & Ground
+- **`test_freefall_no_thrust`**: Zero-thrust drone falls (z decreases, vz < 0).
+- **`test_freefall_analytical`**: Drag-free freefall matches z = z₀ - ½gt², vz = -gt (atol=0.05).
+- **`test_ground_constraint`**: Drone cannot fall below z=0; velocity clamped at ground.
+
+#### C. Hover Equilibrium
+- **`test_hover_thrust`**: Thrust = mg holds altitude at 10 m for 10 seconds (atol=0.01 m).
+- **`test_hover_xy_stable`**: Hover does not drift in XY (atol=0.001 m).
+
+#### D. Aerodynamic Drag
+- **`test_drag_slows_horizontal`**: Horizontal velocity decays under drag during hover (< 0.1 m/s after 20 s).
+- **`test_more_drag_slows_faster`**: Higher drag coefficient → less horizontal displacement.
+
+#### E. PID Controller
+- **`test_converges_to_zero`**: PID loop drives error from 10 to < 0.1 within 5000 steps.
+- **`test_limit`**: PID output is clamped to the configured limit.
+
+#### F. Position Controller
+- **`test_reach_target`**: Cascaded controller flies drone from origin to (0, 0, 5) within 0.5 m.
+- **`test_horizontal_flight`**: Controller reaches (10, 5, 8) within 1.0 m.
+
+#### G. Full Simulation
+- **`test_simple_flight`**: Two-waypoint mission completes, final position within 1.0 m of target.
+- **`test_records_have_increasing_time`**: All timestamps are strictly monotonically increasing.
+- **`test_thrust_always_positive`**: Thrust is never negative (physical constraint).
+- **`test_altitude_stays_positive`**: Position z ≥ 0 throughout the simulation.
+
+#### H. Energy Conservation
+- **`test_freefall_energy_conservation`**: KE + PE conserved within 0.5% during drag-free freefall.
+
+### 5. `sar_simulation` — Swarm Sim (`test_swarm_flight.py`)
 - **`test_swarm_flight`**:
     - **Purpose**: Validates the end-to-end swarm flight logic in the mock simulator.
     - **Verification**: Ensures drones reach targets and maintain boid constraints.

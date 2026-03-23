@@ -42,7 +42,11 @@ Each drone is an independent ROS 2 entity.
 -   `/sar_swarm_ws/src/sar_swarm_control`: The Rust swarm logic (Boids, FSM, formation).
 -   `/sar_swarm_ws/src/heavy_lift_core`: Phase 2 core logic (DCA, Admittance Control, 6-agent redundancy).
 -   `/sar_swarm_ws/src/sar_perception`: Python nodes for vision and 3D localization.
--   `/sar_swarm_ws/src/sar_simulation`: Mock simulators and test runners.
+-   `/sar_swarm_ws/src/sar_simulation`: Mock simulators, standalone physics engine, and test runners.
+    -   `drone_physics.py`: Standalone quadrotor rigid-body physics engine (no ROS 2 dependency). Includes gravity, thrust, aerodynamic drag, attitude dynamics (rotation matrix + angular velocity), ground constraint, cascaded PID position controller, and `run_simulation()` for waypoint missions.
+    -   `drone_scenario.py`: Example flight scenario (takeoff → cruise → waypoints → return → land). Generates `scenario_data.npz` for visualization.
+    -   `visualize_drone_3d.py`: 3D animated matplotlib visualization with drone attitude axes, velocity vector, trajectory trail, altitude/speed/thrust timeline panels.
+    -   `test_drone_physics.py`: 19 pytest tests covering rotation math, gravity freefall, hover equilibrium, drag, PID convergence, position controller, full simulation runs, and energy conservation.
 -   `/docs`: SORA analysis, Technical Architecture, and Project Plans.
 
 ---
@@ -75,8 +79,8 @@ Each drone is an independent ROS 2 entity.
 When an agent receives the "do maintenance" command, it must follow this iterative protocol:
 1.  **Run All Tests:**
     -   **Rust:** Run `cargo test` in `sar_swarm_ws/src/sar_swarm_control`.
-    -   **Python:** Run `pytest` or equivalent in `sar_perception` and `sar_simulation`.
-    -   **Simulation:** Execute `test_swarm_flight.py` to verify flight logic.
+    -   **Python:** Run `pytest` in `sar_perception/test/` and `sar_simulation/` (includes `test_drone_physics.py` — 19 physics tests and `test_sim.py`).
+    -   **Simulation:** Execute `test_swarm_flight.py` to verify swarm flight logic (requires ROS 2). Run `drone_scenario.py` for standalone physics verification.
 2.  **Fix Issues:** Analyze any failures (compilation errors, test regressions, or linter warnings) and apply fixes.
 3.  **Iterate:** Repeat steps 1 and 2 until all tests pass and no issues remain.
 4.  **Update Documentation:**
@@ -106,11 +110,12 @@ When an agent receives the "do tests" command, it must prioritize coverage and r
     -   **Module Testing Docs:** Update specific files like `sar_swarm_ws/src/sar_swarm_control/TESTING.md` with detailed test descriptions.
     -   **Project Docs:** Ensure documentation reflects any changes in system behavior discovered during testing.
 
-*Last Maintenance: 2026-01-14 21:15 - Updated Roadmap to reflect Phase 1 completion and Phase 2 "Active Development" status. Synchronized with SORA Safety Case (6-agent requirement) and Technical Architecture (DLS/Admittance Control).*
+*Last Maintenance: 2026-03-23 - Added standalone drone physics engine (`drone_physics.py`), flight scenario (`drone_scenario.py`), 3D visualization (`visualize_drone_3d.py`), and 19 physics unit tests (`test_drone_physics.py`). All 33 tests pass (19 physics + 13 perception + 1 sim placeholder).*
 
 ### 3. Simulation First
 Always validate logic in simulation.
--   `mock_drone_sim.py`: Fast, lightweight for logic/protocol testing.
+-   `drone_physics.py`: **Standalone physics engine** — use for rapid algorithm development and testing without ROS 2 or Docker. Simulates full rigid-body quadrotor dynamics (gravity, thrust, drag, attitude, angular velocity). Run `drone_scenario.py` to generate flight data, then `visualize_drone_3d.py` to visualize.
+-   `mock_drone_sim.py`: Fast ROS 2-based mock for swarm protocol/logic testing.
 -   `SITL (PX4/Gazebo)`: (Planned) For physics and control tuning.
 
 ### 3. Dockerized Environment
@@ -128,6 +133,8 @@ If you are tasked with moving the project forward, prioritize:
 1.  **Raft Consensus Implementation:** Moving from simple Leader-Follower to a robust consensus for task allocation.
 2.  **Zenoh-based Telemetry:** Finalizing the bridge configuration to ensure reliable GCS feedback.
 3.  **Admittance Control (Phase 2):** Implementing force-feedback logic for tethered flight.
+4.  **Multi-drone physics simulation:** Extend `drone_physics.py` to support multiple drones with Boids flocking (port from `boids.rs`) and inter-drone collision avoidance in the standalone simulator.
+5.  **Wind & turbulence model:** Add environmental disturbances (wind gusts, turbulence) to the physics engine for more realistic digital twin testing.
 
 ---
 

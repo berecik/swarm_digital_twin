@@ -10,6 +10,7 @@
 **Swarm Digital Twin** is a digital twin framework for developing and testing autonomous drone swarm behavior without physical hardware. It provides a complete simulation environment for the [DAS-SAR Vingilot](https://github.com/berecik/das_sar) project's distributed aerial search and rescue system.
 
 The framework enables:
+- **Standalone drone physics simulation** with rigid-body dynamics, PID control, and 3D visualization
 - **Swarm control algorithm development** using Boids, FSM, and distributed coordination
 - **AI perception pipeline testing** with mocked sensors and 3D localization
 - **Heavy-lift distributed control** simulation for 6-agent tethered payloads
@@ -26,12 +27,17 @@ The framework enables:
 │       ├── sar_swarm_control/  # Swarm coordination & flight control (Rust)
 │       ├── heavy_lift_core/    # Distributed lift system logic (Rust)
 │       ├── sar_perception/     # AI/Vision detection & localization (Python)
-│       ├── sar_simulation/     # Mock simulators & test runners (Python)
+│       ├── sar_simulation/     # Simulators, physics engine & tests (Python)
+│       │   ├── drone_physics.py          # Quadrotor rigid-body physics engine
+│       │   ├── drone_scenario.py         # Flight scenario (takeoff→fly→land)
+│       │   ├── visualize_drone_3d.py     # 3D animated flight visualization
+│       │   └── test_drone_physics.py     # 19 physics unit tests
 │       └── px4_msgs/           # PX4-ROS 2 message definitions
+├── run_scenario.sh             # One-command scenario runner & visualizer
 ├── docker/                     # Zenoh configuration and Docker setups
 ├── Dockerfile                  # Development environment container
 ├── docker-compose.yml          # Multi-container swarm orchestration
-├── visualize_on_host.py        # Real-time swarm visualization
+├── visualize_on_host.py        # Real-time swarm visualization (ROS 2)
 ├── AGENTS.md                   # Technical context & development guide
 ├── TESTING.md                  # Test catalog & verification status
 └── MAINTENANCE.log             # Maintenance history
@@ -44,17 +50,41 @@ The framework enables:
 | **Safety-Critical Control** | **Rust** (rclrs, MAVSDK-Rust) |
 | **AI & Computer Vision** | **Python** (PyTorch, YOLOv8/11) |
 | **Middleware** | **Eclipse Zenoh** & **ROS 2** (Humble/Jazzy) |
-| **Simulation** | Gazebo Harmonic / PX4 SITL |
+| **Physics Simulation** | **Python** (NumPy) — standalone rigid-body quadrotor |
+| **3D Visualization** | **Matplotlib** (animated 3D + timeline panels) |
+| **Full Simulation** | Gazebo Harmonic / PX4 SITL |
+
+## Quick Start — Standalone Physics Simulation
+
+No Docker, no ROS 2 — just Python 3 and a terminal:
+
+```bash
+# Run scenario and open 3D visualization (auto-creates venv)
+./run_scenario.sh
+
+# Or step by step:
+./run_scenario.sh --test       # run 19 physics unit tests
+./run_scenario.sh --sim-only   # run scenario (no GUI)
+./run_scenario.sh --viz-only   # open visualization with existing data
+./run_scenario.sh --all        # tests → scenario → visualization
+```
+
+The scenario flies a drone through 6 waypoints (takeoff → cruise → return → land) with full rigid-body physics: gravity, thrust, aerodynamic drag, attitude dynamics, and a cascaded PID controller.
 
 ## Getting Started
 
 ### Prerequisites
+
+**Standalone simulation (no external deps):**
+- Python 3.10+ (NumPy, Matplotlib — installed automatically by `run_scenario.sh`)
+
+**Full swarm simulation (Docker):**
 - Docker & Docker Compose
 - Ubuntu 22.04 LTS (recommended)
 - ROS 2 Humble/Jazzy
 - Rust Toolchain
 
-### Running Simulation
+### Running Full Swarm Simulation
 
 1. **Build the Docker environment:**
    ```bash
@@ -73,9 +103,12 @@ The framework enables:
 
 ## Testing
 
-### Running Unit Tests
+### Running All Tests
 ```bash
-# Rust swarm control
+# Standalone physics tests (no ROS 2 needed)
+./run_scenario.sh --test
+
+# Rust swarm control (requires ROS 2 environment)
 cd sar_swarm_ws/src/sar_swarm_control
 cargo test
 
