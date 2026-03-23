@@ -1,0 +1,26 @@
+[package]
+name = "sar_swarm_control"
+version = "0.1.0"
+authors = ["beret <beret@hipisi.org.pl>", "Marysia Software Limited <ceo@marysia.app>"]
+edition = "2021"
+description = "Core swarm control logic for Virtual Drone Crowd (app.marysia.drone)"
+homepage = "https://marysia.app"
+
+[dependencies]
+rclrs = "0.3"
+px4_msgs = { path = "./px4_msgs_mock" }
+tokio = { version = "1.10", features = ["full"] }
+nalgebra = { version = "0.32", features = ["serde-serialize"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+zenoh = "1.0.0-rc"
+raft = "0.7"
+
+[lib]
+name = "sar_swarm_control"
+path = "src/lib.rs"
+
+[[bin]]
+name = "swarm_node"
+path = "src/main.rs"

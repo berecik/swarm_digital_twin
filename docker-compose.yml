@@ -1,0 +1,99 @@
+services:
+  sitl_drone_1:
+    labels:
+      author: "beret@hipisi.org.pl"
+      company: "Marysia Software Limited"
+      website: "https://marysia.app"
+      domain: "app.marysia.drone"
+    image: sar_swarm_companion:latest
+    container_name: sitl_drone_1
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.11
+    environment:
+      - ROS_DOMAIN_ID=1
+    command: tail -f /dev/null
+
+  swarm_node_1:
+    image: sar_swarm_companion:latest
+    container_name: swarm_node_1
+    restart: always
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.21
+    environment:
+      - ROS_DOMAIN_ID=1
+    volumes:
+      - ./sar_swarm_ws/src:/root/sar_swarm_ws/src
+    command: bash -c "cd /root/sar_swarm_ws/src/sar_swarm_control && cargo run"
+    depends_on:
+      - sitl_drone_1
+
+  perception_node_1:
+    image: sar_swarm_companion:latest
+    container_name: perception_node_1
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.31
+    environment:
+      - ROS_DOMAIN_ID=1
+    volumes:
+      - ./sar_swarm_ws/src:/root/sar_swarm_ws/src
+    command: bash -c "export PYTHONPATH=\$PYTHONPATH:/root/sar_swarm_ws/src/sar_perception && ros2 run sar_perception detector"
+    depends_on:
+      - sitl_drone_1
+
+  sitl_drone_2:
+    image: sar_swarm_companion:latest
+    container_name: sitl_drone_2
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.12
+    environment:
+      - ROS_DOMAIN_ID=2
+    command: tail -f /dev/null
+
+  swarm_node_2:
+    image: sar_swarm_companion:latest
+    container_name: swarm_node_2
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.22
+    environment:
+      - ROS_DOMAIN_ID=2
+    volumes:
+      - ./sar_swarm_ws/src:/root/sar_swarm_ws/src
+    command: bash -c "cd /root/sar_swarm_ws/src/sar_swarm_control && cargo run -- 2"
+    depends_on:
+      - sitl_drone_2
+
+  sitl_drone_3:
+    image: sar_swarm_companion:latest
+    container_name: sitl_drone_3
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.13
+    environment:
+      - ROS_DOMAIN_ID=3
+    command: tail -f /dev/null
+
+  swarm_node_3:
+    image: sar_swarm_companion:latest
+    container_name: swarm_node_3
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.23
+    environment:
+      - ROS_DOMAIN_ID=3
+    volumes:
+      - ./sar_swarm_ws/src:/root/sar_swarm_ws/src
+    command: bash -c "cd /root/sar_swarm_ws/src/sar_swarm_control && cargo run -- 3"
+    depends_on:
+      - sitl_drone_3
+
+networks:
+  swarm_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.1.0/24

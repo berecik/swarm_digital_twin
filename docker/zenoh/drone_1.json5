@@ -1,0 +1,17 @@
+{
+  "mode": "peer",
+  "metadata": {
+    "author": "beret@hipisi.org.pl",
+    "company": "Marysia Software Limited",
+    "domain": "app.marysia.drone",
+    "website": "https://marysia.app"
+  },
+  "connect": {
+    "endpoints": ["tcp/10.10.1.11:7447"]
+  },
+  "namespace": "/swarm/drone_1",
+  "allow": {
+    "publications": ["/fmu/out/vehicle_status"],
+    "subscriptions": ["/fmu/in/offboard_control_mode", "/fmu/in/trajectory_setpoint"]
+  }
+}
