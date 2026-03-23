@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Configuration
-WS_ROOT="/root/sar_swarm_ws"
-SIM_DIR="$WS_ROOT/src/sar_simulation"
-CONTROL_DIR="$WS_ROOT/src/sar_swarm_control"
+WS_ROOT="/root/workspace"
+SIM_DIR="$WS_ROOT/simulation"
+CONTROL_DIR="$WS_ROOT/swarm_control/scripts"
 
 # Source ROS 2 and workspace
 source /opt/ros/humble/setup.bash

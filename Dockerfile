@@ -59,12 +59,16 @@ RUN git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git /tmp/Micro-XR
     && rm -rf /tmp/Micro-XRCE-DDS-Agent
 
 # Setup Workspace
-WORKDIR /root/sar_swarm_ws
-COPY ./sar_swarm_ws/src /root/sar_swarm_ws/src
+WORKDIR /root/workspace
+COPY ./swarm_control /root/workspace/swarm_control
+COPY ./perception /root/workspace/perception
+COPY ./simulation /root/workspace/simulation
+COPY ./heavy_lift_core /root/workspace/heavy_lift_core
+COPY ./px4_msgs /root/workspace/px4_msgs
 
 # Set ROS Domain ID and Source Workspace in Entrypoint
 RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc
-RUN echo "if [ -f /root/sar_swarm_ws/install/setup.bash ]; then source /root/sar_swarm_ws/install/setup.bash; fi" >> /root/.bashrc
+RUN echo "if [ -f /root/workspace/install/setup.bash ]; then source /root/workspace/install/setup.bash; fi" >> /root/.bashrc
 
 COPY ./docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

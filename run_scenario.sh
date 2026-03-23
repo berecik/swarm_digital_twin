@@ -16,7 +16,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SIM_DIR="$ROOT_DIR/sar_swarm_ws/src/sar_simulation"
+SIM_DIR="$ROOT_DIR/simulation"
 VENV_DIR="$ROOT_DIR/.venv"
 
 # ── Colors ───────────────────────────────────────────────────────────────────

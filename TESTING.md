@@ -74,7 +74,7 @@ The following tests verify the AI-driven human detection and 3D localization log
 
 ### 4. `sar_simulation` — Drone Physics Engine (`test_drone_physics.py`)
 
-Run with: `./run_scenario.sh --test` or `pytest sar_swarm_ws/src/sar_simulation/test_drone_physics.py`
+Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py`
 
 #### A. Rotation Math
 - **`test_identity`**: `euler_to_rotation(0,0,0)` produces identity matrix.
@@ -118,7 +118,7 @@ Run with: `./run_scenario.sh --test` or `pytest sar_swarm_ws/src/sar_simulation/
 
 ## 📂 Detailed Documentation
 
-- [sar_swarm_control Testing Guide](sar_swarm_ws/src/sar_swarm_control/TESTING.md)
+- [swarm_control Testing Guide](swarm_control/TESTING.md)
 
 ---
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 source /opt/ros/humble/setup.bash
-if [ -f /root/sar_swarm_ws/install/setup.bash ]; then
-    source /root/sar_swarm_ws/install/setup.bash
+if [ -f /root/workspace/install/setup.bash ]; then
+    source /root/workspace/install/setup.bash
 fi
 
 # Function to cleanup background processes
@@ -14,22 +14,22 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 echo "Starting Mock Simulation..."
-python3 /root/sar_swarm_ws/src/sar_simulation/mock_drone_sim.py > /tmp/mock_sim.log 2>&1 &
+python3 /root/workspace/simulation/mock_drone_sim.py > /tmp/mock_sim.log 2>&1 &
 sleep 2
 
 echo "Starting Swarm Controllers..."
-python3 /root/sar_swarm_ws/src/sar_swarm_control/swarm_controller.py 1 > /tmp/swarm_1.log 2>&1 &
+python3 /root/workspace/swarm_control/scripts/swarm_controller.py 1 > /tmp/swarm_1.log 2>&1 &
 sleep 2
-python3 /root/sar_swarm_ws/src/sar_swarm_control/swarm_controller.py 2 1 > /tmp/swarm_2.log 2>&1 &
+python3 /root/workspace/swarm_control/scripts/swarm_controller.py 2 1 > /tmp/swarm_2.log 2>&1 &
 sleep 2
 
 echo "Starting Visualizer..."
-python3 /root/sar_swarm_ws/src/sar_simulation/visualize_swarm.py &
+python3 /root/workspace/simulation/visualize_swarm.py &
 V_PID=$!
 sleep 2
 
 echo "Running Test Flight..."
-python3 /root/sar_swarm_ws/src/sar_simulation/test_swarm_flight.py > /tmp/test_flight.log 2>&1
+python3 /root/workspace/simulation/test_swarm_flight.py > /tmp/test_flight.log 2>&1
 
 # Check test result
 if grep -q "TEST PASSED" /tmp/test_flight.log; then

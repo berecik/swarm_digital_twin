@@ -26,11 +26,11 @@ from pathlib import Path
 SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, str(SCRIPT_DIR))
 
-# Allow running from repo root or from sar_simulation/
+# Allow running from repo root or from simulation/
 DATA_CANDIDATES = [
     SCRIPT_DIR / 'scenario_data.npz',
     Path('scenario_data.npz'),
-    Path('sar_swarm_ws/src/sar_simulation/scenario_data.npz'),
+    Path('simulation/scenario_data.npz'),
 ]
 
 

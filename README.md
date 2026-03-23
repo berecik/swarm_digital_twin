@@ -22,17 +22,15 @@ The framework enables:
 
 ```text
 .
-├── sar_swarm_ws/               # ROS 2 Workspace
-│   └── src/
-│       ├── sar_swarm_control/  # Swarm coordination & flight control (Rust)
-│       ├── heavy_lift_core/    # Distributed lift system logic (Rust)
-│       ├── sar_perception/     # AI/Vision detection & localization (Python)
-│       ├── sar_simulation/     # Simulators, physics engine & tests (Python)
-│       │   ├── drone_physics.py          # Quadrotor rigid-body physics engine
-│       │   ├── drone_scenario.py         # Flight scenario (takeoff→fly→land)
-│       │   ├── visualize_drone_3d.py     # 3D animated flight visualization
-│       │   └── test_drone_physics.py     # 19 physics unit tests
-│       └── px4_msgs/           # PX4-ROS 2 message definitions
+├── swarm_control/              # Swarm coordination & flight control (Rust)
+├── heavy_lift_core/            # Distributed lift system logic (Rust)
+├── perception/                 # AI/Vision detection & localization (Python)
+├── simulation/                 # Simulators, physics engine & tests (Python)
+│   ├── drone_physics.py        # Quadrotor rigid-body physics engine
+│   ├── drone_scenario.py       # Flight scenario (takeoff→fly→land)
+│   ├── visualize_drone_3d.py   # 3D animated flight visualization
+│   └── test_drone_physics.py   # 19 physics unit tests
+├── px4_msgs/                   # PX4-ROS 2 message definitions
 ├── run_scenario.sh             # One-command scenario runner & visualizer
 ├── docker/                     # Zenoh configuration and Docker setups
 ├── Dockerfile                  # Development environment container
@@ -109,11 +107,11 @@ The scenario flies a drone through 6 waypoints (takeoff → cruise → return �
 ./run_scenario.sh --test
 
 # Rust swarm control (requires ROS 2 environment)
-cd sar_swarm_ws/src/sar_swarm_control
+cd swarm_control
 cargo test
 
 # Python perception
-cd sar_swarm_ws/src/sar_perception
+cd perception
 python -m pytest test/
 ```
 

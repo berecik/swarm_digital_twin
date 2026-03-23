@@ -5,8 +5,8 @@ set -e
 source "/opt/ros/humble/setup.bash"
 
 # Source the workspace if it exists
-if [ -f "/root/sar_swarm_ws/install/setup.bash" ]; then
-    source "/root/sar_swarm_ws/install/setup.bash"
+if [ -f "/root/workspace/install/setup.bash" ]; then
+    source "/root/workspace/install/setup.bash"
 fi
 
 # Set ROS_DOMAIN_ID if provided, else default to 0

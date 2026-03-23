@@ -24,8 +24,9 @@ services:
     environment:
       - ROS_DOMAIN_ID=1
     volumes:
-      - ./sar_swarm_ws/src:/root/sar_swarm_ws/src
-    command: bash -c "cd /root/sar_swarm_ws/src/sar_swarm_control && cargo run"
+      - ./swarm_control:/root/workspace/swarm_control
+      - ./simulation:/root/workspace/simulation
+    command: bash -c "cd /root/workspace/swarm_control && cargo run"
     depends_on:
       - sitl_drone_1
 
@@ -38,8 +39,8 @@ services:
     environment:
       - ROS_DOMAIN_ID=1
     volumes:
-      - ./sar_swarm_ws/src:/root/sar_swarm_ws/src
-    command: bash -c "export PYTHONPATH=\$PYTHONPATH:/root/sar_swarm_ws/src/sar_perception && ros2 run sar_perception detector"
+      - ./perception:/root/workspace/perception
+    command: bash -c "export PYTHONPATH=\$PYTHONPATH:/root/workspace/perception && ros2 run sar_perception detector"
     depends_on:
       - sitl_drone_1
 
@@ -62,8 +63,9 @@ services:
     environment:
       - ROS_DOMAIN_ID=2
     volumes:
-      - ./sar_swarm_ws/src:/root/sar_swarm_ws/src
-    command: bash -c "cd /root/sar_swarm_ws/src/sar_swarm_control && cargo run -- 2"
+      - ./swarm_control:/root/workspace/swarm_control
+      - ./simulation:/root/workspace/simulation
+    command: bash -c "cd /root/workspace/swarm_control && cargo run -- 2"
     depends_on:
       - sitl_drone_2
 
@@ -86,8 +88,9 @@ services:
     environment:
       - ROS_DOMAIN_ID=3
     volumes:
-      - ./sar_swarm_ws/src:/root/sar_swarm_ws/src
-    command: bash -c "cd /root/sar_swarm_ws/src/sar_swarm_control && cargo run -- 3"
+      - ./swarm_control:/root/workspace/swarm_control
+      - ./simulation:/root/workspace/simulation
+    command: bash -c "cd /root/workspace/swarm_control && cargo run -- 3"
     depends_on:
       - sitl_drone_3
 

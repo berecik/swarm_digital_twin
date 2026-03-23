@@ -47,7 +47,7 @@ Core mathematical and utility functions are separated into `src/utils.rs` and `s
 Since the project depends on `rclrs`, a sourced ROS 2 environment (Humble) is required even for `cargo test`.
 ```bash
 # Inside a ROS 2 environment
-cd sar_swarm_ws/src/sar_swarm_control
+cd swarm_control
 cargo test
 ```
 

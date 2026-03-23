@@ -31,18 +31,18 @@ Each drone is an independent ROS 2 entity.
 -   **Middleware:** `zenoh-bridge-ros2dds` bridges local ROS 2 topics to the global swarm mesh.
 
 ### 2. Software Stack & Language Choice
--   **Rust (`rclrs`):** Used for `sar_swarm_control` and `heavy_lift_core`. **Why?** Memory safety, zero-cost abstractions, and predictable performance. Essential for safety-critical coordination and the Distributed Control Allocation (DCA) layer.
--   **Python (`rclpy`):** Used for `sar_perception` and `sar_simulation`. **Why?** AI ecosystem (PyTorch, YOLOv8/11).
+-   **Rust (`rclrs`):** Used for `swarm_control` and `heavy_lift_core`. **Why?** Memory safety, zero-cost abstractions, and predictable performance. Essential for safety-critical coordination and the Distributed Control Allocation (DCA) layer.
+-   **Python (`rclpy`):** Used for `perception` and `simulation`. **Why?** AI ecosystem (PyTorch, YOLOv8/11).
 -   **Zenoh:** Used for Inter-Drone (swarm) and Ground-to-Swarm comms. **Why?** Low-latency mesh networking; avoids DDS discovery overhead in wireless environments.
 
 ---
 
 ## 🛠 Repository & Workspace Structure
 
--   `/sar_swarm_ws/src/sar_swarm_control`: The Rust swarm logic (Boids, FSM, formation).
--   `/sar_swarm_ws/src/heavy_lift_core`: Phase 2 core logic (DCA, Admittance Control, 6-agent redundancy).
--   `/sar_swarm_ws/src/sar_perception`: Python nodes for vision and 3D localization.
--   `/sar_swarm_ws/src/sar_simulation`: Mock simulators, standalone physics engine, and test runners.
+-   `/swarm_control`: The Rust swarm logic (Boids, FSM, formation).
+-   `/heavy_lift_core`: Phase 2 core logic (DCA, Admittance Control, 6-agent redundancy).
+-   `/perception`: Python nodes for vision and 3D localization.
+-   `/simulation`: Mock simulators, standalone physics engine, and test runners.
     -   `drone_physics.py`: Standalone quadrotor rigid-body physics engine (no ROS 2 dependency). Includes gravity, thrust, aerodynamic drag, attitude dynamics (rotation matrix + angular velocity), ground constraint, cascaded PID position controller, and `run_simulation()` for waypoint missions.
     -   `drone_scenario.py`: Example flight scenario (takeoff → cruise → waypoints → return → land). Generates `scenario_data.npz` for visualization.
     -   `visualize_drone_3d.py`: 3D animated matplotlib visualization with drone attitude axes, velocity vector, trajectory trail, altitude/speed/thrust timeline panels.
@@ -54,7 +54,7 @@ Each drone is an independent ROS 2 entity.
 ## 🧩 Key Integration Points (How to Develop)
 
 ### Adding a New Swarm Behavior
-1.  **Modify `sar_swarm_control` (Rust):** Implement the logic in a new module.
+1.  **Modify `swarm_control` (Rust):** Implement the logic in a new module.
 2.  **State Machine:** Add new states to the FSM (e.g., `APPROACH_TARGET`).
 3.  **PX4 Interface:** Use `px4_msgs::msg::TrajectorySetpoint` (ENU -> NED conversion required).
 
@@ -78,8 +78,8 @@ Each drone is an independent ROS 2 entity.
 ### 1. Maintenance Task ("do maintenance")
 When an agent receives the "do maintenance" command, it must follow this iterative protocol:
 1.  **Run All Tests:**
-    -   **Rust:** Run `cargo test` in `sar_swarm_ws/src/sar_swarm_control`.
-    -   **Python:** Run `pytest` in `sar_perception/test/` and `sar_simulation/` (includes `test_drone_physics.py` — 19 physics tests and `test_sim.py`).
+    -   **Rust:** Run `cargo test` in `swarm_control/`.
+    -   **Python:** Run `pytest` in `perception/test/` and `simulation/` (includes `test_drone_physics.py` — 19 physics tests and `test_sim.py`).
     -   **Simulation:** Execute `test_swarm_flight.py` to verify swarm flight logic (requires ROS 2). Run `drone_scenario.py` for standalone physics verification.
 2.  **Fix Issues:** Analyze any failures (compilation errors, test regressions, or linter warnings) and apply fixes.
 3.  **Iterate:** Repeat steps 1 and 2 until all tests pass and no issues remain.
@@ -97,7 +97,7 @@ When an agent receives the "do maintenance" command, it must follow this iterati
 When an agent receives the "do tests" command, it must prioritize coverage and robustness:
 1.  **Expand Test Coverage:**
     -   **Unit Tests:** Identify untested functions (e.g., in `boids.rs`, `utils.rs`, `communication.rs`) and write comprehensive unit tests.
-    -   **Integration Tests:** Create or update tests in `sar_swarm_ws/src/sar_swarm_control/tests/` to verify multi-module interactions, such as the PX4 handshake logic or Zenoh communication.
+    -   **Integration Tests:** Create or update tests in `swarm_control/tests/` to verify multi-module interactions, such as the PX4 handshake logic or Zenoh communication.
     -   **Edge Cases:** Add tests for negative altitudes, disconnected peers, and malformed messages.
 2.  **Execute & Verify:**
     -   Run `cargo test` and ensure coverage is as high as possible.
@@ -107,7 +107,7 @@ When an agent receives the "do tests" command, it must prioritize coverage and r
     -   Repeat the process until coverage is satisfactory and no tests fail.
 3.  **Update Documentation:**
     -   **TESTING.md:** Update the global test status and provide a **detailed explanation** for all tests (Purpose, Input, Expected Outcome).
-    -   **Module Testing Docs:** Update specific files like `sar_swarm_ws/src/sar_swarm_control/TESTING.md` with detailed test descriptions.
+    -   **Module Testing Docs:** Update specific files like `swarm_control/TESTING.md` with detailed test descriptions.
     -   **Project Docs:** Ensure documentation reflects any changes in system behavior discovered during testing.
 
 *Last Maintenance: 2026-03-23 - Added standalone drone physics engine (`drone_physics.py`), flight scenario (`drone_scenario.py`), 3D visualization (`visualize_drone_3d.py`), and 19 physics unit tests (`test_drone_physics.py`). All 33 tests pass (19 physics + 13 perception + 1 sim placeholder).*
