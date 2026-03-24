@@ -5,12 +5,14 @@ Company: Marysia Software Limited <ceo@marysia.app>
 Domain: app.marysia.drone
 Website: https://marysia.app
 
-Quadrotor rigid-body simulation with:
+UAV rigid-body simulation with:
   - Gravity, thrust, aerodynamic drag (linear or quadratic)
   - Attitude via rotation matrix (roll/pitch/yaw)
   - Angular velocity and torque dynamics
   - Body-frame force decomposition (Valencia et al. 2025, Eq. 3)
   - Quadratic aerodynamic drag with ISA atmosphere model (Eq. 5)
+  - Aerodynamic lift with AoA-dependent coefficients and stall (Eq. 6)
+  - Fixed-wing support: FixedWingAero with pre/post-stall CL/CD curves
   - Wind perturbation support (Eq. 5-7)
   - Simple PID position controller
   - No ROS 2 dependency — pure numpy
@@ -47,6 +49,44 @@ class AeroCoefficients:
     C_D: float = 1.0                  # drag coefficient
     C_L: float = 0.0                  # lift coefficient (0 for quadrotor)
 
+    def get_CD(self, alpha: float) -> float:
+        """Return drag coefficient at angle of attack alpha [rad]."""
+        return self.C_D
+
+    def get_CL(self, alpha: float) -> float:
+        """Return lift coefficient at angle of attack alpha [rad]."""
+        return self.C_L
+
+
+@dataclass
+class FixedWingAero(AeroCoefficients):
+    """AoA-dependent aerodynamic model with stall (paper Table 3, Fig. 5).
+
+    Pre-stall:  CL = C_La * (alpha - alpha_0),  CD = C_D0 + C_Da * alpha^2
+    Post-stall: CL = C_La_stall * (alpha - alpha_0),  CD = C_D0 + C_Da_stall * alpha^2
+    """
+    alpha_0: float = 0.05236          # zero-lift AoA [rad] (~3 deg)
+    alpha_stall: float = 0.26180      # stall angle [rad] (~15 deg)
+    C_D0: float = 0.02                # parasitic drag at zero AoA
+    C_La: float = 3.50141             # lift curve slope (pre-stall) [1/rad]
+    C_Da: float = 0.63662             # induced drag slope (pre-stall) [1/rad^2]
+    C_La_stall: float = -1.1459       # lift slope (post-stall) [1/rad]
+    C_Da_stall: float = 2.29183       # drag slope (post-stall) [1/rad^2]
+
+    def get_CL(self, alpha: float) -> float:
+        """AoA-dependent lift coefficient with stall model."""
+        if abs(alpha) < self.alpha_stall:
+            return self.C_La * (alpha - self.alpha_0)
+        else:
+            return self.C_La_stall * (alpha - self.alpha_0)
+
+    def get_CD(self, alpha: float) -> float:
+        """AoA-dependent drag coefficient with stall model."""
+        if abs(alpha) < self.alpha_stall:
+            return self.C_D0 + self.C_Da * alpha**2
+        else:
+            return self.C_D0 + self.C_Da_stall * alpha**2
+
 
 # ── Data classes ─────────────────────────────────────────────────────────────
 
@@ -70,6 +110,39 @@ class DroneParams:
 def make_generic_quad() -> DroneParams:
     """Generic 1.5 kg quadrotor with default parameters."""
     return DroneParams()
+
+
+def make_fixed_wing() -> DroneParams:
+    """Generic fixed-wing UAV with AoA-dependent aerodynamics and stall model.
+
+    Based on paper's Table 3 parameters (Valencia et al. 2025).
+    """
+    return DroneParams(
+        mass=3.0,
+        arm_length=0.0,  # N/A for fixed-wing
+        drag_coeff=0.1,
+        ang_drag_coeff=0.05,
+        max_thrust=30.0,  # propeller thrust
+        max_torque=8.0,
+        inertia=np.array([
+            [0.10,  0.0,   0.005],
+            [0.0,   0.15,  0.0  ],
+            [0.005, 0.0,   0.20 ],
+        ]),
+        aero=FixedWingAero(
+            reference_area=0.50,  # m² (wing area)
+            C_D=0.03,             # base C_D (overridden by get_CD)
+            C_L=0.0,              # base C_L (overridden by get_CL)
+            alpha_0=0.05236,      # ~3 deg
+            alpha_stall=0.26180,  # ~15 deg
+            C_D0=0.02,
+            C_La=3.50141,
+            C_Da=0.63662,
+            C_La_stall=-1.1459,
+            C_Da_stall=2.29183,
+        ),
+        atmo=Atmosphere(),
+    )
 
 
 def make_holybro_x500() -> DroneParams:
@@ -139,22 +212,72 @@ def skew(v: np.ndarray) -> np.ndarray:
 
 # ── Physics step ─────────────────────────────────────────────────────────────
 
+def compute_aoa(V_body: np.ndarray) -> float:
+    """Compute angle of attack from body-frame velocity.
+
+    AoA = atan2(-V_z, V_x) where V_x is forward and V_z is up in body frame.
+    For a quadrotor in hover, AoA is ill-defined (V~0); returns 0.
+    """
+    vx = V_body[0]  # forward
+    vz = V_body[2]  # up (body frame)
+    if abs(vx) < 1e-8 and abs(vz) < 1e-8:
+        return 0.0
+    return np.arctan2(-vz, vx)
+
+
 def _compute_quadratic_drag(V_body: np.ndarray, aero: AeroCoefficients,
                             rho: float) -> np.ndarray:
     """Quadratic aerodynamic drag in body frame (paper Eq. 5).
 
-    F_D = -0.5 * rho * A * C_D * |V|^2 * V_hat
+    F_D = -0.5 * rho * A * C_D(alpha) * |V|^2 * V_hat
+
+    For FixedWingAero, C_D is AoA-dependent.
     """
     V_mag = np.linalg.norm(V_body)
     if V_mag < 1e-8:
         return np.zeros(3)
     V_hat = V_body / V_mag
-    return -0.5 * rho * aero.reference_area * aero.C_D * V_mag**2 * V_hat
+    alpha = compute_aoa(V_body)
+    C_D = aero.get_CD(alpha)
+    return -0.5 * rho * aero.reference_area * C_D * V_mag**2 * V_hat
+
+
+def _compute_lift(V_body: np.ndarray, aero: AeroCoefficients,
+                  rho: float) -> np.ndarray:
+    """Aerodynamic lift in body frame (paper Eq. 6).
+
+    F_L = 0.5 * rho * A * C_L(alpha) * |V|^2 * L_hat
+
+    Lift is perpendicular to velocity in the body XZ-plane (up direction).
+    For quadrotors C_L=0, so this returns zero.
+    """
+    V_mag = np.linalg.norm(V_body)
+    if V_mag < 1e-8:
+        return np.zeros(3)
+    alpha = compute_aoa(V_body)
+    C_L = aero.get_CL(alpha)
+    if abs(C_L) < 1e-12:
+        return np.zeros(3)
+
+    # Lift direction: perpendicular to velocity in body XZ plane, pointing "up"
+    # For body frame: velocity is V_body, lift is normal to V in the XZ plane
+    V_hat = V_body / V_mag
+    # Lift unit vector: rotate V_hat by +90 deg in XZ plane
+    # L_hat = [-V_hat_z, 0, V_hat_x] (in body XZ plane)
+    L_hat = np.array([-V_hat[2], 0.0, V_hat[0]])
+    L_norm = np.linalg.norm(L_hat)
+    if L_norm < 1e-8:
+        # Velocity is purely in Y (sideslip) — no lift in XZ plane
+        return np.zeros(3)
+    L_hat = L_hat / L_norm
+
+    return 0.5 * rho * aero.reference_area * C_L * V_mag**2 * L_hat
 
 
 def physics_step(state: DroneState, cmd: DroneCommand,
                  params: DroneParams, dt: float,
-                 wind=None, t: float = 0.0) -> DroneState:
+                 wind=None, t: float = 0.0,
+                 terrain=None) -> DroneState:
     """Advance the drone state by dt seconds.
 
     Args:
@@ -165,6 +288,7 @@ def physics_step(state: DroneState, cmd: DroneCommand,
         dt: Timestep in seconds.
         wind: Optional WindField for wind perturbation (Eq. 5-7).
         t: Current simulation time (used by wind model).
+        terrain: Optional TerrainMap for ground collision detection.
     """
 
     # Clamp commands
@@ -187,6 +311,7 @@ def physics_step(state: DroneState, cmd: DroneCommand,
         gravity_body = R.T @ np.array([0.0, 0.0, -params.mass * GRAVITY])
         thrust_body = np.array([0.0, 0.0, thrust])
         drag_body = _compute_quadratic_drag(V_body, aero, rho)
+        lift_body = _compute_lift(V_body, aero, rho)
 
         # Wind perturbation (body frame)
         wind_body = np.zeros(3)
@@ -194,7 +319,7 @@ def physics_step(state: DroneState, cmd: DroneCommand,
             wind_world = wind.get_force(t, state.position, aero, rho)
             wind_body = R.T @ wind_world
 
-        total_force_body = gravity_body + thrust_body + drag_body + wind_body
+        total_force_body = gravity_body + thrust_body + drag_body + lift_body + wind_body
 
         # Body-frame acceleration with Coriolis: a = F/m - omega x V_body
         accel_body = total_force_body / params.mass - np.cross(omega, V_body)
@@ -223,9 +348,13 @@ def physics_step(state: DroneState, cmd: DroneCommand,
         new_vel = state.velocity + accel * dt
         new_pos = state.position + state.velocity * dt + 0.5 * accel * dt**2
 
-    # Ground constraint
-    if new_pos[2] < 0.0:
-        new_pos[2] = 0.0
+    # Ground constraint (terrain-aware or flat z=0)
+    if terrain is not None:
+        ground_z = terrain.get_elevation(new_pos[0], new_pos[1])
+    else:
+        ground_z = 0.0
+    if new_pos[2] < ground_z:
+        new_pos[2] = ground_z
         new_vel[2] = max(new_vel[2], 0.0)
 
     # ── Angular dynamics (body frame) ────────────────────────────────────
@@ -368,13 +497,15 @@ def run_simulation(waypoints: List[np.ndarray],
                    waypoint_radius: float = 0.5,
                    hover_time: float = 2.0,
                    max_time: float = 120.0,
-                   wind=None) -> List[SimRecord]:
+                   wind=None,
+                   terrain=None) -> List[SimRecord]:
     """
     Fly through waypoints in order. Hover at each for hover_time seconds.
     Returns a list of SimRecord for every timestep.
 
     Args:
         wind: Optional WindField for wind perturbation during simulation.
+        terrain: Optional TerrainMap for ground collision detection.
     """
     if params is None:
         params = DroneParams()
@@ -390,7 +521,8 @@ def run_simulation(waypoints: List[np.ndarray],
     while t < max_time and wp_idx < len(waypoints):
         target = waypoints[wp_idx]
         cmd = controller.compute(state, target, target_yaw=0.0, dt=dt)
-        state = physics_step(state, cmd, params, dt, wind=wind, t=t)
+        state = physics_step(state, cmd, params, dt, wind=wind, t=t,
+                             terrain=terrain)
 
         roll, pitch, yaw = rotation_to_euler(state.rotation)
         records.append(SimRecord(

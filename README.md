@@ -26,15 +26,26 @@ The framework enables:
 │   ├── architecture.md         # System architecture & components
 │   ├── testing.md              # Test strategy & catalog
 │   ├── development.md          # Setup & workflow guide
-│   └── physics.md              # Standalone physics engine details
+│   ├── physics.md              # Physics engine overview
+│   ├── physics_details.md      # Full equations & derivations
+│   └── REFACTOR_PLAN.md        # Refactoring roadmap (Valencia et al.)
 ├── swarm_control/              # Swarm coordination & flight control (Rust)
 ├── heavy_lift_core/            # Distributed lift system logic (Rust)
 ├── perception/                 # AI/Vision detection & localization (Python)
 ├── simulation/                 # Simulators, physics engine & tests (Python)
-│   ├── drone_physics.py        # Quadrotor rigid-body physics engine
-│   ├── drone_scenario.py       # Flight scenario (takeoff→fly→land)
-│   ├── visualize_drone_3d.py   # 3D animated flight visualization
-│   └── test_drone_physics.py   # 19 physics unit tests
+│   ├── drone_physics.py        # Rigid-body physics: quadratic drag, atmosphere, body-frame dynamics
+│   ├── wind_model.py           # Wind perturbation: constant, Dryden, flight-log replay
+│   ├── terrain.py              # Terrain elevation: flat, grid, STL, analytical function
+│   ├── flight_log.py           # Ardupilot flight log parser (CSV)
+│   ├── validation.py           # RMSE metrics & comparison plots
+│   ├── drone_scenario.py       # Full-featured scenario over terrain with wind
+│   ├── visualize_drone_3d.py   # 3D animated visualization with terrain & wind
+│   └── test_drone_physics.py   # 41 physics unit tests
+├── gazebo/                     # Gazebo SITL integration
+│   ├── worlds/                 # World files (empty, terrain)
+│   ├── models/x500/            # Holybro X500 V2 SDF model
+│   ├── launch/                 # ROS 2 launch files
+│   └── scripts/                # Wind perturbation ROS node
 ├── px4_msgs/                   # PX4-ROS 2 message definitions
 ├── run_scenario.sh             # One-command scenario runner & visualizer
 ├── docker/                     # Zenoh configuration and Docker setups
@@ -52,7 +63,9 @@ Detailed documentation is available in the [docs/](docs/) directory:
 - [**Architecture Overview**](docs/architecture.md) — System design, components, and communication.
 - [**Testing Guide**](docs/testing.md) — Test strategy, catalog, and protocols.
 - [**Development & Setup**](docs/development.md) — Environment setup and coding standards.
-- [**Physics Engine**](docs/physics.md) — Deep dive into the standalone simulation.
+- [**Physics Engine**](docs/physics.md) — Overview of the standalone simulation.
+- [**Physics Details**](docs/physics_details.md) — Full equations, derivations, and parameter tables.
+- [**Refactoring Plan**](docs/REFACTOR_PLAN.md) — Gap analysis vs Valencia et al. (2025) paper.
 - [**Agent Guide**](AGENTS.md) — Protocols and context for autonomous developers.
 
 ## Tech Stack
@@ -62,9 +75,9 @@ Detailed documentation is available in the [docs/](docs/) directory:
 | **Safety-Critical Control** | **Rust** (rclrs, MAVSDK-Rust) |
 | **AI & Computer Vision** | **Python** (PyTorch, YOLOv8/11) |
 | **Middleware** | **Eclipse Zenoh** & **ROS 2** (Humble/Jazzy) |
-| **Physics Simulation** | **Python** (NumPy) — standalone rigid-body quadrotor |
-| **3D Visualization** | **Matplotlib** (animated 3D + timeline panels) |
-| **Full Simulation** | Gazebo Harmonic / PX4 SITL |
+| **Physics Simulation** | **Python** (NumPy) — quadratic drag, wind, terrain, body-frame dynamics |
+| **3D Visualization** | **Matplotlib** (terrain surface, wind indicator, AGL tracking) |
+| **Full Simulation** | Gazebo Harmonic / PX4 SITL / ArduPilot |
 
 ## Quick Start — Standalone Physics Simulation
 
@@ -75,13 +88,13 @@ No Docker, no ROS 2 — just Python 3 and a terminal:
 ./run_scenario.sh
 
 # Or step by step:
-./run_scenario.sh --test       # run 19 physics unit tests
+./run_scenario.sh --test       # run 41 physics unit tests
 ./run_scenario.sh --sim-only   # run scenario (no GUI)
 ./run_scenario.sh --viz-only   # open visualization with existing data
 ./run_scenario.sh --all        # tests → scenario → visualization
 ```
 
-The scenario flies a drone through 6 waypoints (takeoff → cruise → return → land) with full rigid-body physics: gravity, thrust, aerodynamic drag, attitude dynamics, and a cascaded PID controller.
+The scenario flies a drone through 7 waypoints over rolling-hill terrain with quadratic aerodynamic drag, ISA atmosphere, constant wind, body-frame dynamics, and terrain collision. The 3D visualization renders the terrain surface, wind direction, drone attitude, AGL tracking, and flight telemetry panels.
 
 ## Getting Started
 

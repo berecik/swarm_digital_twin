@@ -14,9 +14,11 @@ from drone_physics import (
     physics_step, euler_to_rotation, rotation_to_euler,
     run_simulation, GRAVITY,
     AeroCoefficients, Atmosphere, _compute_quadratic_drag,
-    make_generic_quad, make_holybro_x500,
+    _compute_lift, compute_aoa,
+    FixedWingAero, make_generic_quad, make_holybro_x500, make_fixed_wing,
 )
 from wind_model import WindField
+from terrain import TerrainMap
 
 
 # ── Rotation helpers ─────────────────────────────────────────────────────────
@@ -535,3 +537,74 @@ class TestValidation:
             np.testing.assert_allclose(traj[0], [0, 0, 0], atol=0.1)
         finally:
             os.unlink(tmp_path)
+
+
+# ── Phase 2: Terrain ────────────────────────────────────────────────────────
+
+class TestTerrain:
+    def test_flat_terrain_elevation(self):
+        """Flat terrain should return constant elevation everywhere."""
+        t = TerrainMap.flat(elevation=50.0, size=200.0, resolution=10.0)
+        np.testing.assert_allclose(t.get_elevation(0, 0), 50.0)
+        np.testing.assert_allclose(t.get_elevation(99, -50), 50.0)
+        np.testing.assert_allclose(t.get_elevation(-100, 100), 50.0)
+
+    def test_from_array_elevation_query(self):
+        """Elevation query should interpolate grid values correctly."""
+        # 3x3 grid: center cell is a hill
+        grid = np.array([
+            [0.0, 0.0, 0.0],
+            [0.0, 10.0, 0.0],
+            [0.0, 0.0, 0.0],
+        ])
+        t = TerrainMap.from_array(grid, origin=(0.0, 0.0), resolution=1.0)
+        # Exact grid point (1,1) → 10.0
+        np.testing.assert_allclose(t.get_elevation(1.0, 1.0), 10.0)
+        # Corner (0,0) → 0.0
+        np.testing.assert_allclose(t.get_elevation(0.0, 0.0), 0.0)
+        # Midpoint (0.5, 1.0) → bilinear interp of 0 and 10 → 5.0
+        np.testing.assert_allclose(t.get_elevation(0.5, 1.0), 5.0, atol=0.01)
+
+    def test_terrain_collision_detection(self):
+        """check_collision should detect when position is below terrain."""
+        grid = np.array([
+            [5.0, 5.0],
+            [5.0, 5.0],
+        ])
+        t = TerrainMap.from_array(grid, origin=(0.0, 0.0), resolution=10.0)
+        assert t.check_collision(np.array([5.0, 5.0, 4.0])) == True
+        assert t.check_collision(np.array([5.0, 5.0, 5.0])) == True
+        assert t.check_collision(np.array([5.0, 5.0, 6.0])) == False
+
+    def test_terrain_in_physics_step(self):
+        """Drone should not fall below terrain surface."""
+        # Hill at 20m elevation
+        grid = np.full((10, 10), 20.0)
+        t = TerrainMap.from_array(grid, origin=(-50.0, -50.0), resolution=10.0)
+
+        params = DroneParams()
+        state = DroneState(position=np.array([0.0, 0.0, 25.0]))
+        cmd = DroneCommand(thrust=0.0)  # no thrust, will fall
+
+        for _ in range(2000):
+            state = physics_step(state, cmd, params, dt=0.005, terrain=t)
+
+        # Should have landed on terrain at z=20, not z=0
+        assert state.position[2] >= 20.0
+        np.testing.assert_allclose(state.position[2], 20.0, atol=0.1)
+
+    def test_from_function_terrain(self):
+        """Terrain from analytical function should give correct elevations."""
+        # Simple slope: z = 0.1 * x
+        t = TerrainMap.from_function(
+            lambda x, y: 0.1 * x,
+            x_range=(0, 100), y_range=(0, 100), resolution=1.0,
+        )
+        np.testing.assert_allclose(t.get_elevation(50.0, 50.0), 5.0, atol=0.1)
+        np.testing.assert_allclose(t.get_elevation(0.0, 0.0), 0.0, atol=0.1)
+        np.testing.assert_allclose(t.get_elevation(100.0, 0.0), 10.0, atol=0.1)
+
+    def test_stl_file_not_found(self):
+        """Loading a nonexistent STL should raise FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            TerrainMap.from_stl("/nonexistent/terrain.stl")

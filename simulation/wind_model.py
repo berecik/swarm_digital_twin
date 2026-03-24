@@ -59,7 +59,12 @@ class WindField:
                   aero, rho: float) -> np.ndarray:
         """Compute wind perturbation force in world frame (paper Eq. 5-7).
 
-        Delta_F_D = 0.5 * rho * A * C_D * V_wind^2, applied along wind direction.
+        Eq. 5: Delta_F_D = 0.5 * rho * A * C_D(alpha) * V_wind^2
+        Eq. 6: Delta_F_L = 0.5 * rho * A * C_L(alpha) * V_wind^2
+        Eq. 7: Delta_F_W = F_D + F_L (vector sum)
+
+        For FixedWingAero, C_D and C_L are evaluated at alpha=0 (wind-relative).
+        Lift from wind is perpendicular to wind velocity in the world XZ plane.
         """
         V_wind = self.get_wind_velocity(t, position)
         V_mag = np.linalg.norm(V_wind)
@@ -68,14 +73,30 @@ class WindField:
 
         if aero is not None:
             A = aero.reference_area
-            C_D = aero.C_D
+            C_D = aero.get_CD(0.0)  # wind-relative AoA ~ 0
+            C_L = aero.get_CL(0.0)
         else:
             A = 0.04
             C_D = 1.0
+            C_L = 0.0
 
-        # Eq. 5: Delta_F_D = 0.5 * rho * A * C_D * V_wind^2
-        force_mag = 0.5 * rho * A * C_D * V_mag**2
-        return force_mag * (V_wind / V_mag)
+        V_hat = V_wind / V_mag
+        q = 0.5 * rho * A * V_mag**2
+
+        # Eq. 5: drag along wind direction
+        F_drag = q * C_D * V_hat
+
+        # Eq. 6: lift perpendicular to wind in XZ plane (world frame)
+        F_lift = np.zeros(3)
+        if abs(C_L) > 1e-12:
+            L_hat = np.array([-V_hat[2], 0.0, V_hat[0]])
+            L_norm = np.linalg.norm(L_hat)
+            if L_norm > 1e-8:
+                L_hat = L_hat / L_norm
+                F_lift = q * C_L * L_hat
+
+        # Eq. 7: total wind force
+        return F_drag + F_lift
 
     def _dryden_wind(self, t: float, position: np.ndarray) -> np.ndarray:
         """Simplified Dryden turbulence (MIL-F-8785C).

@@ -43,15 +43,22 @@ Each drone is an independent ROS 2 entity.
 -   `/heavy_lift_core`: Phase 2 core logic (DCA, Admittance Control, 6-agent redundancy).
 -   `/perception`: Python nodes for vision and 3D localization.
 -   `/simulation`: Mock simulators, standalone physics engine, and test runners.
-    -   `drone_physics.py`: Standalone quadrotor rigid-body physics engine (no ROS 2 dependency). Includes gravity, thrust, aerodynamic drag, attitude dynamics (rotation matrix + angular velocity), ground constraint, cascaded PID position controller, and `run_simulation()` for waypoint missions.
-    -   `drone_scenario.py`: Example flight scenario (takeoff → cruise → waypoints → return → land). Generates `scenario_data.npz` for visualization.
-    -   `visualize_drone_3d.py`: 3D animated matplotlib visualization with drone attitude axes, velocity vector, trajectory trail, altitude/speed/thrust timeline panels.
-    -   `test_drone_physics.py`: 19 pytest tests covering rotation math, gravity freefall, hover equilibrium, drag, PID convergence, position controller, full simulation runs, and energy conservation.
--   `/docs`: Detailed project documentation (Architecture, Testing, Physics).
-    -   [`docs/architecture.md`](docs/architecture.md): Detailed system design.
-    -   [`docs/testing.md`](docs/testing.md): Detailed test catalog.
+    -   `drone_physics.py`: Full physics engine — rigid-body dynamics with two modes: legacy linear drag (world-frame) or quadratic drag with body-frame dynamics (Valencia et al. Eq. 3/5). ISA atmosphere, airframe presets, terrain-aware ground collision.
+    -   `wind_model.py`: Wind perturbation model (constant, Dryden turbulence, flight-log replay) following paper Eq. 5-7.
+    -   `terrain.py`: Terrain elevation model (flat, grid, STL, analytical function) with bilinear interpolation and collision detection.
+    -   `flight_log.py`: Ardupilot flight log parser (CSV) for validation against real data.
+    -   `validation.py`: RMSE metrics and comparison plots (paper Table 5, Fig. 13 style).
+    -   `drone_scenario.py`: Full-featured scenario over terrain with wind and quadratic drag. 7 AGL-relative waypoints with terrain clearance verification.
+    -   `visualize_drone_3d.py`: 3D animated visualization with terrain surface, wind indicator, AGL tracking, ground shadow projected onto terrain, and telemetry panels.
+    -   `test_drone_physics.py`: 41 pytest tests covering rotation math, gravity, hover, drag (linear + quadratic), PID, position control, simulation, energy conservation, atmosphere, wind, inertia, body-frame dynamics, validation, and terrain.
+-   `/gazebo`: Gazebo SITL integration (worlds, models, launch files, wind ROS node).
+-   `/docs`: Detailed project documentation.
+    -   [`docs/architecture.md`](docs/architecture.md): System design and components.
+    -   [`docs/testing.md`](docs/testing.md): Test strategy and catalog.
     -   [`docs/development.md`](docs/development.md): Setup & coding standards.
-    -   [`docs/physics.md`](docs/physics.md): Physics engine details.
+    -   [`docs/physics.md`](docs/physics.md): Physics engine overview.
+    -   [`docs/physics_details.md`](docs/physics_details.md): Full equations, derivations, and parameter tables.
+    -   [`docs/REFACTOR_PLAN.md`](docs/REFACTOR_PLAN.md): Refactoring roadmap vs Valencia et al. (2025).
 
 ---
 
@@ -83,7 +90,7 @@ Each drone is an independent ROS 2 entity.
 When an agent receives the "do maintenance" command, it must follow this iterative protocol:
 1.  **Run All Tests:**
     -   **Rust:** Run `cargo test` in `swarm_control/`.
-    -   **Python:** Run `pytest` in `perception/test/` and `simulation/` (includes `test_drone_physics.py` — 19 physics tests and `test_sim.py`).
+    -   **Python:** Run `pytest` in `perception/test/` and `simulation/` (includes `test_drone_physics.py` — 41 physics tests and `test_sim.py`).
     -   **Simulation:** Execute `test_swarm_flight.py` to verify swarm flight logic (requires ROS 2). Run `drone_scenario.py` for standalone physics verification.
 2.  **Fix Issues:** Analyze any failures (compilation errors, test regressions, or linter warnings) and apply fixes.
 3.  **Iterate:** Repeat steps 1 and 2 until all tests pass and no issues remain.
@@ -118,9 +125,9 @@ When an agent receives the "do tests" command, it must prioritize coverage and r
 
 ### 3. Simulation First
 Always validate logic in simulation.
--   `drone_physics.py`: **Standalone physics engine** — use for rapid algorithm development and testing without ROS 2 or Docker. Simulates full rigid-body quadrotor dynamics (gravity, thrust, drag, attitude, angular velocity). Run `drone_scenario.py` to generate flight data, then `visualize_drone_3d.py` to visualize.
+-   `drone_physics.py`: **Standalone physics engine** — use for rapid algorithm development without ROS 2 or Docker. Supports quadratic drag, ISA atmosphere, wind perturbation, body-frame dynamics, terrain collision, and airframe presets. Run `./run_scenario.sh` for the full pipeline (tests -> sim -> visualization).
 -   `mock_drone_sim.py`: Fast ROS 2-based mock for swarm protocol/logic testing.
--   `SITL (PX4/Gazebo)`: (Planned) For physics and control tuning.
+-   `Gazebo SITL`: Integration ready via `gazebo/` directory (worlds, X500 model with LiftDrag + ArduPilot plugins, wind ROS node). Launch with `gazebo/launch/sitl_empty.launch.py`.
 
 ### 3. Dockerized Environment
 The `Dockerfile` in the root contains all dependencies (Rust, ROS 2, Python libs).
@@ -138,7 +145,9 @@ If you are tasked with moving the project forward, prioritize:
 2.  **Zenoh-based Telemetry:** Finalizing the bridge configuration to ensure reliable GCS feedback.
 3.  **Admittance Control (Phase 2):** Implementing force-feedback logic for tethered flight.
 4.  **Multi-drone physics simulation:** Extend `drone_physics.py` to support multiple drones with Boids flocking (port from `boids.rs`) and inter-drone collision avoidance in the standalone simulator.
-5.  **Wind & turbulence model:** Add environmental disturbances (wind gusts, turbulence) to the physics engine for more realistic digital twin testing.
+5.  ~~**Wind & turbulence model:**~~ **DONE** — Constant wind, Dryden turbulence, and flight-log replay implemented in `wind_model.py`.
+6.  **Phase 3 — Fixed-wing aerodynamics:** AoA-dependent CL/CD with stall model (see `docs/REFACTOR_PLAN.md`).
+7.  **Phase 3 — MAVLink bridge:** Connect standalone sim to QGroundControl via `pymavlink`.
 
 ---
 

@@ -28,6 +28,8 @@ This document provides a detailed technical overview of the **Swarm Digital Twin
 | **Middleware** | ROS 2 (Humble/Jazzy) | Intra-drone node communication. |
 | **Global Mesh** | Eclipse Zenoh | Inter-drone communication and GCS link. |
 | **Simulation** | Python (NumPy) | Standalone physics engine for rapid development. |
+| **3D Visualization** | Matplotlib | Terrain surface, wind indicator, AGL tracking, telemetry panels. |
+| **Full Simulation** | Gazebo Harmonic / PX4 SITL | Hardware-in-the-loop testing with world models. |
 
 ---
 
@@ -58,6 +60,35 @@ The DLS is a critical innovation allowing multiple drones to act as a single "vi
 - **Admittance Control:** Drones admit external forces (tether tension) to prevent fighting against each other.
 - **Emergency Detach:** Safety logic for immediate tether release.
 
+### 5. Standalone Physics Engine (`simulation/`)
+A high-fidelity rigid-body quadrotor simulator for rapid algorithm development without ROS 2 or Gazebo.
+
+- **Rigid-Body Dynamics** (`drone_physics.py`): Dual-path physics — body-frame dynamics with quadratic drag and Coriolis coupling (Valencia et al. Eq. 3/5) when `AeroCoefficients` are set, or legacy world-frame linear drag for backward compatibility. ISA atmosphere model for altitude-dependent air density. Full inertia tensor with off-diagonal products of inertia. SVD re-orthogonalization for rotation matrix drift prevention. Cascaded PID controller (position -> acceleration -> attitude -> torque).
+- **Wind Perturbation** (`wind_model.py`): Constant wind, Dryden turbulence (MIL-F-8785C), and flight-log replay modes (paper Eq. 5-7).
+- **Terrain Model** (`terrain.py`): Elevation maps from flat surfaces, 2D arrays, analytical functions, or STL meshes. Bilinear interpolation for smooth elevation queries. Collision detection integrated into `physics_step()`.
+- **Validation** (`validation.py`, `flight_log.py`): RMSE metrics, Ardupilot CSV log parsing, and comparison plots for verification against real flight data (paper Table 5, Fig. 13 style).
+- **Airframe Presets**: `make_generic_quad()` and `make_holybro_x500()` with realistic mass, inertia, and drag parameters.
+
+See [Physics Engine](physics.md) for an overview and [Physics Details](physics_details.md) for full equations.
+
+### 6. Gazebo SITL Integration (`gazebo/`)
+Full Gazebo Harmonic integration for hardware-in-the-loop testing.
+
+- **Worlds**: `empty.world` (flat ground, ISA atmosphere), `terrain.world` (terrain mesh with wind plugin).
+- **Models**: Holybro X500 V2 SDF with 4 rotors, LiftDrag plugin, and ArduPilot SITL plugin.
+- **Launch**: ROS 2 launch file (`sitl_empty.launch.py`) orchestrating Gazebo, SITL, XRCE-DDS agent, and wind node.
+- **Wind Node** (`wind_node.py`): ROS 2 node publishing `WindField` forces to `/wind/velocity` and `/wind/force`.
+
+### 7. 3D Visualization (`simulation/visualize_drone_3d.py`)
+Animated 3D visualization of simulation data:
+- Terrain surface rendered with elevation colormap.
+- Flight trajectory with drone attitude axes and velocity vector.
+- Wind direction indicator with speed label.
+- Ground shadow projected onto terrain surface.
+- Waypoint markers with terrain-projected ground posts.
+- Timeline panels: altitude (MSL), AGL, speed, thrust.
+- Falls back gracefully when terrain or wind data is absent.
+
 ---
 
 ## 📡 Communication Protocol
@@ -83,3 +114,16 @@ Standard ROS 2 publishers/subscribers for local sensing and control.
 | **Body** | Forward-Left-Up | Drone Center | IMU and sensor orientation. |
 
 **Conversion:** All high-level logic works in ENU. Conversions to NED are performed at the PX4 interface layer.
+
+---
+
+## 🔬 Testing & Verification
+
+The project maintains comprehensive automated tests:
+
+- **41 Physics Unit Tests** (`test_drone_physics.py`): Rotation math, gravity, hover, drag (linear + quadratic), PID, position control, energy conservation, atmosphere, wind, inertia, body-frame dynamics, validation, and terrain.
+- **13 Perception Tests** (`perception/test/`): Detection pipeline and 3D localization.
+- **1 Simulation Placeholder** (`test_sim.py`): ROS 2 swarm flight smoke test.
+- **Rust Swarm Tests** (`swarm_control/`): Boids, FSM, PX4 interface (requires ROS 2 env).
+
+See [Testing Guide](testing.md) and [TESTING.md](../TESTING.md) for the full catalog.

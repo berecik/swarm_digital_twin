@@ -1,0 +1,43 @@
+<?xml version="1.0" ?>
+<!--
+  Swarm Digital Twin - Empty Gazebo World
+  Based on Valencia et al. (2025) pipeline: Fig. 1, Fig. 2.
+  Flat ground plane with default physics settings.
+-->
+<sdf version="1.6">
+  <world name="swarm_dt_empty">
+
+    <!-- Physics engine -->
+    <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+
+    <!-- Lighting -->
+    <include>
+      <uri>model://sun</uri>
+    </include>
+
+    <!-- Ground plane -->
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- Atmosphere (ISA sea level defaults) -->
+    <atmosphere type="adiabatic">
+      <temperature>288.15</temperature>
+      <pressure>101325</pressure>
+    </atmosphere>
+
+    <!-- Coordinate origin (configurable per mission) -->
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <latitude_deg>0.0</latitude_deg>
+      <longitude_deg>0.0</longitude_deg>
+      <elevation>0.0</elevation>
+      <heading_deg>0</heading_deg>
+    </spherical_coordinates>
+
+  </world>
+</sdf>

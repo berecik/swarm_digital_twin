@@ -9,7 +9,7 @@ This document tracks the high-level testing status and provides detailed explana
 | `sar_swarm_control` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM Verified. |
 | `sar_perception` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (35) | ✅ Pass (Scenario) | N/A | Quadratic drag, wind, body-frame dynamics |
+| **Drone Physics** (Python) | ✅ Pass (41) | ✅ Pass (Scenario) | N/A | Full physics + terrain + Gazebo |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `sar_swarm_control` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -138,6 +138,14 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_rmse_identical`**: RMSE of identical trajectories = 0.
 - **`test_rmse_known_offset`**: Constant 1m X-offset → RMSE_x = 1.0.
 - **`test_flight_log_csv_roundtrip`**: FlightLog parses CSV, returns correct shape, origin at (0,0,0).
+
+#### O. Terrain (Phase 2)
+- **`test_flat_terrain_elevation`**: Flat terrain returns constant elevation at all query points.
+- **`test_from_array_elevation_query`**: Grid-based terrain uses bilinear interpolation (exact + midpoint checks).
+- **`test_terrain_collision_detection`**: `check_collision()` detects below/at/above terrain surface.
+- **`test_terrain_in_physics_step`**: Drone with zero thrust lands on 20m terrain, not z=0.
+- **`test_from_function_terrain`**: `from_function(lambda x,y: 0.1*x)` slope gives correct elevation.
+- **`test_stl_file_not_found`**: Nonexistent STL raises FileNotFoundError.
 
 ### 5. `sar_simulation` — Swarm Sim (`test_swarm_flight.py`)
 - **`test_swarm_flight`**:

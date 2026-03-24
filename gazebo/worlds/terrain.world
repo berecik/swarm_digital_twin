@@ -1,0 +1,75 @@
+<?xml version="1.0" ?>
+<!--
+  Swarm Digital Twin - Terrain World
+  Based on Valencia et al. (2025) pipeline: SRTM -> BlenderGIS -> STL -> Gazebo.
+  Replace the heightmap/STL paths with your own terrain data.
+-->
+<sdf version="1.6">
+  <world name="swarm_dt_terrain">
+
+    <!-- Physics engine -->
+    <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+
+    <!-- Lighting -->
+    <include>
+      <uri>model://sun</uri>
+    </include>
+
+    <!-- Atmosphere (high altitude example: Andean mountains ~4500m) -->
+    <atmosphere type="adiabatic">
+      <temperature>258.15</temperature>
+      <pressure>57730</pressure>
+    </atmosphere>
+
+    <!-- Terrain mesh (replace with your STL from BlenderGIS) -->
+    <model name="terrain">
+      <static>true</static>
+      <link name="terrain_link">
+        <collision name="terrain_collision">
+          <geometry>
+            <mesh>
+              <uri>model://terrain/meshes/terrain.stl</uri>
+              <scale>1 1 1</scale>
+            </mesh>
+          </geometry>
+        </collision>
+        <visual name="terrain_visual">
+          <geometry>
+            <mesh>
+              <uri>model://terrain/meshes/terrain.stl</uri>
+              <scale>1 1 1</scale>
+            </mesh>
+          </geometry>
+          <material>
+            <ambient>0.3 0.4 0.2 1</ambient>
+            <diffuse>0.4 0.5 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Wind plugin (publishes wind forces to ROS topic) -->
+    <plugin name="wind" filename="libgazebo_wind_plugin.so">
+      <frameId>world</frameId>
+      <windDirectionMean>1 0 0</windDirectionMean>
+      <windVelocityMean>5.0</windVelocityMean>
+      <windGustDirection>0 1 0</windGustDirection>
+      <windGustDuration>2.0</windGustDuration>
+      <windGustStart>10.0</windGustStart>
+      <windGustForceMean>10.0</windGustForceMean>
+    </plugin>
+
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <latitude_deg>-1.2921</latitude_deg>
+      <longitude_deg>-78.5920</longitude_deg>
+      <elevation>4500</elevation>
+      <heading_deg>0</heading_deg>
+    </spherical_coordinates>
+
+  </world>
+</sdf>
