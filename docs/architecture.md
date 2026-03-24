@@ -61,13 +61,15 @@ The DLS is a critical innovation allowing multiple drones to act as a single "vi
 - **Emergency Detach:** Safety logic for immediate tether release.
 
 ### 5. Standalone Physics Engine (`simulation/`)
-A high-fidelity rigid-body quadrotor simulator for rapid algorithm development without ROS 2 or Gazebo.
+A high-fidelity rigid-body UAV simulator for rapid algorithm development without ROS 2 or Gazebo.
 
 - **Rigid-Body Dynamics** (`drone_physics.py`): Dual-path physics — body-frame dynamics with quadratic drag and Coriolis coupling (Valencia et al. Eq. 3/5) when `AeroCoefficients` are set, or legacy world-frame linear drag for backward compatibility. ISA atmosphere model for altitude-dependent air density. Full inertia tensor with off-diagonal products of inertia. SVD re-orthogonalization for rotation matrix drift prevention. Cascaded PID controller (position -> acceleration -> attitude -> torque).
-- **Wind Perturbation** (`wind_model.py`): Constant wind, Dryden turbulence (MIL-F-8785C), and flight-log replay modes (paper Eq. 5-7).
+- **Fixed-Wing Aerodynamics** (`FixedWingAero`): AoA-dependent CL/CD with pre/post-stall model (paper Table 3, Fig. 5). Lift perpendicular to velocity in body XZ plane. `compute_aoa()` for angle-of-attack computation.
+- **Wind Perturbation** (`wind_model.py`): Constant wind, Dryden turbulence (MIL-F-8785C), and flight-log replay modes (paper Eq. 5-7). Wind force includes both drag and lift components (Eq. 7).
 - **Terrain Model** (`terrain.py`): Elevation maps from flat surfaces, 2D arrays, analytical functions, or STL meshes. Bilinear interpolation for smooth elevation queries. Collision detection integrated into `physics_step()`.
 - **Validation** (`validation.py`, `flight_log.py`): RMSE metrics, Ardupilot CSV log parsing, and comparison plots for verification against real flight data (paper Table 5, Fig. 13 style).
-- **Airframe Presets**: `make_generic_quad()` and `make_holybro_x500()` with realistic mass, inertia, and drag parameters.
+- **MAVLink Bridge** (`mavlink_bridge.py`): MAVLink v2 UDP bridge to QGroundControl. Sends heartbeat, attitude, GPS, HUD, system status. Receives arm/disarm commands and guided-mode waypoints. Pure Python, no external dependencies.
+- **Airframe Presets**: `make_generic_quad()`, `make_holybro_x500()`, and `make_fixed_wing()` with realistic mass, inertia, and aerodynamic parameters.
 
 See [Physics Engine](physics.md) for an overview and [Physics Details](physics_details.md) for full equations.
 
@@ -121,7 +123,7 @@ Standard ROS 2 publishers/subscribers for local sensing and control.
 
 The project maintains comprehensive automated tests:
 
-- **41 Physics Unit Tests** (`test_drone_physics.py`): Rotation math, gravity, hover, drag (linear + quadratic), PID, position control, energy conservation, atmosphere, wind, inertia, body-frame dynamics, validation, and terrain.
+- **64 Physics + MAVLink Tests** (`test_drone_physics.py`): Rotation math, gravity, hover, drag (linear + quadratic), PID, position control, energy conservation, atmosphere, wind, inertia, body-frame dynamics, validation, terrain, fixed-wing aerodynamics (AoA, stall, lift), and MAVLink bridge (encoding, decoding, CRC, GPS conversion).
 - **13 Perception Tests** (`perception/test/`): Detection pipeline and 3D localization.
 - **1 Simulation Placeholder** (`test_sim.py`): ROS 2 swarm flight smoke test.
 - **Rust Swarm Tests** (`swarm_control/`): Boids, FSM, PX4 interface (requires ROS 2 env).

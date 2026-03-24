@@ -608,3 +608,264 @@ class TestTerrain:
         """Loading a nonexistent STL should raise FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
             TerrainMap.from_stl("/nonexistent/terrain.stl")
+
+
+# ── Phase 3: Fixed-Wing Aerodynamics ──────────────────────────────────────
+
+class TestFixedWingAero:
+    def test_aoa_computation_level_flight(self):
+        """Level forward flight should have AoA near zero."""
+        V_body = np.array([20.0, 0.0, 0.0])  # forward
+        alpha = compute_aoa(V_body)
+        np.testing.assert_allclose(alpha, 0.0, atol=1e-10)
+
+    def test_aoa_computation_climbing(self):
+        """Climbing flight (V_z > 0) should give negative AoA."""
+        V_body = np.array([20.0, 0.0, 5.0])  # forward + up
+        alpha = compute_aoa(V_body)
+        assert alpha < 0.0  # AoA = atan2(-Vz, Vx) = atan2(-5, 20) < 0
+
+    def test_aoa_computation_descending(self):
+        """Descending flight (V_z < 0) should give positive AoA."""
+        V_body = np.array([20.0, 0.0, -5.0])  # forward + down
+        alpha = compute_aoa(V_body)
+        assert alpha > 0.0  # AoA = atan2(5, 20) > 0
+
+    def test_aoa_zero_velocity(self):
+        """Zero velocity should give AoA = 0."""
+        alpha = compute_aoa(np.zeros(3))
+        assert alpha == 0.0
+
+    def test_pre_stall_cl_linear(self):
+        """CL should increase linearly with AoA before stall."""
+        fw = FixedWingAero()
+        # At alpha_0, CL = 0
+        np.testing.assert_allclose(fw.get_CL(fw.alpha_0), 0.0, atol=1e-10)
+        # At 10 deg (0.1745 rad), should be positive and linear
+        alpha = 0.1745
+        cl = fw.get_CL(alpha)
+        assert cl > 0.0
+        expected = fw.C_La * (alpha - fw.alpha_0)
+        np.testing.assert_allclose(cl, expected, rtol=1e-10)
+
+    def test_post_stall_cl_drops(self):
+        """CL should decrease after stall angle."""
+        fw = FixedWingAero()
+        cl_pre = fw.get_CL(0.25)   # just before stall (15 deg)
+        cl_post = fw.get_CL(0.30)  # after stall
+        # Post-stall slope is negative, so CL should be less
+        assert cl_post < cl_pre
+
+    def test_cd_increases_with_aoa(self):
+        """CD should increase with AoA (induced drag)."""
+        fw = FixedWingAero()
+        cd_0 = fw.get_CD(0.0)
+        cd_10 = fw.get_CD(0.1745)
+        assert cd_10 > cd_0
+
+    def test_post_stall_cd_increases_faster(self):
+        """Post-stall CD slope should be steeper than pre-stall."""
+        fw = FixedWingAero()
+        cd_pre = fw.get_CD(0.25)   # just before stall
+        cd_post = fw.get_CD(0.30)  # just after stall
+        # C_Da_stall > C_Da, so at same AoA past stall, drag jumps up
+        assert cd_post > cd_pre
+
+    def test_lift_force_perpendicular_to_velocity(self):
+        """Lift should be perpendicular to velocity vector."""
+        fw = FixedWingAero()
+        V_body = np.array([20.0, 0.0, -2.0])  # slight descent → positive AoA
+        rho = 1.225
+        F_lift = _compute_lift(V_body, fw, rho)
+        # Lift should be non-zero (positive AoA → positive CL)
+        assert np.linalg.norm(F_lift) > 0.0
+        # Lift should be perpendicular to velocity
+        dot = np.dot(F_lift, V_body)
+        np.testing.assert_allclose(dot, 0.0, atol=1e-6)
+
+    def test_lift_zero_for_quadrotor(self):
+        """Standard AeroCoefficients (C_L=0) should produce zero lift."""
+        aero = AeroCoefficients(C_L=0.0)
+        V_body = np.array([10.0, 0.0, -1.0])
+        F_lift = _compute_lift(V_body, aero, 1.225)
+        np.testing.assert_allclose(F_lift, np.zeros(3))
+
+    def test_fixed_wing_preset(self):
+        """make_fixed_wing() should return correct parameters."""
+        fw = make_fixed_wing()
+        assert fw.mass == 3.0
+        assert fw.aero is not None
+        assert isinstance(fw.aero, FixedWingAero)
+        assert fw.aero.reference_area == 0.50
+        assert fw.aero.alpha_stall > 0
+        assert fw.atmo is not None
+        # Inertia should have off-diagonal elements
+        assert fw.inertia[0, 2] != 0.0
+
+    def test_fixed_wing_generates_lift_in_flight(self):
+        """A fixed-wing in forward flight should generate lift force."""
+        fw_aero = FixedWingAero(reference_area=0.5)
+        rho = 1.225
+        # Forward flight with slight descent → positive AoA → positive lift
+        V_body = np.array([20.0, 0.0, -3.0])
+        F_lift = _compute_lift(V_body, fw_aero, rho)
+        # Lift Z component should be positive (upward in body frame)
+        assert F_lift[2] > 0.0
+
+    def test_quadratic_drag_uses_aoa_dependent_cd(self):
+        """Drag should use get_CD(alpha) for FixedWingAero."""
+        fw_aero = FixedWingAero(reference_area=0.5)
+        rho = 1.225
+        # At zero AoA, CD = C_D0 + C_Da * 0 = C_D0
+        V_level = np.array([20.0, 0.0, 0.0])
+        F_level = np.linalg.norm(_compute_quadratic_drag(V_level, fw_aero, rho))
+        # At high AoA, CD should be larger
+        V_pitch = np.array([20.0, 0.0, -10.0])  # ~26.5 deg AoA
+        F_pitch = np.linalg.norm(_compute_quadratic_drag(V_pitch, fw_aero, rho))
+        assert F_pitch > F_level
+
+
+# ── Phase 3: MAVLink Bridge ───────────────────────────────────────────────
+
+class TestMAVLink:
+    def test_crc_computation(self):
+        """MAVLink CRC should produce consistent results."""
+        from mavlink_bridge import mavlink_crc
+        data = b'\x01\x02\x03\x04'
+        crc1 = mavlink_crc(data, crc_extra=50)
+        crc2 = mavlink_crc(data, crc_extra=50)
+        assert crc1 == crc2
+        assert isinstance(crc1, int)
+        assert 0 <= crc1 <= 0xFFFF
+
+    def test_heartbeat_encoding(self):
+        """Heartbeat message should have correct MAVLink v2 header."""
+        from mavlink_bridge import build_heartbeat, MAVLINK_STX_V2
+        msg = build_heartbeat(system_id=1, component_id=1, armed=True)
+        assert msg[0] == MAVLINK_STX_V2
+        assert len(msg) > 10  # header + payload + CRC
+
+    def test_heartbeat_decode_roundtrip(self):
+        """Encoded heartbeat should decode successfully."""
+        from mavlink_bridge import (build_heartbeat, decode_mavlink_v2,
+                                     MAVLINK_MSG_ID_HEARTBEAT)
+        msg = build_heartbeat(system_id=1, component_id=1)
+        result = decode_mavlink_v2(msg)
+        assert result is not None
+        msg_id, payload = result
+        assert msg_id == MAVLINK_MSG_ID_HEARTBEAT
+        assert len(payload) > 0
+
+    def test_attitude_encode_decode(self):
+        """Attitude message should roundtrip correctly."""
+        from mavlink_bridge import (build_attitude, decode_mavlink_v2,
+                                     MAVLINK_MSG_ID_ATTITUDE)
+        import struct
+        msg = build_attitude(roll=0.1, pitch=-0.2, yaw=1.5,
+                             time_boot_ms=5000)
+        result = decode_mavlink_v2(msg)
+        assert result is not None
+        msg_id, payload = result
+        assert msg_id == MAVLINK_MSG_ID_ATTITUDE
+        fields = struct.unpack_from('<Iffffff', payload)
+        assert fields[0] == 5000  # time_boot_ms
+        np.testing.assert_allclose(fields[1], 0.1, atol=1e-6)   # roll
+        np.testing.assert_allclose(fields[2], -0.2, atol=1e-6)  # pitch
+        np.testing.assert_allclose(fields[3], 1.5, atol=1e-6)   # yaw
+
+    def test_global_position_encode_decode(self):
+        """GPS position message should encode lat/lon correctly."""
+        from mavlink_bridge import (build_global_position_int,
+                                     decode_mavlink_v2,
+                                     MAVLINK_MSG_ID_GLOBAL_POSITION_INT)
+        import struct
+        msg = build_global_position_int(
+            lat_deg=47.3769, lon_deg=8.5417,
+            alt_msl_m=500.0, alt_rel_m=92.0,
+            time_boot_ms=10000,
+        )
+        result = decode_mavlink_v2(msg)
+        assert result is not None
+        msg_id, payload = result
+        assert msg_id == MAVLINK_MSG_ID_GLOBAL_POSITION_INT
+        fields = struct.unpack_from('<IiiiihhhH', payload)
+        # lat in 1e-7 degrees
+        np.testing.assert_allclose(fields[1] / 1e7, 47.3769, atol=1e-4)
+        np.testing.assert_allclose(fields[2] / 1e7, 8.5417, atol=1e-4)
+
+    def test_vfr_hud_encode_decode(self):
+        """VFR HUD message should roundtrip."""
+        from mavlink_bridge import (build_vfr_hud, decode_mavlink_v2,
+                                     MAVLINK_MSG_ID_VFR_HUD)
+        import struct
+        msg = build_vfr_hud(
+            airspeed=15.5, groundspeed=14.2,
+            heading_deg=90, throttle_pct=65,
+            alt_msl=500.0, climb_rate=2.5,
+        )
+        result = decode_mavlink_v2(msg)
+        assert result is not None
+        msg_id, payload = result
+        assert msg_id == MAVLINK_MSG_ID_VFR_HUD
+        fields = struct.unpack_from('<ffhHff', payload)
+        np.testing.assert_allclose(fields[0], 15.5, atol=1e-4)
+        np.testing.assert_allclose(fields[1], 14.2, atol=1e-4)
+
+    def test_command_long_parse(self):
+        """COMMAND_LONG parsing should extract command ID and params."""
+        from mavlink_bridge import (encode_mavlink_v2, parse_mavlink_payload,
+                                     MAVLINK_MSG_ID_COMMAND_LONG,
+                                     MAV_CMD_COMPONENT_ARM_DISARM)
+        import struct
+        # Build a COMMAND_LONG payload: 7 params(f32) + command(u16) +
+        # target_system(u8) + target_component(u8) + confirmation(u8)
+        payload = struct.pack('<fffffffHBBB',
+                              1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,  # params
+                              MAV_CMD_COMPONENT_ARM_DISARM,          # command
+                              1, 1, 0)                               # target, confirm
+        result = parse_mavlink_payload(MAVLINK_MSG_ID_COMMAND_LONG, payload)
+        assert result is not None
+        assert result.command_id == MAV_CMD_COMPONENT_ARM_DISARM
+        np.testing.assert_allclose(result.param1, 1.0)
+
+    def test_enu_to_gps_conversion(self):
+        """ENU→GPS conversion should produce correct lat/lon offsets."""
+        from mavlink_bridge import _enu_to_gps
+        # Zero offset should return reference point
+        lat, lon, alt = _enu_to_gps(np.array([0.0, 0.0, 0.0]),
+                                     ref_lat=47.3769, ref_lon=8.5417,
+                                     ref_alt=408.0)
+        np.testing.assert_allclose(lat, 47.3769, atol=1e-6)
+        np.testing.assert_allclose(lon, 8.5417, atol=1e-6)
+        np.testing.assert_allclose(alt, 408.0, atol=0.1)
+
+        # 100m North should increase latitude
+        lat2, _, _ = _enu_to_gps(np.array([0.0, 100.0, 0.0]),
+                                  ref_lat=47.3769, ref_lon=8.5417,
+                                  ref_alt=408.0)
+        assert lat2 > lat
+
+    def test_sim_state_from_record(self):
+        """SimState should be correctly populated from a SimRecord."""
+        from mavlink_bridge import sim_state_from_record, SimState
+        from drone_physics import SimRecord
+        record = SimRecord(
+            t=5.0,
+            position=np.array([10.0, 20.0, 30.0]),
+            velocity=np.array([1.0, 2.0, 3.0]),
+            euler=(0.1, -0.2, 1.5),
+            thrust=15.0,
+            angular_velocity=np.array([0.01, -0.02, 0.03]),
+        )
+        state = sim_state_from_record(record, max_thrust=25.0)
+        assert state.time_s == 5.0
+        np.testing.assert_allclose(state.position, [10.0, 20.0, 30.0])
+        np.testing.assert_allclose(state.roll, 0.1)
+        np.testing.assert_allclose(state.thrust_pct, 60.0)  # 15/25 * 100
+
+    def test_invalid_message_returns_none(self):
+        """Decoding garbage data should return None."""
+        from mavlink_bridge import decode_mavlink_v2
+        assert decode_mavlink_v2(b'\x00\x01\x02') is None
+        assert decode_mavlink_v2(b'') is None
+        assert decode_mavlink_v2(b'\xFD' + b'\x00' * 20) is None

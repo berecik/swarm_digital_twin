@@ -43,14 +43,15 @@ Each drone is an independent ROS 2 entity.
 -   `/heavy_lift_core`: Phase 2 core logic (DCA, Admittance Control, 6-agent redundancy).
 -   `/perception`: Python nodes for vision and 3D localization.
 -   `/simulation`: Mock simulators, standalone physics engine, and test runners.
-    -   `drone_physics.py`: Full physics engine — rigid-body dynamics with two modes: legacy linear drag (world-frame) or quadratic drag with body-frame dynamics (Valencia et al. Eq. 3/5). ISA atmosphere, airframe presets, terrain-aware ground collision.
+    -   `drone_physics.py`: Full physics engine — rigid-body dynamics with two modes: legacy linear drag (world-frame) or quadratic drag with body-frame dynamics (Valencia et al. Eq. 3/5). ISA atmosphere, airframe presets (quad + fixed-wing), AoA-dependent lift with stall model, terrain-aware ground collision.
     -   `wind_model.py`: Wind perturbation model (constant, Dryden turbulence, flight-log replay) following paper Eq. 5-7.
     -   `terrain.py`: Terrain elevation model (flat, grid, STL, analytical function) with bilinear interpolation and collision detection.
     -   `flight_log.py`: Ardupilot flight log parser (CSV) for validation against real data.
     -   `validation.py`: RMSE metrics and comparison plots (paper Table 5, Fig. 13 style).
     -   `drone_scenario.py`: Full-featured scenario over terrain with wind and quadratic drag. 7 AGL-relative waypoints with terrain clearance verification.
     -   `visualize_drone_3d.py`: 3D animated visualization with terrain surface, wind indicator, AGL tracking, ground shadow projected onto terrain, and telemetry panels.
-    -   `test_drone_physics.py`: 41 pytest tests covering rotation math, gravity, hover, drag (linear + quadratic), PID, position control, simulation, energy conservation, atmosphere, wind, inertia, body-frame dynamics, validation, and terrain.
+    -   `mavlink_bridge.py`: MAVLink v2 UDP bridge connecting the standalone sim to QGroundControl. Sends heartbeat, attitude, GPS, HUD, SYS_STATUS. Receives COMMAND_LONG and position targets.
+    -   `test_drone_physics.py`: 64 pytest tests covering rotation math, gravity, hover, drag (linear + quadratic), PID, position control, simulation, energy conservation, atmosphere, wind, inertia, body-frame dynamics, validation, terrain, fixed-wing aerodynamics (AoA, stall, lift), and MAVLink bridge.
 -   `/gazebo`: Gazebo SITL integration (worlds, models, launch files, wind ROS node).
 -   `/docs`: Detailed project documentation.
     -   [`docs/architecture.md`](docs/architecture.md): System design and components.
@@ -121,7 +122,7 @@ When an agent receives the "do tests" command, it must prioritize coverage and r
     -   **Module Testing Docs:** Update specific files like `swarm_control/TESTING.md` with detailed test descriptions.
     -   **Project Docs:** Ensure documentation reflects any changes in system behavior discovered during testing.
 
-*Last Maintenance: 2026-03-23 - Added standalone drone physics engine (`drone_physics.py`), flight scenario (`drone_scenario.py`), 3D visualization (`visualize_drone_3d.py`), and 19 physics unit tests (`test_drone_physics.py`). All 33 tests pass (19 physics + 13 perception + 1 sim placeholder).*
+*Last Maintenance: 2026-03-24 - Phase 3 complete: fixed-wing aerodynamics (`FixedWingAero` with AoA-dependent CL/CD and stall), MAVLink v2 bridge (`mavlink_bridge.py`). All 64 physics + MAVLink tests pass.*
 
 ### 3. Simulation First
 Always validate logic in simulation.
@@ -146,8 +147,8 @@ If you are tasked with moving the project forward, prioritize:
 3.  **Admittance Control (Phase 2):** Implementing force-feedback logic for tethered flight.
 4.  **Multi-drone physics simulation:** Extend `drone_physics.py` to support multiple drones with Boids flocking (port from `boids.rs`) and inter-drone collision avoidance in the standalone simulator.
 5.  ~~**Wind & turbulence model:**~~ **DONE** — Constant wind, Dryden turbulence, and flight-log replay implemented in `wind_model.py`.
-6.  **Phase 3 — Fixed-wing aerodynamics:** AoA-dependent CL/CD with stall model (see `docs/REFACTOR_PLAN.md`).
-7.  **Phase 3 — MAVLink bridge:** Connect standalone sim to QGroundControl via `pymavlink`.
+6.  ~~**Phase 3 — Fixed-wing aerodynamics:**~~ **DONE** — `FixedWingAero` with AoA-dependent CL/CD, pre/post-stall model, lift force, and `make_fixed_wing()` preset.
+7.  ~~**Phase 3 — MAVLink bridge:**~~ **DONE** — `mavlink_bridge.py` with MAVLink v2 UDP bridge (heartbeat, attitude, GPS, HUD, commands). No external dependency — pure Python.
 
 ---
 

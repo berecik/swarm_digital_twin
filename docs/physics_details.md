@@ -267,16 +267,104 @@ These errors drive three independent PID controllers that output torque commands
 
 ---
 
-## 9. Airframe Presets
+## 9. Aerodynamic Lift (Paper Eq. 6) and Fixed-Wing Stall Model
+
+### 9.1 Lift Force
+
+Aerodynamic lift acts perpendicular to the velocity vector in the body XZ-plane:
+
+$$\mathbf{F}_L = \frac{1}{2} \rho A \, C_L(\alpha) \, |\mathbf{V}_b|^2 \, \hat{\mathbf{L}}$$
+
+where $\hat{\mathbf{L}}$ is the lift direction: the body-frame velocity vector rotated +90° in the XZ plane.
+
+$$\hat{\mathbf{L}} = \frac{[-\hat{V}_z, \; 0, \; \hat{V}_x]}{|[-\hat{V}_z, \; 0, \; \hat{V}_x]|}$$
+
+For quadrotors, $C_L = 0$ so no lift is generated. For fixed-wing aircraft, $C_L$ is a function of angle of attack $\alpha$.
+
+### 9.2 Angle of Attack
+
+The angle of attack is computed from the body-frame velocity:
+
+$$\alpha = \arctan\!\left(\frac{-V_z^b}{V_x^b}\right)$$
+
+where $V_x^b$ is the forward body velocity and $V_z^b$ is the upward body velocity.
+
+### 9.3 Fixed-Wing Aerodynamic Model (`FixedWingAero`)
+
+Following the paper's Table 3 and Fig. 5, the fixed-wing model uses piecewise-linear lift and quadratic drag curves with a stall transition:
+
+**Pre-stall** ($|\alpha| < \alpha_{stall}$):
+
+$$C_L(\alpha) = C_{L\alpha} \cdot (\alpha - \alpha_0)$$
+$$C_D(\alpha) = C_{D0} + C_{D\alpha} \cdot \alpha^2$$
+
+**Post-stall** ($|\alpha| \geq \alpha_{stall}$):
+
+$$C_L(\alpha) = C_{L\alpha,stall} \cdot (\alpha - \alpha_0)$$
+$$C_D(\alpha) = C_{D0} + C_{D\alpha,stall} \cdot \alpha^2$$
+
+| Parameter | Symbol | Default | Unit | Description |
+|:---|:---:|:---:|:---:|:---|
+| Zero-lift AoA | $\alpha_0$ | 0.05236 | rad (~3°) | AoA at which $C_L = 0$ |
+| Stall angle | $\alpha_{stall}$ | 0.26180 | rad (~15°) | Transition to post-stall regime |
+| Parasitic drag | $C_{D0}$ | 0.02 | - | Drag at zero AoA |
+| Lift slope (pre-stall) | $C_{L\alpha}$ | 3.50141 | 1/rad | Lift curve slope before stall |
+| Drag slope (pre-stall) | $C_{D\alpha}$ | 0.63662 | 1/rad² | Induced drag slope before stall |
+| Lift slope (post-stall) | $C_{L\alpha,stall}$ | -1.1459 | 1/rad | Negative — lift drops after stall |
+| Drag slope (post-stall) | $C_{D\alpha,stall}$ | 2.29183 | 1/rad² | Drag increases sharply after stall |
+
+**Stall behaviour:** At $\alpha > \alpha_{stall}$, the lift slope becomes negative (lift decreases) while drag increases sharply. This models the flow separation that occurs when the wing exceeds its critical angle of attack.
+
+---
+
+## 10. Airframe Presets
 
 | Preset | Mass | Inertia | Aero | Use case |
 |:---|:---:|:---|:---|:---|
 | `make_generic_quad()` | 1.5 kg | diag(0.02, 0.02, 0.04) | None (linear drag) | Fast prototyping |
 | `make_holybro_x500()` | 2.0 kg | diag(0.03, 0.03, 0.05) | $C_D=1.1$, $A=0.06$ m^2 | Paper validation |
+| `make_fixed_wing()` | 3.0 kg | with off-diag products | `FixedWingAero` ($A=0.50$ m^2) | Fixed-wing simulation |
 
 ---
 
-## 10. Validation Methodology
+## 11. MAVLink Bridge
+
+The `mavlink_bridge.py` module provides a UDP MAVLink v2 bridge connecting the standalone simulator to QGroundControl or other MAVLink-compatible ground control stations.
+
+### Messages Sent (Sim → GCS)
+
+| Message | ID | Content | Rate |
+|:---|:---:|:---|:---:|
+| `HEARTBEAT` | 0 | Vehicle type, armed state, mode | 1 Hz |
+| `ATTITUDE` | 30 | Roll, pitch, yaw + rates | Per sim step |
+| `GLOBAL_POSITION_INT` | 33 | GPS (lat/lon/alt), velocity (NED) | Per sim step |
+| `VFR_HUD` | 74 | Airspeed, groundspeed, heading, throttle, altitude, climb rate | Per sim step |
+| `SYS_STATUS` | 1 | Battery voltage, current, remaining % | Per sim step |
+
+### Messages Received (GCS → Sim)
+
+| Message | ID | Content |
+|:---|:---:|:---|
+| `COMMAND_LONG` | 76 | Arm/disarm, mode change |
+| `SET_POSITION_TARGET_LOCAL_NED` | 84 | Guided-mode waypoints |
+
+### Coordinate Conversion (ENU → GPS)
+
+The simulator uses ENU (East-North-Up) internally. For MAVLink GPS messages, positions are converted:
+
+$$\text{lat} = \text{lat}_{ref} + \frac{y_{ENU}}{111320}$$
+$$\text{lon} = \text{lon}_{ref} + \frac{x_{ENU}}{111320 \cdot \cos(\text{lat}_{ref})}$$
+$$\text{alt}_{MSL} = \text{alt}_{ref} + z_{ENU}$$
+
+Default reference: Zurich (47.3769°N, 8.5417°E, 408 m MSL).
+
+### MAVLink v2 Wire Format
+
+Each message uses the MAVLink v2 framing: `0xFD` start byte, 10-byte header (payload length, flags, sequence, system/component ID, 3-byte message ID), payload, X.25 CRC with message-specific CRC extra byte.
+
+---
+
+## 12. Validation Methodology
 
 Following Valencia et al. (2025) Table 5 and Fig. 13, simulation accuracy is measured by:
 
@@ -292,7 +380,7 @@ Additional metrics: median error, 25th/75th percentiles, maximum error. These ar
 
 ---
 
-## 11. Numerical Integration Notes
+## 13. Numerical Integration Notes
 
 - **Timestep:** Default $\Delta t = 0.005$ s (200 Hz). Smaller timesteps improve accuracy at the cost of computation.
 - **Integration scheme:** Semi-implicit Euler (velocity update then position update using new velocity contribution).
@@ -301,7 +389,7 @@ Additional metrics: median error, 25th/75th percentiles, maximum error. These ar
 
 ---
 
-## 12. Units and Conventions
+## 14. Units and Conventions
 
 | Quantity | Unit | Convention |
 |:---|:---:|:---|

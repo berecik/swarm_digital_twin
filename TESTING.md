@@ -9,7 +9,7 @@ This document tracks the high-level testing status and provides detailed explana
 | `sar_swarm_control` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM Verified. |
 | `sar_perception` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (41) | ✅ Pass (Scenario) | N/A | Full physics + terrain + Gazebo |
+| **Drone Physics** (Python) | ✅ Pass (64) | ✅ Pass (Scenario) | N/A | Full physics + terrain + fixed-wing + MAVLink |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `sar_swarm_control` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -146,6 +146,33 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_terrain_in_physics_step`**: Drone with zero thrust lands on 20m terrain, not z=0.
 - **`test_from_function_terrain`**: `from_function(lambda x,y: 0.1*x)` slope gives correct elevation.
 - **`test_stl_file_not_found`**: Nonexistent STL raises FileNotFoundError.
+
+#### P. Fixed-Wing Aerodynamics (Phase 3)
+- **`test_aoa_computation_level_flight`**: Level forward flight (V=[20,0,0]) produces AoA=0.
+- **`test_aoa_computation_climbing`**: Climbing flight (V_z > 0) produces negative AoA.
+- **`test_aoa_computation_descending`**: Descending flight (V_z < 0) produces positive AoA.
+- **`test_aoa_zero_velocity`**: Zero velocity returns AoA=0 (safe default).
+- **`test_pre_stall_cl_linear`**: CL=0 at alpha_0; linear C_La slope at 10° AoA.
+- **`test_post_stall_cl_drops`**: CL decreases after stall angle (negative post-stall slope).
+- **`test_cd_increases_with_aoa`**: CD increases with AoA due to induced drag.
+- **`test_post_stall_cd_increases_faster`**: Post-stall CD slope (C_Da_stall) is steeper than pre-stall.
+- **`test_lift_force_perpendicular_to_velocity`**: Lift vector is orthogonal to velocity (dot product ≈ 0).
+- **`test_lift_zero_for_quadrotor`**: AeroCoefficients with C_L=0 produces zero lift force.
+- **`test_fixed_wing_preset`**: `make_fixed_wing()` returns FixedWingAero with correct parameters.
+- **`test_fixed_wing_generates_lift_in_flight`**: Forward flight with descent generates upward lift.
+- **`test_quadratic_drag_uses_aoa_dependent_cd`**: Drag uses `get_CD(alpha)` — higher AoA → more drag.
+
+#### Q. MAVLink Bridge (Phase 3)
+- **`test_crc_computation`**: MAVLink X.25 CRC is consistent and in range [0, 0xFFFF].
+- **`test_heartbeat_encoding`**: Heartbeat has MAVLink v2 STX byte (0xFD) and correct length.
+- **`test_heartbeat_decode_roundtrip`**: Encoded heartbeat decodes to msg_id=0, non-empty payload.
+- **`test_attitude_encode_decode`**: Attitude message roundtrips: time, roll, pitch, yaw match.
+- **`test_global_position_encode_decode`**: GPS message encodes lat/lon in 1e-7 degrees correctly.
+- **`test_vfr_hud_encode_decode`**: VFR HUD roundtrips airspeed and groundspeed.
+- **`test_command_long_parse`**: COMMAND_LONG payload parses command_id and param1 correctly.
+- **`test_enu_to_gps_conversion`**: ENU→GPS: zero offset returns ref point; +Y increases latitude.
+- **`test_sim_state_from_record`**: SimRecord converts to SimState with correct thrust %.
+- **`test_invalid_message_returns_none`**: Garbage data and truncated messages return None.
 
 ### 5. `sar_simulation` — Swarm Sim (`test_swarm_flight.py`)
 - **`test_swarm_flight`**:

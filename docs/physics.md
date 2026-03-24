@@ -15,7 +15,8 @@ The engine (`simulation/drone_physics.py`) simulates the following dynamics:
 - **Gravity:** Applied globally (g = 9.81 m/s^2).
 - **Thrust:** Applied along the body-frame Z-axis.
 - **Aerodynamic Drag (legacy):** Linear drag proportional to velocity. Used when no `AeroCoefficients` are set.
-- **Aerodynamic Drag (quadratic):** Body-frame quadratic drag following Valencia et al. (2025) Eq. 5. Enabled via `AeroCoefficients`.
+- **Aerodynamic Drag (quadratic):** Body-frame quadratic drag following Valencia et al. (2025) Eq. 5. Enabled via `AeroCoefficients`. AoA-dependent C_D for fixed-wing via `FixedWingAero`.
+- **Aerodynamic Lift:** AoA-dependent lift with stall model (Eq. 6). Pre/post-stall CL/CD curves via `FixedWingAero`. Zero for quadrotors.
 - **ISA Atmosphere:** Altitude-dependent air density for drag and wind calculations.
 - **Body-Frame Dynamics:** When quadratic drag is active, forces are computed in the body frame with Coriolis coupling (paper Eq. 3).
 - **Wind Perturbation:** Optional `WindField` model supporting constant wind, Dryden turbulence, and flight-log replay (paper Eq. 5-7).
@@ -33,14 +34,15 @@ The engine (`simulation/drone_physics.py`) simulates the following dynamics:
 
 | File | Description |
 | :--- | :--- |
-| `drone_physics.py` | Core engine: rigid-body dynamics, quadratic drag, atmosphere, PID controllers, airframe presets. |
+| `drone_physics.py` | Core engine: rigid-body dynamics, quadratic drag, lift with stall, atmosphere, PID controllers, airframe presets (quad + fixed-wing). |
 | `wind_model.py` | Wind perturbation model (constant, Dryden turbulence, flight-log replay). |
 | `terrain.py` | Terrain elevation model (flat, grid, STL, analytical function) with bilinear interpolation. |
 | `flight_log.py` | Ardupilot flight log parser (CSV) for validation against real data. |
 | `validation.py` | RMSE metrics and comparison plots (paper Table 5, Fig. 13 style). |
 | `drone_scenario.py` | Full-featured scenario: 7 waypoints over terrain with wind and quadratic drag. |
 | `visualize_drone_3d.py` | 3D animated visualization with terrain surface, wind indicator, AGL tracking. |
-| `test_drone_physics.py` | 41 pytest tests covering all physics modules. |
+| `mavlink_bridge.py` | MAVLink v2 UDP bridge to QGroundControl (heartbeat, attitude, GPS, HUD). |
+| `test_drone_physics.py` | 64 pytest tests covering all physics modules + MAVLink. |
 
 ---
 
@@ -83,7 +85,7 @@ The visualization shows the 3D terrain surface with the drone's trajectory, atti
 
 ## Testing & Verification
 
-The physics engine is verified by 41 unit tests covering:
+The physics engine is verified by 64 unit tests covering:
 
 1. **Math Integrity:** Rotation matrix identity, roundtrip Euler conversions, orthogonality.
 2. **Physics Correctness:** Analytical freefall, ground constraints.
@@ -96,6 +98,8 @@ The physics engine is verified by 41 unit tests covering:
 9. **Body-Frame Dynamics:** Hover equivalence, freefall accuracy.
 10. **Validation:** RMSE computation, flight log CSV parsing.
 11. **Terrain:** Flat/grid/function elevation, collision detection, physics integration, STL errors.
+12. **Fixed-Wing Aerodynamics:** AoA computation, pre/post-stall CL/CD, lift perpendicularity, stall behaviour, preset loading, AoA-dependent drag.
+13. **MAVLink Bridge:** CRC computation, message encoding/decoding roundtrips (heartbeat, attitude, GPS, HUD), command parsing, ENU→GPS conversion, SimState conversion.
 
 ---
 

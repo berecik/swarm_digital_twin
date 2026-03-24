@@ -33,14 +33,15 @@ The framework enables:
 ├── heavy_lift_core/            # Distributed lift system logic (Rust)
 ├── perception/                 # AI/Vision detection & localization (Python)
 ├── simulation/                 # Simulators, physics engine & tests (Python)
-│   ├── drone_physics.py        # Rigid-body physics: quadratic drag, atmosphere, body-frame dynamics
+│   ├── drone_physics.py        # Rigid-body physics: quadratic drag, lift+stall, atmosphere, body-frame dynamics
 │   ├── wind_model.py           # Wind perturbation: constant, Dryden, flight-log replay
 │   ├── terrain.py              # Terrain elevation: flat, grid, STL, analytical function
 │   ├── flight_log.py           # Ardupilot flight log parser (CSV)
 │   ├── validation.py           # RMSE metrics & comparison plots
 │   ├── drone_scenario.py       # Full-featured scenario over terrain with wind
 │   ├── visualize_drone_3d.py   # 3D animated visualization with terrain & wind
-│   └── test_drone_physics.py   # 41 physics unit tests
+│   ├── mavlink_bridge.py       # MAVLink v2 UDP bridge to QGroundControl
+│   └── test_drone_physics.py   # 64 physics + MAVLink unit tests
 ├── gazebo/                     # Gazebo SITL integration
 │   ├── worlds/                 # World files (empty, terrain)
 │   ├── models/x500/            # Holybro X500 V2 SDF model
@@ -75,7 +76,8 @@ Detailed documentation is available in the [docs/](docs/) directory:
 | **Safety-Critical Control** | **Rust** (rclrs, MAVSDK-Rust) |
 | **AI & Computer Vision** | **Python** (PyTorch, YOLOv8/11) |
 | **Middleware** | **Eclipse Zenoh** & **ROS 2** (Humble/Jazzy) |
-| **Physics Simulation** | **Python** (NumPy) — quadratic drag, wind, terrain, body-frame dynamics |
+| **Physics Simulation** | **Python** (NumPy) — quadratic drag, lift+stall, wind, terrain, body-frame dynamics |
+| **MAVLink Bridge** | **Python** (custom MAVLink v2) — connects sim to QGroundControl |
 | **3D Visualization** | **Matplotlib** (terrain surface, wind indicator, AGL tracking) |
 | **Full Simulation** | Gazebo Harmonic / PX4 SITL / ArduPilot |
 
