@@ -6,9 +6,12 @@ Domain: app.marysia.drone
 Website: https://marysia.app
 
 Quadrotor rigid-body simulation with:
-  - Gravity, thrust, aerodynamic drag
+  - Gravity, thrust, aerodynamic drag (linear or quadratic)
   - Attitude via rotation matrix (roll/pitch/yaw)
   - Angular velocity and torque dynamics
+  - Body-frame force decomposition (Valencia et al. 2025, Eq. 3)
+  - Quadratic aerodynamic drag with ISA atmosphere model (Eq. 5)
+  - Wind perturbation support (Eq. 5-7)
   - Simple PID position controller
   - No ROS 2 dependency — pure numpy
 """
@@ -23,18 +26,68 @@ from typing import List, Tuple, Optional
 GRAVITY = 9.81  # m/s^2
 
 
+# ── Atmosphere & Aerodynamics ────────────────────────────────────────────────
+
+@dataclass
+class Atmosphere:
+    """ISA-based atmosphere model (troposphere)."""
+    rho_sea_level: float = 1.225      # kg/m³
+    altitude_msl: float = 0.0         # m above mean sea level
+
+    @property
+    def rho(self) -> float:
+        """Air density at configured altitude using ISA troposphere formula."""
+        return self.rho_sea_level * (1 - 2.2558e-5 * self.altitude_msl) ** 4.2559
+
+
+@dataclass
+class AeroCoefficients:
+    """Aerodynamic coefficients for quadratic drag model (paper Eq. 5)."""
+    reference_area: float = 0.04      # m² (quadrotor frontal area)
+    C_D: float = 1.0                  # drag coefficient
+    C_L: float = 0.0                  # lift coefficient (0 for quadrotor)
+
+
 # ── Data classes ─────────────────────────────────────────────────────────────
 
 @dataclass
 class DroneParams:
     mass: float = 1.5            # kg
     arm_length: float = 0.25     # m  (motor-to-center)
-    drag_coeff: float = 0.1      # linear drag  N/(m/s)
+    drag_coeff: float = 0.1      # linear drag  N/(m/s)  (used when aero=None)
     ang_drag_coeff: float = 0.02 # angular drag  N·m/(rad/s)
     max_thrust: float = 25.0     # N  (total, all motors)
     max_torque: float = 5.0      # N·m per axis
     inertia: np.ndarray = field(
         default_factory=lambda: np.diag([0.02, 0.02, 0.04])  # kg·m²
+    )
+    aero: Optional[AeroCoefficients] = None
+    atmo: Optional[Atmosphere] = None
+
+
+# ── Airframe presets ─────────────────────────────────────────────────────────
+
+def make_generic_quad() -> DroneParams:
+    """Generic 1.5 kg quadrotor with default parameters."""
+    return DroneParams()
+
+
+def make_holybro_x500() -> DroneParams:
+    """Holybro X500 V2 quadrotor (similar to paper's IRS-4 validation platform)."""
+    return DroneParams(
+        mass=2.0,
+        arm_length=0.25,
+        drag_coeff=0.1,
+        ang_drag_coeff=0.02,
+        max_thrust=40.0,
+        max_torque=6.0,
+        inertia=np.array([
+            [ 0.030,  0.0,    0.0   ],
+            [ 0.0,    0.030,  0.0   ],
+            [ 0.0,    0.0,    0.050 ],
+        ]),
+        aero=AeroCoefficients(reference_area=0.06, C_D=1.1, C_L=0.0),
+        atmo=Atmosphere(),
     )
 
 
@@ -86,9 +139,33 @@ def skew(v: np.ndarray) -> np.ndarray:
 
 # ── Physics step ─────────────────────────────────────────────────────────────
 
+def _compute_quadratic_drag(V_body: np.ndarray, aero: AeroCoefficients,
+                            rho: float) -> np.ndarray:
+    """Quadratic aerodynamic drag in body frame (paper Eq. 5).
+
+    F_D = -0.5 * rho * A * C_D * |V|^2 * V_hat
+    """
+    V_mag = np.linalg.norm(V_body)
+    if V_mag < 1e-8:
+        return np.zeros(3)
+    V_hat = V_body / V_mag
+    return -0.5 * rho * aero.reference_area * aero.C_D * V_mag**2 * V_hat
+
+
 def physics_step(state: DroneState, cmd: DroneCommand,
-                 params: DroneParams, dt: float) -> DroneState:
-    """Advance the drone state by dt seconds."""
+                 params: DroneParams, dt: float,
+                 wind=None, t: float = 0.0) -> DroneState:
+    """Advance the drone state by dt seconds.
+
+    Args:
+        state: Current drone state.
+        cmd: Thrust/torque command.
+        params: Drone parameters. When params.aero is set, uses quadratic
+                drag in body frame (Eq. 3/5). Otherwise uses linear drag.
+        dt: Timestep in seconds.
+        wind: Optional WindField for wind perturbation (Eq. 5-7).
+        t: Current simulation time (used by wind model).
+    """
 
     # Clamp commands
     thrust = np.clip(cmd.thrust, 0.0, params.max_thrust)
@@ -96,22 +173,55 @@ def physics_step(state: DroneState, cmd: DroneCommand,
 
     R = state.rotation
     omega = state.angular_velocity
+    aero = params.aero
+    atmo = params.atmo
 
-    # ── Forces in world frame ────────────────────────────────────────────
-    gravity_force = np.array([0.0, 0.0, -params.mass * GRAVITY])
+    if aero is not None:
+        # ── Body-frame dynamics (paper Eq. 3) ─────────────────────────────
+        rho = atmo.rho if atmo is not None else 1.225
 
-    # Thrust along body z-axis (third column of R)
-    thrust_world = R @ np.array([0.0, 0.0, thrust])
+        # Velocity in body frame
+        V_body = R.T @ state.velocity
 
-    # Aerodynamic drag (world frame, opposes velocity)
-    drag_force = -params.drag_coeff * state.velocity
+        # Forces in body frame
+        gravity_body = R.T @ np.array([0.0, 0.0, -params.mass * GRAVITY])
+        thrust_body = np.array([0.0, 0.0, thrust])
+        drag_body = _compute_quadratic_drag(V_body, aero, rho)
 
-    total_force = gravity_force + thrust_world + drag_force
+        # Wind perturbation (body frame)
+        wind_body = np.zeros(3)
+        if wind is not None:
+            wind_world = wind.get_force(t, state.position, aero, rho)
+            wind_body = R.T @ wind_world
 
-    # ── Linear dynamics ──────────────────────────────────────────────────
-    accel = total_force / params.mass
-    new_vel = state.velocity + accel * dt
-    new_pos = state.position + state.velocity * dt + 0.5 * accel * dt**2
+        total_force_body = gravity_body + thrust_body + drag_body + wind_body
+
+        # Body-frame acceleration with Coriolis: a = F/m - omega x V_body
+        accel_body = total_force_body / params.mass - np.cross(omega, V_body)
+
+        # Integrate in body frame, then transform to world
+        new_V_body = V_body + accel_body * dt
+        new_vel = R @ new_V_body
+
+        # Position update in world frame
+        accel_world = R @ accel_body
+        new_pos = state.position + state.velocity * dt + 0.5 * accel_world * dt**2
+    else:
+        # ── Legacy world-frame dynamics (linear drag) ─────────────────────
+        gravity_force = np.array([0.0, 0.0, -params.mass * GRAVITY])
+        thrust_world = R @ np.array([0.0, 0.0, thrust])
+        drag_force = -params.drag_coeff * state.velocity
+
+        # Wind perturbation (world frame, if provided)
+        wind_force = np.zeros(3)
+        if wind is not None:
+            wind_force = wind.get_force(t, state.position, None, 1.225)
+
+        total_force = gravity_force + thrust_world + drag_force + wind_force
+
+        accel = total_force / params.mass
+        new_vel = state.velocity + accel * dt
+        new_pos = state.position + state.velocity * dt + 0.5 * accel * dt**2
 
     # Ground constraint
     if new_pos[2] < 0.0:
@@ -257,10 +367,14 @@ def run_simulation(waypoints: List[np.ndarray],
                    dt: float = 0.005,
                    waypoint_radius: float = 0.5,
                    hover_time: float = 2.0,
-                   max_time: float = 120.0) -> List[SimRecord]:
+                   max_time: float = 120.0,
+                   wind=None) -> List[SimRecord]:
     """
     Fly through waypoints in order. Hover at each for hover_time seconds.
     Returns a list of SimRecord for every timestep.
+
+    Args:
+        wind: Optional WindField for wind perturbation during simulation.
     """
     if params is None:
         params = DroneParams()
@@ -276,7 +390,7 @@ def run_simulation(waypoints: List[np.ndarray],
     while t < max_time and wp_idx < len(waypoints):
         target = waypoints[wp_idx]
         cmd = controller.compute(state, target, target_yaw=0.0, dt=dt)
-        state = physics_step(state, cmd, params, dt)
+        state = physics_step(state, cmd, params, dt, wind=wind, t=t)
 
         roll, pitch, yaw = rotation_to_euler(state.rotation)
         records.append(SimRecord(

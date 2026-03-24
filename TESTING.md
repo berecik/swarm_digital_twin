@@ -2,14 +2,14 @@
 
 This document tracks the high-level testing status and provides detailed explanations of the verification suite across the Swarm Digital Twin project.
 
-## 🧪 Current Status (2026-03-23)
+## 🧪 Current Status (2026-03-24)
 
 | Module | Unit Tests | Integration Tests | SITL / Hardware | Status |
 | :--- | :---: | :---: | :---: | :--- |
 | `sar_swarm_control` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM Verified. |
 | `sar_perception` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (19) | ✅ Pass (Scenario) | N/A | Full rigid-body sim verified |
+| **Drone Physics** (Python) | ✅ Pass (35) | ✅ Pass (Scenario) | N/A | Quadratic drag, wind, body-frame dynamics |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `sar_swarm_control` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -110,6 +110,34 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 
 #### H. Energy Conservation
 - **`test_freefall_energy_conservation`**: KE + PE conserved within 0.5% during drag-free freefall.
+
+#### I. Quadratic Drag (Phase 1)
+- **`test_quadratic_drag_scales_with_v_squared`**: Drag force quadruples when velocity doubles (V² scaling).
+- **`test_high_altitude_less_drag`**: Same velocity at 4500m ASL produces ~63% of sea-level drag.
+- **`test_terminal_velocity`**: Freefall with quadratic drag converges to finite terminal velocity (variation < 5%).
+
+#### J. Atmosphere Model (Phase 1)
+- **`test_sea_level_density`**: ISA sea level density = 1.225 kg/m³.
+- **`test_high_altitude_density`**: ISA at 4500m = ~0.77 kg/m³.
+
+#### K. Wind Model (Phase 1)
+- **`test_no_wind_unchanged`**: `turbulence_type="none"` produces zero force.
+- **`test_constant_wind_deflects_hover`**: Hovering drone drifts > 1m downwind in 10s with 5 m/s wind.
+- **`test_stronger_wind_more_force`**: Wind force scales with V² (10 m/s wind → 4x force of 5 m/s).
+- **`test_wind_from_log_matches_data`**: `from_log` interpolates altitude profile correctly.
+
+#### L. Inertia & Presets (Phase 1)
+- **`test_off_diagonal_inertia_coupling`**: Off-diagonal inertia terms cause cross-axis angular velocity coupling.
+- **`test_preset_loading`**: `make_generic_quad()` and `make_holybro_x500()` return correct parameters.
+
+#### M. Body-Frame Dynamics (Phase 1)
+- **`test_body_frame_hover_equivalent`**: Body-frame quadratic drag hover matches world-frame linear drag hover at ~10m.
+- **`test_body_frame_freefall`**: Body-frame freefall (C_D=0) matches analytical kinematics.
+
+#### N. Validation Module (Phase 1)
+- **`test_rmse_identical`**: RMSE of identical trajectories = 0.
+- **`test_rmse_known_offset`**: Constant 1m X-offset → RMSE_x = 1.0.
+- **`test_flight_log_csv_roundtrip`**: FlightLog parses CSV, returns correct shape, origin at (0,0,0).
 
 ### 5. `sar_simulation` — Swarm Sim (`test_swarm_flight.py`)
 - **`test_swarm_flight`**:

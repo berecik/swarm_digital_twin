@@ -13,7 +13,10 @@ from drone_physics import (
     PositionController, PIDController,
     physics_step, euler_to_rotation, rotation_to_euler,
     run_simulation, GRAVITY,
+    AeroCoefficients, Atmosphere, _compute_quadratic_drag,
+    make_generic_quad, make_holybro_x500,
 )
+from wind_model import WindField
 
 
 # ── Rotation helpers ─────────────────────────────────────────────────────────
@@ -260,3 +263,275 @@ class TestEnergy:
 
         e1 = m * GRAVITY * state.position[2] + 0.5 * m * np.dot(state.velocity, state.velocity)
         np.testing.assert_allclose(e0, e1, rtol=0.005)
+
+
+# ── Phase 1: Quadratic Drag & Atmosphere ────────────────────────────────────
+
+class TestQuadraticDrag:
+    def test_quadratic_drag_scales_with_v_squared(self):
+        """Drag force should quadruple when velocity doubles."""
+        aero = AeroCoefficients(reference_area=0.04, C_D=1.0)
+        rho = 1.225
+        V1 = np.array([5.0, 0.0, 0.0])
+        V2 = np.array([10.0, 0.0, 0.0])
+
+        F1 = np.linalg.norm(_compute_quadratic_drag(V1, aero, rho))
+        F2 = np.linalg.norm(_compute_quadratic_drag(V2, aero, rho))
+
+        # F2/F1 should be (10/5)^2 = 4
+        np.testing.assert_allclose(F2 / F1, 4.0, rtol=1e-10)
+
+    def test_high_altitude_less_drag(self):
+        """Same velocity at 4500m ASL should produce less drag than sea level."""
+        aero = AeroCoefficients(reference_area=0.04, C_D=1.0)
+        atmo_sea = Atmosphere(altitude_msl=0.0)
+        atmo_high = Atmosphere(altitude_msl=4500.0)
+
+        V = np.array([10.0, 0.0, 0.0])
+        F_sea = np.linalg.norm(_compute_quadratic_drag(V, aero, atmo_sea.rho))
+        F_high = np.linalg.norm(_compute_quadratic_drag(V, aero, atmo_high.rho))
+
+        assert F_high < F_sea
+        # At 4500m, rho ~ 0.77, so drag ~ 0.77/1.225 = 0.63x
+        ratio = F_high / F_sea
+        assert 0.5 < ratio < 0.8
+
+    def test_terminal_velocity(self):
+        """Freefall with quadratic drag should converge to finite terminal velocity."""
+        aero = AeroCoefficients(reference_area=0.04, C_D=1.0)
+        atmo = Atmosphere()
+        params = DroneParams(aero=aero, atmo=atmo, drag_coeff=0.0)
+        state = DroneState(position=np.array([0.0, 0.0, 5000.0]))
+        cmd = DroneCommand(thrust=0.0)
+        dt = 0.005
+
+        speeds = []
+        for i in range(10000):  # 50 seconds
+            state = physics_step(state, cmd, params, dt)
+            if i % 200 == 0:
+                speeds.append(np.linalg.norm(state.velocity))
+
+        # Speed should stabilize (last few readings close together)
+        assert speeds[-1] > 10.0  # should be falling fast
+        # Terminal velocity reached: variation in last readings < 5%
+        recent = speeds[-5:]
+        variation = (max(recent) - min(recent)) / np.mean(recent)
+        assert variation < 0.05
+
+
+class TestAtmosphere:
+    def test_sea_level_density(self):
+        """Sea level should have standard ISA density."""
+        atmo = Atmosphere()
+        np.testing.assert_allclose(atmo.rho, 1.225, rtol=1e-6)
+
+    def test_high_altitude_density(self):
+        """4500m should have significantly lower density."""
+        atmo = Atmosphere(altitude_msl=4500.0)
+        assert atmo.rho < 1.0
+        # ISA at 4500m: ~0.77 kg/m³
+        np.testing.assert_allclose(atmo.rho, 0.7695, rtol=0.02)
+
+
+# ── Phase 1: Wind Model ────────────────────────────────────────────────────
+
+class TestWind:
+    def test_no_wind_unchanged(self):
+        """Wind with type='none' produces zero force."""
+        wind = WindField(turbulence_type="none")
+        force = wind.get_force(0.0, np.array([0.0, 0.0, 10.0]), None, 1.225)
+        np.testing.assert_allclose(force, np.zeros(3))
+
+    def test_constant_wind_deflects_hover(self):
+        """Drone hovering in constant wind should drift downwind."""
+        wind = WindField(wind_speed=5.0,
+                         wind_direction=np.array([1.0, 0.0, 0.0]),
+                         turbulence_type="constant")
+        params = DroneParams()
+        hover_thrust = params.mass * GRAVITY
+        state = DroneState(position=np.array([0.0, 0.0, 10.0]))
+        cmd = DroneCommand(thrust=hover_thrust)
+
+        for _ in range(2000):  # 10 seconds
+            state = physics_step(state, cmd, params, dt=0.005, wind=wind, t=0.0)
+
+        # Should have drifted in +x direction
+        assert state.position[0] > 1.0
+
+    def test_stronger_wind_more_force(self):
+        """Force should scale with V^2."""
+        aero = AeroCoefficients(reference_area=0.04, C_D=1.0)
+        w1 = WindField(wind_speed=5.0,
+                       wind_direction=np.array([1.0, 0.0, 0.0]),
+                       turbulence_type="constant")
+        w2 = WindField(wind_speed=10.0,
+                       wind_direction=np.array([1.0, 0.0, 0.0]),
+                       turbulence_type="constant")
+
+        pos = np.array([0.0, 0.0, 10.0])
+        F1 = np.linalg.norm(w1.get_force(0.0, pos, aero, 1.225))
+        F2 = np.linalg.norm(w2.get_force(0.0, pos, aero, 1.225))
+
+        # F2/F1 should be (10/5)^2 = 4
+        np.testing.assert_allclose(F2 / F1, 4.0, rtol=1e-6)
+
+    def test_wind_from_log_matches_data(self):
+        """Replayed log should produce expected force profile."""
+        profile = np.array([
+            [0.0, 0.0],
+            [5.0, 5.0],
+            [10.0, 10.0],
+        ])
+        wind = WindField(
+            wind_direction=np.array([0.0, 1.0, 0.0]),
+            turbulence_type="from_log",
+            altitude_profile=profile,
+        )
+
+        # At t=0, wind speed = 0 → zero force
+        v0 = wind.get_wind_velocity(0.0, np.zeros(3))
+        np.testing.assert_allclose(np.linalg.norm(v0), 0.0, atol=1e-8)
+
+        # At t=5, wind speed = 5 m/s in +y
+        v5 = wind.get_wind_velocity(5.0, np.zeros(3))
+        np.testing.assert_allclose(v5, [0.0, 5.0, 0.0], atol=1e-8)
+
+        # At t=7.5 (interpolated), wind speed = 7.5 m/s
+        v75 = wind.get_wind_velocity(7.5, np.zeros(3))
+        np.testing.assert_allclose(np.linalg.norm(v75), 7.5, atol=1e-8)
+
+
+# ── Phase 1: Inertia & Presets ──────────────────────────────────────────────
+
+class TestInertiaPresets:
+    def test_off_diagonal_inertia_coupling(self):
+        """Off-diagonal inertia should cause cross-axis coupling."""
+        # Symmetric quad (diagonal) — torque around x only affects roll
+        diag_params = DroneParams(
+            inertia=np.diag([0.02, 0.02, 0.04]),
+        )
+        state = DroneState(position=np.array([0.0, 0.0, 10.0]))
+        cmd = DroneCommand(
+            thrust=diag_params.mass * GRAVITY,
+            torque=np.array([1.0, 0.0, 0.0]),
+        )
+        state_diag = physics_step(state, cmd, diag_params, dt=0.01)
+
+        # With off-diagonal terms — cross-coupling should appear
+        coupled_params = DroneParams(
+            inertia=np.array([
+                [0.02,  0.005, 0.0  ],
+                [0.005, 0.02,  0.0  ],
+                [0.0,   0.0,   0.04 ],
+            ]),
+        )
+        state_coupled = physics_step(state, cmd, coupled_params, dt=0.01)
+
+        # With coupling, a pure x-torque should also affect y angular velocity
+        assert abs(state_coupled.angular_velocity[1]) > abs(state_diag.angular_velocity[1])
+
+    def test_preset_loading(self):
+        """Airframe presets should load with correct parameters."""
+        generic = make_generic_quad()
+        assert generic.mass == 1.5
+        assert generic.aero is None
+
+        x500 = make_holybro_x500()
+        assert x500.mass == 2.0
+        assert x500.aero is not None
+        assert x500.aero.reference_area == 0.06
+        assert x500.atmo is not None
+
+
+# ── Phase 1: Body-Frame Dynamics ────────────────────────────────────────────
+
+class TestBodyFrame:
+    def test_body_frame_hover_equivalent(self):
+        """Body-frame dynamics should produce same hover as world-frame."""
+        # World-frame (linear drag)
+        params_world = DroneParams()
+        state_w = DroneState(position=np.array([0.0, 0.0, 10.0]))
+        hover = params_world.mass * GRAVITY
+        cmd = DroneCommand(thrust=hover)
+
+        for _ in range(2000):
+            state_w = physics_step(state_w, cmd, params_world, dt=0.005)
+
+        # Body-frame (quadratic drag, but zero velocity → zero drag)
+        params_body = DroneParams(
+            aero=AeroCoefficients(), atmo=Atmosphere(),
+        )
+        state_b = DroneState(position=np.array([0.0, 0.0, 10.0]))
+        cmd_b = DroneCommand(thrust=params_body.mass * GRAVITY)
+
+        for _ in range(2000):
+            state_b = physics_step(state_b, cmd_b, params_body, dt=0.005)
+
+        # Both should be hovering at ~10m
+        np.testing.assert_allclose(state_w.position[2], 10.0, atol=0.01)
+        np.testing.assert_allclose(state_b.position[2], 10.0, atol=0.01)
+
+    def test_body_frame_freefall(self):
+        """Body-frame freefall should match world-frame (zero drag)."""
+        params_body = DroneParams(
+            aero=AeroCoefficients(C_D=0.0), atmo=Atmosphere(),
+        )
+        state = DroneState(position=np.array([0.0, 0.0, 100.0]))
+        cmd = DroneCommand(thrust=0.0)
+        dt = 0.001
+        t_total = 1.0
+
+        for _ in range(int(t_total / dt)):
+            state = physics_step(state, cmd, params_body, dt)
+
+        expected_z = 100.0 - 0.5 * GRAVITY * t_total**2
+        expected_vz = -GRAVITY * t_total
+
+        np.testing.assert_allclose(state.position[2], expected_z, atol=0.1)
+        np.testing.assert_allclose(state.velocity[2], expected_vz, atol=0.1)
+
+
+# ── Phase 1: Validation Module ──────────────────────────────────────────────
+
+class TestValidation:
+    def test_rmse_identical(self):
+        """RMSE of identical trajectories should be zero."""
+        from validation import compute_rmse
+        traj = np.array([[0, 0, 0], [1, 1, 1], [2, 2, 2]], dtype=float)
+        result = compute_rmse(traj, traj)
+        assert result.rmse_total == 0.0
+        assert result.rmse_x == 0.0
+
+    def test_rmse_known_offset(self):
+        """RMSE of constant-offset trajectories should equal offset magnitude."""
+        from validation import compute_rmse
+        traj1 = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0]], dtype=float)
+        traj2 = traj1 + np.array([1.0, 0.0, 0.0])
+        result = compute_rmse(traj1, traj2)
+        np.testing.assert_allclose(result.rmse_x, 1.0, atol=1e-10)
+        np.testing.assert_allclose(result.rmse_total, 1.0, atol=1e-10)
+
+    def test_flight_log_csv_roundtrip(self):
+        """FlightLog should parse a CSV and return positions."""
+        import tempfile, os
+        from flight_log import FlightLog
+
+        csv_content = "time,lat,lon,alt,roll,pitch,yaw\n"
+        csv_content += "0.0,47.0,8.0,400.0,0,0,0\n"
+        csv_content += "1.0,47.0001,8.0,401.0,1.0,0.5,0\n"
+        csv_content += "2.0,47.0002,8.0,402.0,0,0,0\n"
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
+                                          delete=False) as f:
+            f.write(csv_content)
+            tmp_path = f.name
+
+        try:
+            log = FlightLog.from_csv(tmp_path)
+            traj = log.get_trajectory()
+            assert traj.shape == (3, 3)
+            assert len(log.timestamps) == 3
+            # First point should be near origin (it IS the origin)
+            np.testing.assert_allclose(traj[0], [0, 0, 0], atol=0.1)
+        finally:
+            os.unlink(tmp_path)
