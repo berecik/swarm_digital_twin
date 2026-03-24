@@ -46,6 +46,12 @@ Standalone physics engine tests for rigid-body quadrotor dynamics.
 | **Stability** | Hover equilibrium and drift. | `test_hover_thrust` |
 | **Dynamics** | Aerodynamic drag and energy. | `test_drag_slows_horizontal` |
 
+### 4. Phase A Reproducible Validation Baseline (Paper-Aligned)
+
+| Command | Purpose | Expected Outcome |
+| :--- | :--- | :--- |
+| `./run_scenario.sh --phase-a` | Single-entry verification for Phase A (`A1+A2+A3`). Runs unit tests + deterministic benchmarks (`moderate`, `strong_wind`). | Command exits with success only when tests pass and both benchmark profiles pass `assert_validation_pass(...)` gates. |
+
 ---
 
 ## 🚦 Execution Protocols
@@ -54,6 +60,9 @@ Standalone physics engine tests for rigid-body quadrotor dynamics.
 ```bash
 # Physics & Scenario Simulation
 ./run_scenario.sh --test
+
+# Phase A deterministic benchmark baseline (tests + validation gates)
+./run_scenario.sh --phase-a
 
 # Swarm Control (Rust)
 cd swarm_control && cargo test

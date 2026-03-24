@@ -10,7 +10,7 @@ Metrics follow Valencia et al. (2025), Table 5, Fig. 13.
 """
 
 import numpy as np
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from dataclasses import dataclass
 
 
@@ -26,6 +26,65 @@ class ValidationResult:
     p75_error: float
     max_error: float
     n_points: int
+
+
+@dataclass(frozen=True)
+class ValidationEnvelope:
+    """Acceptance envelope for deterministic benchmark validation."""
+    rmse_x_max: float
+    rmse_y_max: float
+    rmse_z_max: float
+    rmse_total_max: float
+    median_error_max: float
+    p75_error_max: float
+    max_error_max: float
+
+
+@dataclass(frozen=True)
+class BenchmarkProfile:
+    """Canonical benchmark profile definition (Phase A1)."""
+    name: str
+    seed: int
+    wind_speed: float
+    wind_direction: np.ndarray
+    tolerance: float
+    envelope: ValidationEnvelope
+
+
+BENCHMARK_PROFILES: Dict[str, BenchmarkProfile] = {
+    "moderate": BenchmarkProfile(
+        name="moderate",
+        seed=20260324,
+        wind_speed=3.0,
+        wind_direction=np.array([0.6, 0.8, 0.0]),
+        tolerance=1e-6,
+        envelope=ValidationEnvelope(
+            rmse_x_max=4.0,
+            rmse_y_max=4.0,
+            rmse_z_max=2.0,
+            rmse_total_max=4.2,
+            median_error_max=3.5,
+            p75_error_max=5.0,
+            max_error_max=13.0,
+        ),
+    ),
+    "strong_wind": BenchmarkProfile(
+        name="strong_wind",
+        seed=20260325,
+        wind_speed=8.0,
+        wind_direction=np.array([0.6, 0.8, 0.0]),
+        tolerance=1e-6,
+        envelope=ValidationEnvelope(
+            rmse_x_max=8.5,
+            rmse_y_max=8.5,
+            rmse_z_max=2.5,
+            rmse_total_max=9.0,
+            median_error_max=8.5,
+            p75_error_max=10.5,
+            max_error_max=28.0,
+        ),
+    ),
+}
 
 
 def compute_rmse(sim_trajectory: np.ndarray,
@@ -63,6 +122,54 @@ def compute_rmse(sim_trajectory: np.ndarray,
         max_error=float(np.max(per_point)),
         n_points=len(per_point),
     )
+
+
+def assert_validation_pass(result: ValidationResult,
+                           envelope: ValidationEnvelope,
+                           profile_name: str = "") -> None:
+    """Raise AssertionError when validation metrics exceed acceptance envelope."""
+    checks = {
+        "rmse_x": (result.rmse_x, envelope.rmse_x_max),
+        "rmse_y": (result.rmse_y, envelope.rmse_y_max),
+        "rmse_z": (result.rmse_z, envelope.rmse_z_max),
+        "rmse_total": (result.rmse_total, envelope.rmse_total_max),
+        "median_error": (result.median_error, envelope.median_error_max),
+        "p75_error": (result.p75_error, envelope.p75_error_max),
+        "max_error": (result.max_error, envelope.max_error_max),
+    }
+
+    failures = []
+    for metric, (actual, max_allowed) in checks.items():
+        if actual > max_allowed:
+            failures.append(f"{metric}={actual:.4f} > {max_allowed:.4f}")
+
+    if failures:
+        prefix = f"[{profile_name}] " if profile_name else ""
+        raise AssertionError(
+            f"{prefix}Validation failed: " + "; ".join(failures)
+        )
+
+
+def get_benchmark_profile(profile_name: str) -> BenchmarkProfile:
+    """Return canonical benchmark profile by name."""
+    if profile_name not in BENCHMARK_PROFILES:
+        available = ", ".join(sorted(BENCHMARK_PROFILES.keys()))
+        raise KeyError(f"Unknown benchmark profile '{profile_name}'. Available: {available}")
+    return BENCHMARK_PROFILES[profile_name]
+
+
+def summarize_validation(result: ValidationResult) -> Dict[str, float]:
+    """Return plain dict summary for logging/CLI output."""
+    return {
+        "rmse_x": result.rmse_x,
+        "rmse_y": result.rmse_y,
+        "rmse_z": result.rmse_z,
+        "rmse_total": result.rmse_total,
+        "median_error": result.median_error,
+        "p75_error": result.p75_error,
+        "max_error": result.max_error,
+        "n_points": float(result.n_points),
+    }
 
 
 def interpolate_to_common_times(sim_times: np.ndarray, sim_positions: np.ndarray,

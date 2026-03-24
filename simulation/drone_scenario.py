@@ -23,6 +23,12 @@ from drone_physics import (
 )
 from wind_model import WindField
 from terrain import TerrainMap
+from validation import (
+    compute_rmse,
+    get_benchmark_profile,
+    assert_validation_pass,
+    summarize_validation,
+)
 
 
 MIN_AGL = 5.0   # minimum clearance above ground [m]
@@ -76,6 +82,79 @@ def waypoints_above_terrain(xy_z_agl, terrain: TerrainMap):
                     wps[i + 1][2] += needed / 2
 
     return wps
+
+
+def run_benchmark(profile_name: str):
+    """Run deterministic benchmark profile and enforce validation gate."""
+    profile = get_benchmark_profile(profile_name)
+    np.random.seed(profile.seed)
+
+    params = DroneParams(
+        mass=1.5,
+        arm_length=0.25,
+        drag_coeff=0.1,
+        ang_drag_coeff=0.02,
+        max_thrust=25.0,
+        max_torque=5.0,
+        aero=AeroCoefficients(reference_area=0.04, C_D=1.0, C_L=0.0),
+        atmo=Atmosphere(rho_sea_level=1.225, altitude_msl=0.0),
+    )
+    terrain = make_terrain()
+    wp_agl = [
+        (0.0, 0.0, 8.0),
+        (20.0, 0.0, 8.0),
+        (20.0, 15.0, 8.0),
+        (35.0, 20.0, 8.0),
+        (10.0, 10.0, 8.0),
+        (0.0, 0.0, 8.0),
+        (0.0, 0.0, 1.0),
+    ]
+    waypoints = waypoints_above_terrain(wp_agl, terrain)
+
+    ref_wind = WindField(
+        wind_speed=0.0,
+        wind_direction=profile.wind_direction,
+        turbulence_type="none",
+    )
+    sim_wind = WindField(
+        wind_speed=profile.wind_speed,
+        wind_direction=profile.wind_direction,
+        turbulence_type="constant",
+    )
+
+    ref_records = run_simulation(
+        waypoints=waypoints,
+        params=params,
+        dt=0.005,
+        waypoint_radius=0.5,
+        hover_time=2.0,
+        max_time=180.0,
+        wind=ref_wind,
+        terrain=terrain,
+    )
+    sim_records = run_simulation(
+        waypoints=waypoints,
+        params=params,
+        dt=0.005,
+        waypoint_radius=0.5,
+        hover_time=2.0,
+        max_time=180.0,
+        wind=sim_wind,
+        terrain=terrain,
+    )
+
+    n = min(len(ref_records), len(sim_records))
+    ref_pos = np.array([r.position for r in ref_records[:n]])
+    sim_pos = np.array([r.position for r in sim_records[:n]])
+    result = compute_rmse(sim_pos, ref_pos)
+    assert_validation_pass(result, profile.envelope, profile_name=profile.name)
+
+    summary = summarize_validation(result)
+    print(f"Benchmark '{profile.name}' PASS (seed={profile.seed})")
+    for metric in ["rmse_x", "rmse_y", "rmse_z", "rmse_total", "median_error", "p75_error", "max_error"]:
+        print(f"  {metric}: {summary[metric]:.4f}")
+
+    return result
 
 
 def main():
@@ -206,4 +285,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    if len(sys.argv) >= 3 and sys.argv[1] == "--benchmark":
+        run_benchmark(sys.argv[2])
+    else:
+        main()

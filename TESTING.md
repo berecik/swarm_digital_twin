@@ -9,7 +9,7 @@ This document tracks the high-level testing status and provides detailed explana
 | `sar_swarm_control` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM Verified. |
 | `sar_perception` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (64) | ✅ Pass (Scenario) | N/A | Full physics + terrain + fixed-wing + MAVLink |
+| **Drone Physics** (Python) | ✅ Pass (68) | ✅ Pass (Scenario + Benchmarks) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A validation gates |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `sar_swarm_control` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -76,6 +76,12 @@ The following tests verify the AI-driven human detection and 3D localization log
 
 Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py`
 
+#### A0. Phase A Reproducible Validation Baseline
+- **`./run_scenario.sh --phase-a`**:
+    - **Purpose**: Runs one-command Phase A baseline verification (unit tests + deterministic benchmark gates).
+    - **Input**: Canonical benchmark profiles (`moderate`, `strong_wind`) with fixed seeds from `simulation/validation.py`.
+    - **Expected Outcome**: Both benchmark profiles pass `assert_validation_pass(...)`; repeated runs on same commit produce equivalent RMSE metrics within configured tolerance.
+
 #### A. Rotation Math
 - **`test_identity`**: `euler_to_rotation(0,0,0)` produces identity matrix.
 - **`test_roundtrip`**: Euler → rotation → Euler → rotation roundtrip (50 random angles, atol=1e-10).
@@ -138,6 +144,9 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_rmse_identical`**: RMSE of identical trajectories = 0.
 - **`test_rmse_known_offset`**: Constant 1m X-offset → RMSE_x = 1.0.
 - **`test_flight_log_csv_roundtrip`**: FlightLog parses CSV, returns correct shape, origin at (0,0,0).
+- **`test_validation_gate_passes_within_envelope`**: Gate accepts metrics that remain below all configured envelope thresholds.
+- **`test_validation_gate_fails_outside_envelope`**: Gate rejects metrics above threshold and raises `AssertionError`.
+- **`test_benchmark_profiles_are_deterministic`**: `moderate` and `strong_wind` profiles produce repeatable RMSE values within profile tolerance across two consecutive runs.
 
 #### O. Terrain (Phase 2)
 - **`test_flat_terrain_elevation`**: Flat terrain returns constant elevation at all query points.

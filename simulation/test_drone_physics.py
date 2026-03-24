@@ -19,6 +19,13 @@ from drone_physics import (
 )
 from wind_model import WindField
 from terrain import TerrainMap
+from validation import (
+    ValidationResult,
+    ValidationEnvelope,
+    assert_validation_pass,
+    get_benchmark_profile,
+)
+from drone_scenario import run_benchmark
 
 
 # ── Rotation helpers ─────────────────────────────────────────────────────────
@@ -537,6 +544,64 @@ class TestValidation:
             np.testing.assert_allclose(traj[0], [0, 0, 0], atol=0.1)
         finally:
             os.unlink(tmp_path)
+
+    def test_validation_gate_passes_within_envelope(self):
+        result = ValidationResult(
+            rmse_x=0.2,
+            rmse_y=0.3,
+            rmse_z=0.1,
+            rmse_total=0.4,
+            median_error=0.3,
+            p25_error=0.2,
+            p75_error=0.4,
+            max_error=0.8,
+            n_points=100,
+        )
+        envelope = ValidationEnvelope(
+            rmse_x_max=0.5,
+            rmse_y_max=0.5,
+            rmse_z_max=0.5,
+            rmse_total_max=0.6,
+            median_error_max=0.5,
+            p75_error_max=0.6,
+            max_error_max=1.0,
+        )
+        assert_validation_pass(result, envelope, profile_name="unit")
+
+    def test_validation_gate_fails_outside_envelope(self):
+        result = ValidationResult(
+            rmse_x=0.7,
+            rmse_y=0.3,
+            rmse_z=0.1,
+            rmse_total=0.4,
+            median_error=0.3,
+            p25_error=0.2,
+            p75_error=0.4,
+            max_error=1.2,
+            n_points=100,
+        )
+        envelope = ValidationEnvelope(
+            rmse_x_max=0.5,
+            rmse_y_max=0.5,
+            rmse_z_max=0.5,
+            rmse_total_max=0.6,
+            median_error_max=0.5,
+            p75_error_max=0.6,
+            max_error_max=1.0,
+        )
+        with pytest.raises(AssertionError, match="Validation failed"):
+            assert_validation_pass(result, envelope, profile_name="unit")
+
+    @pytest.mark.parametrize("profile_name", ["moderate", "strong_wind"])
+    def test_benchmark_profiles_are_deterministic(self, profile_name):
+        profile = get_benchmark_profile(profile_name)
+        first = run_benchmark(profile_name)
+        second = run_benchmark(profile_name)
+
+        np.testing.assert_allclose(first.rmse_x, second.rmse_x, atol=profile.tolerance)
+        np.testing.assert_allclose(first.rmse_y, second.rmse_y, atol=profile.tolerance)
+        np.testing.assert_allclose(first.rmse_z, second.rmse_z, atol=profile.tolerance)
+        np.testing.assert_allclose(first.rmse_total, second.rmse_total, atol=profile.tolerance)
 
 
 # ── Phase 2: Terrain ────────────────────────────────────────────────────────

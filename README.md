@@ -90,10 +90,11 @@ No Docker, no ROS 2 — just Python 3 and a terminal:
 ./run_scenario.sh
 
 # Or step by step:
-./run_scenario.sh --test       # run 41 physics unit tests
+./run_scenario.sh --test       # run 64 physics + MAVLink unit tests
 ./run_scenario.sh --sim-only   # run scenario (no GUI)
 ./run_scenario.sh --viz-only   # open visualization with existing data
 ./run_scenario.sh --all        # tests → scenario → visualization
+./run_scenario.sh --phase-a    # tests + deterministic benchmark validation gates
 ```
 
 The scenario flies a drone through 7 waypoints over rolling-hill terrain with quadratic aerodynamic drag, ISA atmosphere, constant wind, body-frame dynamics, and terrain collision. The 3D visualization renders the terrain surface, wind direction, drone attitude, AGL tracking, and flight telemetry panels.
@@ -134,6 +135,9 @@ The scenario flies a drone through 7 waypoints over rolling-hill terrain with qu
 ```bash
 # Standalone physics tests (no ROS 2 needed)
 ./run_scenario.sh --test
+
+# Phase A reproducible validation baseline (tests + benchmark gates)
+./run_scenario.sh --phase-a
 
 # Rust swarm control (requires ROS 2 environment)
 cd swarm_control

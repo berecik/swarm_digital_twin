@@ -11,6 +11,7 @@
 #   ./run_scenario.sh --viz-only   # open visualization (using existing data)
 #   ./run_scenario.sh --test       # run physics tests
 #   ./run_scenario.sh --all        # run tests, scenario, and visualization
+#   ./run_scenario.sh --phase-a     # Phase A baseline: tests + deterministic benchmarks
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -81,6 +82,19 @@ run_scenario() {
     ok "Scenario complete — data saved"
 }
 
+run_phase_a() {
+    info "Running Phase A validation baseline..."
+    run_tests
+
+    info "Running deterministic benchmark: moderate"
+    python "$SIM_DIR/drone_scenario.py" --benchmark moderate
+
+    info "Running deterministic benchmark: strong_wind"
+    python "$SIM_DIR/drone_scenario.py" --benchmark strong_wind
+
+    ok "Phase A validation baseline passed"
+}
+
 run_viz() {
     local data_file="$SIM_DIR/scenario_data.npz"
     if [ ! -f "$data_file" ]; then
@@ -113,14 +127,19 @@ case "$MODE" in
         run_scenario
         run_viz
         ;;
+    --phase-a)
+        RUN_TESTS=1 ensure_venv
+        run_phase_a
+        ;;
     --help|-h)
-        echo "Usage: $0 [--sim-only|--viz-only|--test|--all|--help]"
+        echo "Usage: $0 [--sim-only|--viz-only|--test|--all|--phase-a|--help]"
         echo ""
         echo "  (default)    Run scenario then open 3D visualization"
         echo "  --sim-only   Run scenario only (no GUI)"
         echo "  --viz-only   Open visualization (uses existing data)"
         echo "  --test       Run physics tests"
         echo "  --all        Run tests, then scenario, then visualization"
+        echo "  --phase-a    Run tests and deterministic benchmark validation gates"
         echo "  --help       Show this help"
         ;;
     --default)
