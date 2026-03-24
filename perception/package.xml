@@ -3,7 +3,7 @@
 <package format="3">
   <name>sar_perception</name>
   <version>0.1.0</version>
-  <description>Python-based perception node with artificial latency for Virtual Drone Crowd</description>
+  <description>Python-based perception node with artificial latency for Swarm Digital Twin</description>
   <maintainer email="architect@marysia.app">Senior Robotics Architect</maintainer>
   <license>Apache-2.0</license>
 

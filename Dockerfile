@@ -4,7 +4,7 @@ FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
 LABEL maintainer="beret@hipisi.org.pl"
 LABEL company="Marysia Software Limited"
 LABEL website="https://marysia.app"
-LABEL project="Virtual Drone Crowd"
+LABEL project="Swarm Digital Twin"
 LABEL domain="app.marysia.drone"
 
 # Set non-interactive mode for apt

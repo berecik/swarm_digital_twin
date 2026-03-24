@@ -1,4 +1,4 @@
-/// Virtual Drone Crowd - Swarm Control Library
+/// Swarm Digital Twin - Swarm Control Library
 /// Author: beret <beret@hipisi.org.pl>
 /// Company: Marysia Software Limited <ceo@marysia.app>
 /// Domain: app.marysia.drone

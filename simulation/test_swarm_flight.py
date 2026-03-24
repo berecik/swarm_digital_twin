@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Virtual Drone Crowd - Swarm Flight Test
+Swarm Digital Twin - Swarm Flight Test
 Author: beret <beret@hipisi.org.pl>
 Company: Marysia Software Limited <ceo@marysia.app>
 Domain: app.marysia.drone

@@ -1,6 +1,6 @@
 # sar_simulation
 
-Simulation module for the Virtual Drone Crowd digital twin. Provides both a **standalone physics engine** (no ROS 2 required) and **ROS 2-based mock simulators** for swarm testing.
+Simulation module for the Swarm Digital Twin digital twin. Provides both a **standalone physics engine** (no ROS 2 required) and **ROS 2-based mock simulators** for swarm testing.
 
 ## Standalone Physics Simulation
 

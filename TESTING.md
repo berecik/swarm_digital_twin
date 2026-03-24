@@ -1,6 +1,6 @@
 # TESTING.md - Swarm System Test Status
 
-This document tracks the high-level testing status and provides detailed explanations of the verification suite across the Virtual Drone Crowd project.
+This document tracks the high-level testing status and provides detailed explanations of the verification suite across the Swarm Digital Twin project.
 
 ## 🧪 Current Status (2026-03-23)
 
@@ -118,6 +118,8 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 
 ## 📂 Detailed Documentation
 
+- [**Complete Testing Guide**](docs/testing.md) — Strategy, Catalog, and Verification.
+- [Physics Engine Deep Dive](docs/physics.md)
 - [swarm_control Testing Guide](swarm_control/TESTING.md)
 
 ---

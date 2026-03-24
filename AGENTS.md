@@ -1,6 +1,6 @@
 # AGENTS.md - Technical Context & Development Guide
 
-This document provides a comprehensive technical overview and context for autonomous agents (AI) and developers working on the **Virtual Drone Crowd** project. It serves as a "brain dump" of architectural decisions, system constraints, and development patterns.
+This document provides a comprehensive technical overview and context for autonomous agents (AI) and developers working on the **Swarm Digital Twin** project. It serves as a "brain dump" of architectural decisions, system constraints, and development patterns.
 
 ---
 
@@ -14,7 +14,7 @@ This document provides a comprehensive technical overview and context for autono
 ---
 
 ## 🚁 Project Essence
-**Virtual Drone Crowd** (DAS-SAR) is a dual-phase Search and Rescue (SAR) system:
+**Swarm Digital Twin** (DAS-SAR) is a dual-phase Search and Rescue (SAR) system:
 1.  **Phase 1 (Scout Swarm):** Agile, man-portable drones (Holybro X500 V2) for autonomous area search and human detection.
 2.  **Phase 2 (Heavy Lift):** A **Distributed Lift System (DLS)** using a minimum of **6 heavy-lift agents** (coaxial X8) to evacuate human casualties (100kg+ payload).
 
@@ -47,7 +47,11 @@ Each drone is an independent ROS 2 entity.
     -   `drone_scenario.py`: Example flight scenario (takeoff → cruise → waypoints → return → land). Generates `scenario_data.npz` for visualization.
     -   `visualize_drone_3d.py`: 3D animated matplotlib visualization with drone attitude axes, velocity vector, trajectory trail, altitude/speed/thrust timeline panels.
     -   `test_drone_physics.py`: 19 pytest tests covering rotation math, gravity freefall, hover equilibrium, drag, PID convergence, position controller, full simulation runs, and energy conservation.
--   `/docs`: SORA analysis, Technical Architecture, and Project Plans.
+-   `/docs`: Detailed project documentation (Architecture, Testing, Physics).
+    -   [`docs/architecture.md`](docs/architecture.md): Detailed system design.
+    -   [`docs/testing.md`](docs/testing.md): Detailed test catalog.
+    -   [`docs/development.md`](docs/development.md): Setup & coding standards.
+    -   [`docs/physics.md`](docs/physics.md): Physics engine details.
 
 ---
 
@@ -145,4 +149,4 @@ If you are tasked with moving the project forward, prioritize:
 -   **Languages:** Maintain translations in `README_PL.md`, `README_UA.md`, `README_HE.md`, etc.
 
 ---
-*Generated for the Virtual Drone Crowd Project. Use this context to maintain architectural integrity.*
+*Generated for the Swarm Digital Twin Project. Use this context to maintain architectural integrity.*

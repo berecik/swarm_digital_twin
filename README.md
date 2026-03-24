@@ -22,6 +22,11 @@ The framework enables:
 
 ```text
 .
+├── docs/                       # Detailed Documentation
+│   ├── architecture.md         # System architecture & components
+│   ├── testing.md              # Test strategy & catalog
+│   ├── development.md          # Setup & workflow guide
+│   └── physics.md              # Standalone physics engine details
 ├── swarm_control/              # Swarm coordination & flight control (Rust)
 ├── heavy_lift_core/            # Distributed lift system logic (Rust)
 ├── perception/                 # AI/Vision detection & localization (Python)
@@ -40,6 +45,15 @@ The framework enables:
 ├── TESTING.md                  # Test catalog & verification status
 └── MAINTENANCE.log             # Maintenance history
 ```
+
+## Documentation
+
+Detailed documentation is available in the [docs/](docs/) directory:
+- [**Architecture Overview**](docs/architecture.md) — System design, components, and communication.
+- [**Testing Guide**](docs/testing.md) — Test strategy, catalog, and protocols.
+- [**Development & Setup**](docs/development.md) — Environment setup and coding standards.
+- [**Physics Engine**](docs/physics.md) — Deep dive into the standalone simulation.
+- [**Agent Guide**](AGENTS.md) — Protocols and context for autonomous developers.
 
 ## Tech Stack
 

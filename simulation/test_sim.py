@@ -1,5 +1,5 @@
 """
-Virtual Drone Crowd - Simulation Test Placeholder
+Swarm Digital Twin - Simulation Test Placeholder
 Author: beret <beret@hipisi.org.pl>
 Company: Marysia Software Limited <ceo@marysia.app>
 Domain: app.marysia.drone

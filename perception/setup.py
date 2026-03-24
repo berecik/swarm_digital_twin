@@ -15,7 +15,7 @@ setup(
     zip_safe=True,
     maintainer='Senior Robotics Architect',
     maintainer_email='architect@marysia.app',
-    description='Python-based perception node with artificial latency for Virtual Drone Crowd',
+    description='Python-based perception node with artificial latency for Swarm Digital Twin',
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={

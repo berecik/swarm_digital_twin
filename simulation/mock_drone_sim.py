@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Virtual Drone Crowd - Mock Drone Simulator
+Swarm Digital Twin - Mock Drone Simulator
 Author: beret <beret@hipisi.org.pl>
 Company: Marysia Software Limited <ceo@marysia.app>
 Domain: app.marysia.drone
