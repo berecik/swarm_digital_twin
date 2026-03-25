@@ -22,9 +22,12 @@ from wind_model import WindField
 @dataclass(frozen=True)
 class SwarmBenchmarkEnvelope:
     min_separation_min: float
+    p05_separation_min: float
     mean_tracking_error_max: float
     p75_tracking_error_max: float
     max_tracking_error_max: float
+    mean_speed_max: float
+    p90_speed_max: float
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,11 @@ class SwarmBenchmarkProfile:
     seed: int
     wind_speed: float
     wind_direction: np.ndarray
+    turbulence_type: str
+    ring_radius: float
+    altitude: float
+    min_separation: float
+    max_time: float
     tolerance: float
     envelope: SwarmBenchmarkEnvelope
 
@@ -43,12 +51,20 @@ SWARM_BENCHMARK_PROFILES: Dict[str, SwarmBenchmarkProfile] = {
         seed=20260325,
         wind_speed=1.05,
         wind_direction=np.array([1.0, 0.3, 0.0]),
+        turbulence_type="constant",
+        ring_radius=10.0,
+        altitude=8.0,
+        min_separation=1.5,
+        max_time=20.0,
         tolerance=1e-6,
         envelope=SwarmBenchmarkEnvelope(
-            min_separation_min=2.0,
+            min_separation_min=1.9,
+            p05_separation_min=2.1,
             mean_tracking_error_max=14.0,
             p75_tracking_error_max=16.5,
             max_tracking_error_max=23.0,
+            mean_speed_max=7.8,
+            p90_speed_max=8.0,
         ),
     ),
     "crosswind": SwarmBenchmarkProfile(
@@ -56,12 +72,20 @@ SWARM_BENCHMARK_PROFILES: Dict[str, SwarmBenchmarkProfile] = {
         seed=20260326,
         wind_speed=2.5,
         wind_direction=np.array([0.0, 1.0, 0.0]),
+        turbulence_type="constant",
+        ring_radius=10.0,
+        altitude=8.0,
+        min_separation=1.5,
+        max_time=20.0,
         tolerance=1e-6,
         envelope=SwarmBenchmarkEnvelope(
-            min_separation_min=1.9,
+            min_separation_min=1.8,
+            p05_separation_min=2.0,
             mean_tracking_error_max=12.5,
             p75_tracking_error_max=14.5,
             max_tracking_error_max=18.0,
+            mean_speed_max=7.8,
+            p90_speed_max=8.0,
         ),
     ),
     "gusty": SwarmBenchmarkProfile(
@@ -69,12 +93,62 @@ SWARM_BENCHMARK_PROFILES: Dict[str, SwarmBenchmarkProfile] = {
         seed=20260327,
         wind_speed=4.0,
         wind_direction=np.array([0.6, 0.8, 0.0]),
+        turbulence_type="dryden",
+        ring_radius=10.0,
+        altitude=8.0,
+        min_separation=1.6,
+        max_time=24.0,
         tolerance=1e-6,
         envelope=SwarmBenchmarkEnvelope(
-            min_separation_min=1.8,
+            min_separation_min=1.35,
+            p05_separation_min=1.9,
             mean_tracking_error_max=16.5,
             p75_tracking_error_max=22.0,
             max_tracking_error_max=26.0,
+            mean_speed_max=7.8,
+            p90_speed_max=8.0,
+        ),
+    ),
+    "tight_ring": SwarmBenchmarkProfile(
+        name="tight_ring",
+        seed=20260328,
+        wind_speed=2.0,
+        wind_direction=np.array([0.7, -0.7, 0.0]),
+        turbulence_type="constant",
+        ring_radius=7.0,
+        altitude=7.0,
+        min_separation=1.8,
+        max_time=22.0,
+        tolerance=1e-6,
+        envelope=SwarmBenchmarkEnvelope(
+            min_separation_min=0.6,
+            p05_separation_min=1.6,
+            mean_tracking_error_max=10.5,
+            p75_tracking_error_max=12.0,
+            max_tracking_error_max=15.0,
+            mean_speed_max=7.8,
+            p90_speed_max=8.0,
+        ),
+    ),
+    "high_altitude": SwarmBenchmarkProfile(
+        name="high_altitude",
+        seed=20260329,
+        wind_speed=3.2,
+        wind_direction=np.array([1.0, 0.0, 0.0]),
+        turbulence_type="dryden",
+        ring_radius=12.0,
+        altitude=14.0,
+        min_separation=1.6,
+        max_time=24.0,
+        tolerance=1e-6,
+        envelope=SwarmBenchmarkEnvelope(
+            min_separation_min=1.1,
+            p05_separation_min=1.9,
+            mean_tracking_error_max=35.0,
+            p75_tracking_error_max=26.0,
+            max_tracking_error_max=120.0,
+            mean_speed_max=7.8,
+            p90_speed_max=8.0,
         ),
     ),
 }
@@ -116,13 +190,17 @@ def _compute_swarm_tracking_metrics(records, drone_waypoints):
     }
 
     min_separation = float("inf")
+    pairwise_separations = []
+    speed_samples = []
     final_errors = []
     for rec in records:
         positions = rec.positions
+        speed_samples.extend(np.linalg.norm(rec.velocities, axis=1).tolist())
         for i in range(len(positions)):
             for j in range(i + 1, len(positions)):
                 d = np.linalg.norm(positions[i] - positions[j])
                 min_separation = min(min_separation, d)
+                pairwise_separations.append(float(d))
 
     final_positions = records[-1].positions
     for idx, drone_id in enumerate(drone_ids):
@@ -130,9 +208,12 @@ def _compute_swarm_tracking_metrics(records, drone_waypoints):
 
     return {
         "min_separation": float(min_separation),
+        "p05_separation": float(np.percentile(pairwise_separations, 5)),
         "mean_tracking_error": float(np.mean(final_errors)),
         "p75_tracking_error": float(np.percentile(final_errors, 75)),
         "max_tracking_error": float(np.max(final_errors)),
+        "mean_speed": float(np.mean(speed_samples)),
+        "p90_speed": float(np.percentile(speed_samples, 90)),
     }
 
 
@@ -145,18 +226,21 @@ def run_swarm_benchmark(profile_name: str):
     wind = WindField(
         wind_speed=profile.wind_speed,
         wind_direction=profile.wind_direction,
-        turbulence_type="constant",
+        turbulence_type=profile.turbulence_type,
     )
-    drone_waypoints = build_six_agent_ring_waypoints()
+    drone_waypoints = build_six_agent_ring_waypoints(
+        radius=profile.ring_radius,
+        altitude=profile.altitude,
+    )
     records = run_swarm_simulation(
         drone_waypoints,
         params=params,
         dt=0.02,
         hover_time=0.5,
-        max_time=20.0,
+        max_time=profile.max_time,
         wind=wind,
         terrain=terrain,
-        min_separation=1.5,
+        min_separation=profile.min_separation,
     )
 
     metrics = _compute_swarm_tracking_metrics(records, drone_waypoints)
@@ -165,6 +249,10 @@ def run_swarm_benchmark(profile_name: str):
     if metrics["min_separation"] < envelope.min_separation_min:
         failed.append(
             f"min_separation={metrics['min_separation']:.4f} < {envelope.min_separation_min:.4f}"
+        )
+    if metrics["p05_separation"] < envelope.p05_separation_min:
+        failed.append(
+            f"p05_separation={metrics['p05_separation']:.4f} < {envelope.p05_separation_min:.4f}"
         )
     if metrics["mean_tracking_error"] > envelope.mean_tracking_error_max:
         failed.append(
@@ -178,13 +266,29 @@ def run_swarm_benchmark(profile_name: str):
         failed.append(
             f"max_tracking_error={metrics['max_tracking_error']:.4f} > {envelope.max_tracking_error_max:.4f}"
         )
+    if metrics["mean_speed"] > envelope.mean_speed_max:
+        failed.append(
+            f"mean_speed={metrics['mean_speed']:.4f} > {envelope.mean_speed_max:.4f}"
+        )
+    if metrics["p90_speed"] > envelope.p90_speed_max:
+        failed.append(
+            f"p90_speed={metrics['p90_speed']:.4f} > {envelope.p90_speed_max:.4f}"
+        )
 
     if failed:
         details = "; ".join(failed)
         raise AssertionError(f"Swarm benchmark '{profile.name}' failed: {details}")
 
     print(f"Swarm benchmark '{profile.name}' PASS (seed={profile.seed})")
-    for key in ["min_separation", "mean_tracking_error", "p75_tracking_error", "max_tracking_error"]:
+    for key in [
+        "min_separation",
+        "p05_separation",
+        "mean_tracking_error",
+        "p75_tracking_error",
+        "max_tracking_error",
+        "mean_speed",
+        "p90_speed",
+    ]:
         print(f"  {key}: {metrics[key]:.4f}")
 
     return metrics

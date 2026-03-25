@@ -614,9 +614,34 @@ class TestValidation:
         second = run_swarm_benchmark(profile_name)
 
         np.testing.assert_allclose(first["min_separation"], second["min_separation"], atol=profile.tolerance)
+        np.testing.assert_allclose(first["p05_separation"], second["p05_separation"], atol=profile.tolerance)
         np.testing.assert_allclose(first["mean_tracking_error"], second["mean_tracking_error"], atol=profile.tolerance)
         np.testing.assert_allclose(first["p75_tracking_error"], second["p75_tracking_error"], atol=profile.tolerance)
         np.testing.assert_allclose(first["max_tracking_error"], second["max_tracking_error"], atol=profile.tolerance)
+        np.testing.assert_allclose(first["mean_speed"], second["mean_speed"], atol=profile.tolerance)
+        np.testing.assert_allclose(first["p90_speed"], second["p90_speed"], atol=profile.tolerance)
+
+    @pytest.mark.parametrize("profile_name", sorted(SWARM_BENCHMARK_PROFILES.keys()))
+    def test_swarm_benchmark_profiles_stay_within_envelopes(self, profile_name):
+        profile = get_swarm_benchmark_profile(profile_name)
+        metrics = run_swarm_benchmark(profile_name)
+
+        assert metrics["min_separation"] >= profile.envelope.min_separation_min
+        assert metrics["p05_separation"] >= profile.envelope.p05_separation_min
+        assert metrics["mean_tracking_error"] <= profile.envelope.mean_tracking_error_max
+        assert metrics["p75_tracking_error"] <= profile.envelope.p75_tracking_error_max
+        assert metrics["max_tracking_error"] <= profile.envelope.max_tracking_error_max
+        assert metrics["mean_speed"] <= profile.envelope.mean_speed_max
+        assert metrics["p90_speed"] <= profile.envelope.p90_speed_max
+
+    def test_swarm_profile_risk_ordering(self):
+        baseline = run_swarm_benchmark("baseline")
+        gusty = run_swarm_benchmark("gusty")
+        tight_ring = run_swarm_benchmark("tight_ring")
+
+        assert baseline["mean_tracking_error"] <= gusty["mean_tracking_error"]
+        assert baseline["p90_speed"] <= gusty["p90_speed"]
+        assert tight_ring["min_separation"] < baseline["min_separation"]
 
 
 # ── Phase 2: Terrain ────────────────────────────────────────────────────────

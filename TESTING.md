@@ -147,7 +147,9 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_validation_gate_passes_within_envelope`**: Gate accepts metrics that remain below all configured envelope thresholds.
 - **`test_validation_gate_fails_outside_envelope`**: Gate rejects metrics above threshold and raises `AssertionError`.
 - **`test_benchmark_profiles_are_deterministic`**: All canonical benchmark profiles (`moderate`, `strong_wind`, `crosswind`, `storm`) produce repeatable RMSE values within profile tolerance across two consecutive runs.
-- **`test_swarm_benchmark_profiles_are_deterministic`**: All canonical swarm benchmark profiles (`baseline`, `crosswind`, `gusty`) produce repeatable safety/tracking metrics within profile tolerance across two consecutive runs.
+- **`test_swarm_benchmark_profiles_are_deterministic`**: All canonical swarm benchmark profiles (`baseline`, `crosswind`, `gusty`, `tight_ring`, `high_altitude`) produce repeatable safety/tracking metrics within profile tolerance across two consecutive runs.
+- **`test_swarm_benchmark_profiles_stay_within_envelopes`**: Every swarm profile satisfies its configured envelope for separation (`min_separation`, `p05_separation`), tracking (`mean/p75/max error`), and kinematics (`mean_speed`, `p90_speed`).
+- **`test_swarm_profile_risk_ordering`**: Relative scenario difficulty remains coherent: gusty conditions are harder than baseline (tracking/speed), while tight-ring reduces minimum separation versus baseline.
 
 #### N2. Phase B Runtime Guardrails
 - **`test_runtime_warning_for_out_of_range_aero_params`**: Out-of-range aerodynamic coefficients emit one-shot runtime warning tied to documented validity envelopes.
