@@ -33,6 +33,28 @@ Core mathematical and utility functions are separated into `src/utils.rs` and `s
 - **`test_boids_edge_cases`**:
     - **Purpose**: Stress tests the flocking logic against boundary conditions.
     - **Scenarios**: Neighbors at exactly 5.0m (excluded), identical positions (zero force to avoid division by zero), and neighbors just inside/outside the radius.
+- **`test_flocking_vector_matches_rust_reference_case`** (Python parity in `simulation/test_drone_physics.py`):
+    - **Purpose**: Ensures the standalone simulator computes the boids steering vector with the same equation and default weights as `src/boids.rs::calculate_flocking_vector`.
+    - **Input**: One controlled reference configuration with two neighbors (inside neighbor radius, one inside separation radius).
+    - **Expected Outcome**: Python result exactly matches the hand-derived vector from the Rust formula within numerical tolerance.
+- **`test_flocking_vector_returns_zero_without_neighbors`** (Python parity in `simulation/test_drone_physics.py`):
+    - **Purpose**: Verifies stable no-neighbor behavior parity with Rust early-return path.
+    - **Input**: Empty `neighbors` list.
+    - **Expected Outcome**: Steering vector is exactly `[0, 0, 0]`.
+- **`test_flocking_vector_excludes_neighbor_at_radius_boundary`** (Python parity in `simulation/test_drone_physics.py`):
+    - **Purpose**: Confirms strict `< neighbor_radius` contract parity with Rust implementation.
+    - **Input**: One neighbor exactly at `neighbor_radius`.
+    - **Expected Outcome**: Neighbor is ignored by boids aggregation and result follows non-neighbor branch.
+
+#### D. Cross-Module Parity (Rust vs Standalone Twin)
+- **Parity Contract (Phase C)**:
+    - **Purpose**: Keep standalone swarm simulation behavior aligned with Rust swarm logic before SITL integration.
+    - **Reference**: `src/boids.rs` (`FlockingParams` defaults and `calculate_flocking_vector`).
+    - **Verification**:
+      1. Run `pytest -q simulation/test_drone_physics.py -k SwarmStandaloneTwin`.
+      2. Confirm `test_flocking_vector_matches_rust_reference_case` passes.
+      3. Confirm `test_six_agent_run_maintains_min_separation` passes (no collisions in 6-agent demo envelope).
+    - **Expected Outcome**: Boids steering parity for the reference case and stable 6-agent standalone run with enforced separation.
 
 #### C. Communication & Middleware
 - **`test_boid_serialization`**:

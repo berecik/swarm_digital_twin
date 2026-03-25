@@ -7,7 +7,7 @@
 MAINTENANCE.log
 
 # Generated simulation data
-scenario_data.npz
+*.npz
 
 # Python virtual environment
 .venv/
@@ -737,3 +737,4 @@ cython_debug/
 #.idea/
 
 /.output.txt
+/simulation/swarm_data.npz

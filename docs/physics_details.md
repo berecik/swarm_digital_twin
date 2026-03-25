@@ -10,14 +10,14 @@ This document provides the full mathematical derivation and parameter descriptio
 
 The drone state at time $t$ is:
 
-$$\mathbf{x}(t) = \bigl[\, \mathbf{p},\; \mathbf{v},\; R,\; \boldsymbol{\omega} \,\bigr]$$
+$$ \mathbf{x}(t) = \bigl[\, \mathbf{p},\; \mathbf{v},\; R,\; \mathbf{\omega} \,\bigr]$$
 
 | Symbol | Dimension | Frame | Description |
 |:---|:---:|:---:|:---|
 | $\mathbf{p} = [x, y, z]^T$ | 3 | World (ENU) | Position [m] |
 | $\mathbf{v} = [v_x, v_y, v_z]^T$ | 3 | World (ENU) | Velocity [m/s] |
 | $R$ | 3x3 | Body -> World | Rotation matrix (SO(3)) |
-| $\boldsymbol{\omega} = [p, q, r]^T$ | 3 | Body | Angular velocity [rad/s] |
+| $\mathbf{\omega} = [p, q, r]^T$ | 3 | Body | Angular velocity [rad/s] |
 
 The rotation matrix $R$ maps body-frame vectors to the world frame. It is parametrised by Euler angles $(\phi, \theta, \psi)$ (roll, pitch, yaw) using the ZYX convention:
 
@@ -63,7 +63,7 @@ $$\begin{bmatrix} \dot{u} \\ \dot{v} \\ \dot{w} \end{bmatrix} =
 \begin{bmatrix} rv - qw \\ pw - ru \\ qu - pv \end{bmatrix} +
 \frac{1}{m} \begin{bmatrix} f_x \\ f_y \\ f_z \end{bmatrix}$$
 
-where $(u, v, w) = R^T \mathbf{v}$ are body-frame velocity components and $(f_x, f_y, f_z)$ are total body-frame forces. The first term is the Coriolis/centripetal coupling: $-\boldsymbol{\omega} \times \mathbf{V}_b$.
+where $(u, v, w) = R^T \mathbf{v}$ are body-frame velocity components and $(f_x, f_y, f_z)$ are total body-frame forces. The first term is the Coriolis/centripetal coupling: $-\mathbf{\omega} \times \mathbf{V}_b$.
 
 Body-frame forces:
 
@@ -136,9 +136,9 @@ For quadrotors, $C_L \approx 0$ so the lift perturbation is negligible and wind 
 
 **Dryden turbulence (MIL-F-8785C):** A first-order Markov process driven by white noise:
 
-$$\dot{\mathbf{x}} = -\frac{V}{L} \mathbf{x} + \sqrt{\frac{2V}{L}} \boldsymbol{\eta}(t)$$
+$$\dot{\mathbf{x}} = -\frac{V}{L} \mathbf{x} + \sqrt{\frac{2V}{L}} \mathbf{\eta}(t)$$
 
-where $L$ is the turbulence scale length (altitude-dependent), $V$ is the mean wind speed, and $\boldsymbol{\eta}$ is Gaussian white noise scaled by gust intensity.
+where $L$ is the turbulence scale length (altitude-dependent), $V$ is the mean wind speed, and $\mathbf{\eta}$ is Gaussian white noise scaled by gust intensity.
 
 Scale lengths (low altitude):
 - Longitudinal/lateral: $L_u = L_v = h / (0.177 + 0.000823 \cdot h)^{1.2}$
@@ -152,18 +152,18 @@ Scale lengths (low altitude):
 
 Angular acceleration follows Euler's rotation equation:
 
-$$J \dot{\boldsymbol{\omega}} = \boldsymbol{\tau} - \boldsymbol{\omega} \times (J \boldsymbol{\omega}) + \boldsymbol{\tau}_{drag}$$
+$$J \dot{\mathbf{\omega}} = \mathbf{\tau} - \mathbf{\omega} \times (J \mathbf{\omega}) + \mathbf{\tau}_{drag}$$
 
-$$\dot{\boldsymbol{\omega}} = J^{-1} \bigl[\boldsymbol{\tau} - \boldsymbol{\omega} \times (J \boldsymbol{\omega}) + \boldsymbol{\tau}_{drag}\bigr]$$
+$$\dot{\mathbf{\omega}} = J^{-1} \bigl[\mathbf{\tau} - \mathbf{\omega} \times (J \mathbf{\omega}) + \mathbf{\tau}_{drag}\bigr]$$
 
 where:
 
 | Symbol | Description |
 |:---|:---|
 | $J$ | Full 3x3 inertia tensor (may have off-diagonal terms) |
-| $\boldsymbol{\tau}$ | Applied torque from controller [N*m] |
-| $\boldsymbol{\omega} \times (J\boldsymbol{\omega})$ | Gyroscopic coupling term |
-| $\boldsymbol{\tau}_{drag} = -k_\omega \boldsymbol{\omega}$ | Angular drag torque |
+| $\mathbf{\tau}$ | Applied torque from controller [N*m] |
+| $\mathbf{\omega} \times (J\mathbf{\omega})$ | Gyroscopic coupling term |
+| $\mathbf{\tau}_{drag} = -k_\omega \mathbf{\omega}$ | Angular drag torque |
 
 ### Inertia Tensor
 
@@ -183,11 +183,11 @@ For symmetric quadrotors, off-diagonal terms are zero and $J_{xx} \approx J_{yy}
 
 The rotation matrix is updated using a first-order approximation:
 
-$$R_{t+1} = R_t \cdot (I + [\boldsymbol{\omega}]_\times \Delta t)$$
+$$R_{t+1} = R_t \cdot (I + [\mathbf{\omega}]_\times \Delta t)$$
 
-where $[\boldsymbol{\omega}]_\times$ is the skew-symmetric matrix:
+where $[\mathbf{\omega}]_\times$ is the skew-symmetric matrix:
 
-$$[\boldsymbol{\omega}]_\times = \begin{bmatrix}
+$$[\mathbf{\omega}]_\times = \begin{bmatrix}
 0 & -r & q \\
 r & 0 & -p \\
 -q & p & 0
@@ -324,6 +324,16 @@ $$C_D(\alpha) = C_{D0} + C_{D\alpha,stall} \cdot \alpha^2$$
 | `make_generic_quad()` | 1.5 kg | diag(0.02, 0.02, 0.04) | None (linear drag) | Fast prototyping |
 | `make_holybro_x500()` | 2.0 kg | diag(0.03, 0.03, 0.05) | $C_D=1.1$, $A=0.06$ m^2 | Paper validation |
 | `make_fixed_wing()` | 3.0 kg | with off-diag products | `FixedWingAero` ($A=0.50$ m^2) | Fixed-wing simulation |
+
+### 10.1 Aerodynamic Parameter Registry (Phase B Provenance)
+
+| Preset | Parameter set | Source / provenance | Valid runtime range | Uncertainty notes |
+|:---|:---|:---|:---|:---|
+| `make_generic_quad()` | `mass=1.5 kg`, linear drag path | Engineering baseline estimate (project default) | `mass` in [0.5, 30.0] kg | Representative only; not tuned to a specific frame |
+| `make_holybro_x500()` | `A=0.06 m^2`, `C_D=1.1`, ISA atmosphere | Paper-aligned calibration + project tuning for X500 class | `A` in [0.01, 1.0] m², `C_D` in [0.2, 2.5] | Depends on payload, prop guards, and wind exposure |
+| `make_fixed_wing()` | `A=0.50 m^2`, `alpha_0=0.05236`, `alpha_stall=0.26180`, `C_La/C_Da` piecewise | Valencia et al. (2025) Table 3 / Fig. 5 mapped into `FixedWingAero` | `alpha_0` in [-0.15, 0.20] rad, `alpha_stall` in [0.10, 0.60] rad, `C_La_stall < 0` | High sensitivity near stall; post-stall fit is model-level approximation |
+
+Runtime guardrails are enforced in `simulation/drone_physics.py`: when an aerodynamic preset is outside validated ranges, the simulator emits a `RuntimeWarning` once per `DroneParams` object.
 
 ---
 

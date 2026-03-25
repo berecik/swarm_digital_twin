@@ -37,6 +37,34 @@ To develop with the full stack (ROS 2, Zenoh, PX4 Messages):
    python3 visualize_on_host.py
    ```
 
+### QGroundControl Mission Replay (Phase B Protocol)
+
+1. **Start operation stack (profile):**
+   ```bash
+   docker compose --profile phase_b_stack up -d
+   ```
+2. **Launch Gazebo SITL world (separate terminal):**
+   ```bash
+   ros2 launch gazebo sitl_empty.launch.py
+   ```
+3. **Run standalone MAVLink bridge (separate terminal):**
+   ```bash
+   cd simulation
+   python mavlink_bridge.py
+   ```
+4. **Connect QGroundControl:**
+   - Verify UDP auto-connect to `127.0.0.1:14550`.
+   - Wait for heartbeat lock and GPS fix indicator.
+5. **Upload and replay mission:**
+   - Open `Plan` view, load mission, click `Upload`.
+   - Switch to `Fly` view and start mission replay.
+6. **Capture replay evidence:**
+   - Save QGC telemetry log (`.tlog`).
+   - Capture terminal output from `mavlink_bridge.py` for command/target receipt.
+7. **Pass criteria:**
+   - Mission replay executes without link drops.
+   - Telemetry checklist in `docs/testing.md` is fully satisfied.
+
 ---
 
 ## 📝 Coding Standards

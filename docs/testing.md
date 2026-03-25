@@ -50,7 +50,26 @@ Standalone physics engine tests for rigid-body quadrotor dynamics.
 
 | Command | Purpose | Expected Outcome |
 | :--- | :--- | :--- |
-| `./run_scenario.sh --phase-a` | Single-entry verification for Phase A (`A1+A2+A3`). Runs unit tests + deterministic benchmarks (`moderate`, `strong_wind`). | Command exits with success only when tests pass and both benchmark profiles pass `assert_validation_pass(...)` gates. |
+| `./run_scenario.sh --benchmark` | Single-entry benchmark verification aligned with Phase A deterministic gates (`A1+A2`). Runs canonical deterministic benchmarks (`moderate`, `strong_wind`, `crosswind`, `storm`). | Command exits with success only when all benchmark profiles pass `assert_validation_pass(...)` gates. |
+
+### 5. Phase B Mission Replay Verification (SITL/GCS)
+
+| Check | Command / Action | Expected Outcome |
+| :--- | :--- | :--- |
+| Stack profile | `docker compose --profile phase_b_stack up -d` | SITL stack starts with no failed containers. |
+| Container health | `docker compose --profile phase_b_stack ps` | `sitl_drone_*` and `swarm_node_1` show `running` and healthy status. |
+| Gazebo + ROS topics | `ros2 launch gazebo sitl_empty.launch.py` then `ros2 topic list` | `/wind/velocity` and `/wind/force` are present. |
+| MAVLink telemetry | Open QGroundControl on UDP `14550` | Continuous `HEARTBEAT`, `ATTITUDE`, `GLOBAL_POSITION_INT`, `VFR_HUD`, `SYS_STATUS`. |
+| Replay proof | Upload and execute a mission in QGC | Replay completes and `.tlog` is saved without link dropouts. |
+
+### 6. Phase C Swarm-Ready Standalone Twin Verification
+
+| Check | Command / Action | Expected Outcome |
+| :--- | :--- | :--- |
+| 6-agent standalone sim safety gate | `cd simulation && pytest -q test_drone_physics.py -k test_six_agent_run_maintains_min_separation` | Test passes and minimum pairwise separation stays above the configured threshold (no collisions). |
+| Boids parity reference | `cd simulation && pytest -q test_drone_physics.py -k test_flocking_vector_matches_rust_reference_case` | Python boids steering vector matches the Rust equation reference case within tolerance. |
+| Boids edge parity (empty + radius boundary) | `cd simulation && pytest -q test_drone_physics.py -k "test_flocking_vector_returns_zero_without_neighbors or test_flocking_vector_excludes_neighbor_at_radius_boundary"` | Empty-neighbor case returns zero vector, and a neighbor exactly at `neighbor_radius` is excluded (`<` contract parity with Rust). |
+| Standalone swarm demo run | `python simulation/swarm_scenario.py` | Simulation completes, prints record count and minimum separation for 6 agents in shared wind/terrain. |
 
 ---
 
@@ -61,14 +80,21 @@ Standalone physics engine tests for rigid-body quadrotor dynamics.
 # Physics & Scenario Simulation
 ./run_scenario.sh --test
 
-# Phase A deterministic benchmark baseline (tests + validation gates)
-./run_scenario.sh --phase-a
+# Phase A deterministic benchmark baseline (validation gates)
+./run_scenario.sh --benchmark
 
 # Swarm Control (Rust)
 cd swarm_control && cargo test
 
 # Perception (Python)
 cd perception && pytest test/
+
+# Phase B stack health snapshot
+docker compose --profile phase_b_stack ps
+
+# Phase C standalone swarm checks
+cd simulation && pytest -q test_drone_physics.py -k SwarmStandaloneTwin
+python simulation/swarm_scenario.py
 ```
 
 ### Protocol for Autonomous Agents
@@ -80,12 +106,12 @@ Agents receiving the "do tests" or "do maintenance" commands must:
 
 ---
 
-## 📈 Verification Status (Last Update: 2026-03-23)
+## 📈 Verification Status (Last Update: 2026-03-25)
 
 | Module | Unit Tests | Integration | SITL |
 | :--- | :---: | :---: | :---: |
 | Swarm Control | ✅ 17 Pass | ⏳ Pending | ✅ Pass |
 | Perception | ✅ 13 Pass | ⏳ Pending | ✅ Pass |
 | Heavy Lift | ✅ 1 Pass | ⏳ Pending | ⏳ Pending |
-| Physics Engine | ✅ 19 Pass | ✅ 1 Pass | N/A |
-| **Total** | **50 Pass** | **1 Pass** | **Green** |
+| Physics Engine | ✅ 73 Pass | ✅ 1 Pass | N/A |
+| **Total** | **104 Pass** | **1 Pass** | **Green** |

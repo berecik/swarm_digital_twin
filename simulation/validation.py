@@ -84,6 +84,38 @@ BENCHMARK_PROFILES: Dict[str, BenchmarkProfile] = {
             max_error_max=28.0,
         ),
     ),
+    "crosswind": BenchmarkProfile(
+        name="crosswind",
+        seed=20260326,
+        wind_speed=5.0,
+        wind_direction=np.array([1.0, 0.0, 0.0]),
+        tolerance=1e-6,
+        envelope=ValidationEnvelope(
+            rmse_x_max=7.5,
+            rmse_y_max=7.5,
+            rmse_z_max=2.5,
+            rmse_total_max=8.0,
+            median_error_max=7.5,
+            p75_error_max=9.0,
+            max_error_max=24.0,
+        ),
+    ),
+    "storm": BenchmarkProfile(
+        name="storm",
+        seed=20260327,
+        wind_speed=10.0,
+        wind_direction=np.array([0.0, 1.0, 0.0]),
+        tolerance=1e-6,
+        envelope=ValidationEnvelope(
+            rmse_x_max=10.0,
+            rmse_y_max=10.0,
+            rmse_z_max=3.0,
+            rmse_total_max=10.5,
+            median_error_max=10.0,
+            p75_error_max=12.5,
+            max_error_max=34.0,
+        ),
+    ),
 }
 
 

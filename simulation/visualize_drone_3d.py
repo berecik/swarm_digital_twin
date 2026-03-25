@@ -29,8 +29,10 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 # Allow running from repo root or from simulation/
 DATA_CANDIDATES = [
+    SCRIPT_DIR / 'swarm_data.npz',
     SCRIPT_DIR / 'scenario_data.npz',
     Path('scenario_data.npz'),
+    Path('simulation/swarm_data.npz'),
     Path('simulation/scenario_data.npz'),
 ]
 
@@ -128,12 +130,21 @@ def main():
     path = sys.argv[1] if len(sys.argv) > 1 else None
     data = load_data(path)
 
+    is_swarm = 'positions' in data and 'pos' not in data
     t = data['t']
-    pos = data['pos']
-    vel = data['vel']
-    euler = data['euler']
-    thrust = data['thrust']
-    waypoints = data['waypoints']
+
+    if is_swarm:
+        positions = data['positions']
+        velocities = data['velocities']
+        waypoints = data['waypoints']
+        drone_ids = data.get('drone_ids', np.array([f'drone_{i+1}' for i in range(positions.shape[1])]))
+        drone_ids = [str(x) for x in drone_ids]
+    else:
+        pos = data['pos']
+        vel = data['vel']
+        euler = data['euler']
+        thrust = data['thrust']
+        waypoints = data['waypoints']
 
     has_terrain = 'terrain_x' in data
     has_wind = 'wind_speed' in data and float(data['wind_speed']) > 0
@@ -142,12 +153,28 @@ def main():
     step = max(1, n // 2000)
     idx = np.arange(0, n, step)
 
-    speed = np.linalg.norm(vel, axis=1)
+    if is_swarm:
+        center = positions.mean(axis=1)
+        center_speed = np.linalg.norm(velocities.mean(axis=1), axis=1)
+        sep = []
+        for frame in positions:
+            min_d = np.inf
+            for i in range(frame.shape[0]):
+                for j in range(i + 1, frame.shape[0]):
+                    min_d = min(min_d, np.linalg.norm(frame[i] - frame[j]))
+            sep.append(min_d)
+        min_sep_series = np.array(sep)
+    else:
+        speed = np.linalg.norm(vel, axis=1)
 
     # Compute AGL (above ground level) for each position
-    if has_terrain:
-        agl = np.array([pos[i, 2] - get_terrain_z(data, pos[i, 0], pos[i, 1])
-                         for i in range(n)])
+    if has_terrain and not is_swarm:
+        agl = np.array([pos[i, 2] - get_terrain_z(data, pos[i, 0], pos[i, 1]) for i in range(n)])
+    elif is_swarm:
+        agl = np.array([
+            center[i, 2] - get_terrain_z(data, center[i, 0], center[i, 1]) if has_terrain else center[i, 2]
+            for i in range(n)
+        ])
     else:
         agl = pos[:, 2].copy()
 
@@ -202,37 +229,57 @@ def main():
                           linewidth=0, antialiased=True, zorder=0)
     else:
         # Flat ground
-        gx = np.linspace(pos[:, 0].min() - 2, pos[:, 0].max() + 2, 10)
-        gy = np.linspace(pos[:, 1].min() - 2, pos[:, 1].max() + 2, 10)
+        pos_ref = positions.reshape(-1, 3) if is_swarm else pos
+        gx = np.linspace(pos_ref[:, 0].min() - 2, pos_ref[:, 0].max() + 2, 10)
+        gy = np.linspace(pos_ref[:, 1].min() - 2, pos_ref[:, 1].max() + 2, 10)
         GX, GY = np.meshgrid(gx, gy)
         ax3d.plot_surface(GX, GY, np.zeros_like(GX), alpha=0.08, color='green')
 
     # ── Full trajectory (faded) ──────────────────────────────────────────
-    ax3d.plot(pos[:, 0], pos[:, 1], pos[:, 2],
-              color='cyan', alpha=0.15, linewidth=0.5)
+    if is_swarm:
+        for d in range(positions.shape[1]):
+            ax3d.plot(positions[:, d, 0], positions[:, d, 1], positions[:, d, 2],
+                      color='cyan', alpha=0.08, linewidth=0.4)
+    else:
+        ax3d.plot(pos[:, 0], pos[:, 1], pos[:, 2],
+                  color='cyan', alpha=0.15, linewidth=0.5)
 
     # ── Waypoints ────────────────────────────────────────────────────────
-    ax3d.scatter(waypoints[:, 0], waypoints[:, 1], waypoints[:, 2],
-                 color='red', s=80, marker='D', zorder=5, label='Waypoints')
-    for i, wp in enumerate(waypoints):
-        ax3d.text(wp[0], wp[1], wp[2] + 0.8, f'WP{i+1}',
-                  color='red', fontsize=8, ha='center')
+    if is_swarm:
+        for d in range(waypoints.shape[0]):
+            wp_d = waypoints[d]
+            ax3d.scatter(wp_d[:, 0], wp_d[:, 1], wp_d[:, 2],
+                         color='red', s=40, marker='D', zorder=5)
+    else:
+        ax3d.scatter(waypoints[:, 0], waypoints[:, 1], waypoints[:, 2],
+                     color='red', s=80, marker='D', zorder=5, label='Waypoints')
+        for i, wp in enumerate(waypoints):
+            ax3d.text(wp[0], wp[1], wp[2] + 0.8, f'WP{i+1}',
+                      color='red', fontsize=8, ha='center')
 
     # ── Waypoint ground posts (vertical lines to terrain) ────────────────
     if has_terrain:
-        for wp in waypoints:
-            gz = get_terrain_z(data, wp[0], wp[1])
-            ax3d.plot([wp[0], wp[0]], [wp[1], wp[1]], [gz, wp[2]],
-                      color='red', alpha=0.3, linewidth=0.8, linestyle=':')
+        if is_swarm:
+            for d in range(waypoints.shape[0]):
+                for wp in waypoints[d]:
+                    gz = get_terrain_z(data, wp[0], wp[1])
+                    ax3d.plot([wp[0], wp[0]], [wp[1], wp[1]], [gz, wp[2]],
+                              color='red', alpha=0.2, linewidth=0.6, linestyle=':')
+        else:
+            for wp in waypoints:
+                gz = get_terrain_z(data, wp[0], wp[1])
+                ax3d.plot([wp[0], wp[0]], [wp[1], wp[1]], [gz, wp[2]],
+                          color='red', alpha=0.3, linewidth=0.8, linestyle=':')
 
     # ── Wind indicator ───────────────────────────────────────────────────
     if has_wind:
         wind_dir = data['wind_direction']
         wind_spd = float(data['wind_speed'])
         # Place wind arrow at top corner of the flight area
-        wx0 = pos[:, 0].max() + 2
-        wy0 = pos[:, 1].max() + 2
-        wz0 = pos[:, 2].max() * 0.8
+        pos_ref = positions.reshape(-1, 3) if is_swarm else pos
+        wx0 = pos_ref[:, 0].max() + 2
+        wy0 = pos_ref[:, 1].max() + 2
+        wz0 = pos_ref[:, 2].max() * 0.8
         scale = 3.0
         ax3d.quiver(wx0, wy0, wz0,
                      wind_dir[0] * scale, wind_dir[1] * scale, wind_dir[2] * scale,
@@ -243,10 +290,12 @@ def main():
 
     # ── Axis limits ──────────────────────────────────────────────────────
     margin = 5
-    z_max = max(pos[:, 2].max(), waypoints[:, 2].max())
+    pos_ref = positions.reshape(-1, 3) if is_swarm else pos
+    wp_ref = waypoints.reshape(-1, 3) if is_swarm else waypoints
+    z_max = max(pos_ref[:, 2].max(), wp_ref[:, 2].max())
     z_min = tz.min() if has_terrain else 0
-    ax3d.set_xlim(pos[:, 0].min() - margin, pos[:, 0].max() + margin)
-    ax3d.set_ylim(pos[:, 1].min() - margin, pos[:, 1].max() + margin)
+    ax3d.set_xlim(pos_ref[:, 0].min() - margin, pos_ref[:, 0].max() + margin)
+    ax3d.set_ylim(pos_ref[:, 1].min() - margin, pos_ref[:, 1].max() + margin)
     ax3d.set_zlim(z_min, z_max + margin)
     ax3d.set_xlabel('X (m)')
     ax3d.set_ylabel('Y (m)')
@@ -254,14 +303,14 @@ def main():
 
     # ── Timeline: Altitude MSL + Speed ───────────────────────────────────
     ax_alt.set_xlim(t[0], t[-1])
-    ax_alt.set_ylim(0, pos[:, 2].max() * 1.2)
+    ax_alt.set_ylim(0, (center[:, 2].max() if is_swarm else pos[:, 2].max()) * 1.2)
     ax_alt.set_ylabel('Altitude MSL (m)', fontsize=9)
     ax_alt.set_title('Altitude & Speed', fontsize=10)
     ax_alt.grid(True, alpha=0.2, color='white')
     ax_alt.set_xticklabels([])
 
     ax_alt2 = ax_alt.twinx()
-    ax_alt2.set_ylim(0, max(speed.max() * 1.3, 0.1))
+    ax_alt2.set_ylim(0, max((center_speed.max() if is_swarm else speed.max()) * 1.3, 0.1))
     ax_alt2.set_ylabel('Speed (m/s)', color='#ff6b6b', fontsize=9)
     ax_alt2.tick_params(colors='#ff6b6b', labelsize=8)
 
@@ -275,23 +324,35 @@ def main():
 
     # ── Timeline: Thrust ─────────────────────────────────────────────────
     ax_thr.set_xlim(t[0], t[-1])
-    ax_thr.set_ylim(0, thrust.max() * 1.2)
+    if is_swarm:
+        ax_thr.set_ylim(0, max(min_sep_series.max() * 1.2, 1.0))
+        ax_thr.set_ylabel('Min separation (m)', fontsize=9)
+        ax_thr.set_title('Swarm Separation', fontsize=10, color='white')
+    else:
+        ax_thr.set_ylim(0, thrust.max() * 1.2)
     ax_thr.set_xlabel('Time (s)', fontsize=9)
-    ax_thr.set_ylabel('Thrust (N)', fontsize=9)
-    ax_thr.set_title('Thrust', fontsize=10, color='white')
+    if not is_swarm:
+        ax_thr.set_ylabel('Thrust (N)', fontsize=9)
+        ax_thr.set_title('Thrust', fontsize=10, color='white')
     ax_thr.grid(True, alpha=0.2, color='white')
-    hover_thrust = 1.5 * 9.81
-    ax_thr.axhline(y=hover_thrust, color='yellow', linestyle='--', alpha=0.5,
-                    label=f'Hover ({hover_thrust:.1f} N)')
-    ax_thr.legend(loc='upper right', fontsize=7)
+    if not is_swarm:
+        hover_thrust = 1.5 * 9.81
+        ax_thr.axhline(y=hover_thrust, color='yellow', linestyle='--', alpha=0.5,
+                        label=f'Hover ({hover_thrust:.1f} N)')
+        ax_thr.legend(loc='upper right', fontsize=7)
 
     # ── Animated elements ────────────────────────────────────────────────
 
     # Trail
-    trail_line, = ax3d.plot([], [], [], color='cyan', linewidth=1.5, alpha=0.6)
-
-    # Drone marker
-    drone_dot, = ax3d.plot([], [], [], 'o', color='#00ff88', markersize=8, zorder=10)
+    if is_swarm:
+        swarm_colors = plt.cm.tab10(np.linspace(0, 1, max(positions.shape[1], 3)))
+        trail_lines = [ax3d.plot([], [], [], color=swarm_colors[i], linewidth=1.2, alpha=0.5)[0]
+                       for i in range(positions.shape[1])]
+        drone_dots = [ax3d.plot([], [], [], 'o', color=swarm_colors[i], markersize=6, zorder=10)[0]
+                      for i in range(positions.shape[1])]
+    else:
+        trail_line, = ax3d.plot([], [], [], color='cyan', linewidth=1.5, alpha=0.6)
+        drone_dot, = ax3d.plot([], [], [], 'o', color='#00ff88', markersize=8, zorder=10)
 
     # Body axes (attitude)
     ARM = 1.5
@@ -340,15 +401,26 @@ def main():
     def update(frame_i):
         i = idx[frame_i]
 
-        # Trail
         trail_start = max(0, i - 400)
-        trail_line.set_data(pos[trail_start:i, 0], pos[trail_start:i, 1])
-        trail_line.set_3d_properties(pos[trail_start:i, 2])
 
-        # Drone position
-        p = pos[i]
-        drone_dot.set_data([p[0]], [p[1]])
-        drone_dot.set_3d_properties([p[2]])
+        if is_swarm:
+            frame = positions[i]
+            p = center[i]
+            for d in range(frame.shape[0]):
+                trail_lines[d].set_data(positions[trail_start:i, d, 0], positions[trail_start:i, d, 1])
+                trail_lines[d].set_3d_properties(positions[trail_start:i, d, 2])
+                drone_dots[d].set_data([frame[d, 0]], [frame[d, 1]])
+                drone_dots[d].set_3d_properties([frame[d, 2]])
+            if frame_i == 0:
+                for d in range(frame.shape[0]):
+                    ax3d.text(frame[d, 0], frame[d, 1], frame[d, 2] + 0.5, drone_ids[d],
+                              color='white', fontsize=7, ha='center')
+        else:
+            trail_line.set_data(pos[trail_start:i, 0], pos[trail_start:i, 1])
+            trail_line.set_3d_properties(pos[trail_start:i, 2])
+            p = pos[i]
+            drone_dot.set_data([p[0]], [p[1]])
+            drone_dot.set_3d_properties([p[2]])
 
         # Ground shadow + drop line
         gz = get_terrain_z(data, p[0], p[1]) if has_terrain else 0.0
@@ -358,27 +430,38 @@ def main():
         drop_line.set_3d_properties([gz, p[2]])
 
         # Body axes
-        r, pt, yw = euler[i]
-        R = rotation_from_euler(r, pt, yw)
-        for line, col_idx in [(body_x_line, 0), (body_y_line, 1), (body_z_line, 2)]:
-            axis = R[:, col_idx] * ARM
-            line.set_data([p[0], p[0] + axis[0]], [p[1], p[1] + axis[1]])
-            line.set_3d_properties([p[2], p[2] + axis[2]])
+        if not is_swarm:
+            r, pt, yw = euler[i]
+            R = rotation_from_euler(r, pt, yw)
+            for line, col_idx in [(body_x_line, 0), (body_y_line, 1), (body_z_line, 2)]:
+                axis = R[:, col_idx] * ARM
+                line.set_data([p[0], p[0] + axis[0]], [p[1], p[1] + axis[1]])
+                line.set_3d_properties([p[2], p[2] + axis[2]])
 
         # Velocity vector
-        v = vel[i]
+        v = velocities.mean(axis=1)[i] if is_swarm else vel[i]
         v_scale = 0.5
         vel_line.set_data([p[0], p[0] + v[0]*v_scale],
                           [p[1], p[1] + v[1]*v_scale])
         vel_line.set_3d_properties([p[2], p[2] + v[2]*v_scale])
 
         # Timeline traces
-        alt_line.set_data(t[:i], pos[:i, 2])
-        speed_line.set_data(t[:i], speed[:i])
+        alt_line.set_data(t[:i], center[:i, 2] if is_swarm else pos[:i, 2])
+        speed_line.set_data(t[:i], center_speed[:i] if is_swarm else speed[:i])
         agl_line.set_data(t[:i], agl[:i])
-        thr_line.set_data(t[:i], thrust[:i])
+        thr_line.set_data(t[:i], min_sep_series[:i] if is_swarm else thrust[:i])
 
         # Text
+        if is_swarm:
+            time_text.set_text(
+                f't={t[i]:.2f}s  center=[{p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f}]  '
+                f'v={center_speed[i]:.2f}m/s  min_sep={min_sep_series[i]:.2f}m  AGL={agl[i]:.1f}m'
+            )
+            info_text.set_text(f'swarm_size={positions.shape[1]}  mode=swarm')
+            return tuple(trail_lines + drone_dots + [shadow_dot, drop_line, vel_line,
+                                                     alt_line, speed_line, agl_line, thr_line,
+                                                     time_text, info_text])
+
         time_text.set_text(
             f't={t[i]:.2f}s  pos=[{p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f}]  '
             f'v={speed[i]:.2f}m/s  T={thrust[i]:.1f}N  AGL={agl[i]:.1f}m'

@@ -6,12 +6,13 @@
 # Website: https://marysia.app
 #
 # Usage:
-#   ./run_scenario.sh              # run scenario then open 3D visualization
-#   ./run_scenario.sh --sim-only   # run scenario only (no GUI)
-#   ./run_scenario.sh --viz-only   # open visualization (using existing data)
+#   ./run_scenario.sh              # run swarm scenario then open 3D visualization
+#   ./run_scenario.sh --single     # run single-drone scenario then open 3D visualization
+#   ./run_scenario.sh --sim-only   # run swarm scenario only (no GUI)
+#   ./run_scenario.sh --viz-only   # open visualization (using existing swarm data)
 #   ./run_scenario.sh --test       # run physics tests
-#   ./run_scenario.sh --all        # run tests, scenario, and visualization
-#   ./run_scenario.sh --phase-a     # Phase A baseline: tests + deterministic benchmarks
+#   ./run_scenario.sh --benchmark  # run deterministic benchmark validation gates
+#   ./run_scenario.sh --all        # run tests, benchmark, scenario, and visualization
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -77,38 +78,58 @@ run_tests() {
 }
 
 run_scenario() {
-    info "Running drone flight scenario..."
-    python "$SIM_DIR/drone_scenario.py"
-    ok "Scenario complete — data saved"
+    info "Running swarm flight scenario..."
+    python "$SIM_DIR/swarm_scenario.py"
+    ok "Swarm scenario complete — data saved"
 }
 
-run_phase_a() {
-    info "Running Phase A validation baseline..."
-    run_tests
+run_single_scenario() {
+    info "Running single-drone flight scenario..."
+    python "$SIM_DIR/drone_scenario.py"
+    ok "Single-drone scenario complete — data saved"
+}
 
-    info "Running deterministic benchmark: moderate"
-    python "$SIM_DIR/drone_scenario.py" --benchmark moderate
+run_benchmark() {
+    info "Running deterministic benchmark validation gates..."
+    local profiles=(moderate strong_wind crosswind storm)
+    local profile
+    for profile in "${profiles[@]}"; do
+        info "Running deterministic benchmark: $profile"
+        python "$SIM_DIR/drone_scenario.py" --benchmark "$profile"
+    done
 
-    info "Running deterministic benchmark: strong_wind"
-    python "$SIM_DIR/drone_scenario.py" --benchmark strong_wind
-
-    ok "Phase A validation baseline passed"
+    ok "Deterministic benchmark validation passed"
 }
 
 run_viz() {
-    local data_file="$SIM_DIR/scenario_data.npz"
+    local data_file="$SIM_DIR/swarm_data.npz"
     if [ ! -f "$data_file" ]; then
-        warn "No scenario data found. Running scenario first..."
+        warn "No swarm data found. Running swarm scenario first..."
         run_scenario
     fi
     info "Launching 3D visualization..."
-    python "$SIM_DIR/visualize_drone_3d.py"
+    python "$SIM_DIR/visualize_drone_3d.py" "$data_file"
+}
+
+run_single_viz() {
+    local data_file="$SIM_DIR/scenario_data.npz"
+    if [ ! -f "$data_file" ]; then
+        warn "No single-drone data found. Running single-drone scenario first..."
+        run_single_scenario
+    fi
+    info "Launching 3D visualization..."
+    python "$SIM_DIR/visualize_drone_3d.py" "$data_file"
 }
 
 # ── Parse args ───────────────────────────────────────────────────────────────
 MODE="${1:---default}"
 
 case "$MODE" in
+    --single)
+        ensure_venv
+        run_single_scenario
+        run_single_viz
+        ;;
     --sim-only)
         ensure_venv
         run_scenario
@@ -124,22 +145,24 @@ case "$MODE" in
     --all)
         RUN_TESTS=1 ensure_venv
         run_tests
+        run_benchmark
         run_scenario
         run_viz
         ;;
-    --phase-a)
-        RUN_TESTS=1 ensure_venv
-        run_phase_a
+    --benchmark)
+        ensure_venv
+        run_benchmark
         ;;
     --help|-h)
-        echo "Usage: $0 [--sim-only|--viz-only|--test|--all|--phase-a|--help]"
+        echo "Usage: $0 [--single|--sim-only|--viz-only|--test|--benchmark|--all|--help]"
         echo ""
-        echo "  (default)    Run scenario then open 3D visualization"
-        echo "  --sim-only   Run scenario only (no GUI)"
-        echo "  --viz-only   Open visualization (uses existing data)"
+        echo "  (default)    Run swarm scenario then open 3D visualization"
+        echo "  --single     Run single-drone scenario then open 3D visualization"
+        echo "  --sim-only   Run swarm scenario only (no GUI)"
+        echo "  --viz-only   Open visualization (uses existing swarm data)"
         echo "  --test       Run physics tests"
-        echo "  --all        Run tests, then scenario, then visualization"
-        echo "  --phase-a    Run tests and deterministic benchmark validation gates"
+        echo "  --benchmark  Run deterministic benchmark validation gates"
+        echo "  --all        Run tests, benchmark, then swarm scenario and visualization"
         echo "  --help       Show this help"
         ;;
     --default)

@@ -20,7 +20,8 @@ UAV rigid-body simulation with:
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
+import warnings
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -103,6 +104,55 @@ class DroneParams:
     )
     aero: Optional[AeroCoefficients] = None
     atmo: Optional[Atmosphere] = None
+    _aero_ranges_checked: bool = field(default=False, repr=False, compare=False)
+
+
+def _warn_if_aero_params_out_of_range(params: DroneParams) -> None:
+    """Warn once when aerodynamic parameters are outside validated ranges."""
+    if params._aero_ranges_checked or params.aero is None:
+        return
+
+    params._aero_ranges_checked = True
+    aero = params.aero
+    warnings_to_emit = []
+
+    if not 0.5 <= params.mass <= 30.0:
+        warnings_to_emit.append(
+            f"mass={params.mass:.3f}kg is outside validated range [0.5, 30.0]kg"
+        )
+
+    if not 0.01 <= aero.reference_area <= 1.0:
+        warnings_to_emit.append(
+            "reference_area="
+            f"{aero.reference_area:.4f}m^2 is outside validated range [0.01, 1.0]m^2"
+        )
+
+    if isinstance(aero, FixedWingAero):
+        if not -0.15 <= aero.alpha_0 <= 0.20:
+            warnings_to_emit.append(
+                f"alpha_0={aero.alpha_0:.4f}rad is outside validated range [-0.15, 0.20]rad"
+            )
+        if not 0.10 <= aero.alpha_stall <= 0.60:
+            warnings_to_emit.append(
+                "alpha_stall="
+                f"{aero.alpha_stall:.4f}rad is outside validated range [0.10, 0.60]rad"
+            )
+        if aero.C_La_stall >= 0.0:
+            warnings_to_emit.append(
+                f"C_La_stall={aero.C_La_stall:.4f} should be negative in post-stall model"
+            )
+    else:
+        if not 0.2 <= aero.C_D <= 2.5:
+            warnings_to_emit.append(
+                f"C_D={aero.C_D:.4f} is outside validated range [0.2, 2.5] for multirotors"
+            )
+
+    for warning_text in warnings_to_emit:
+        warnings.warn(
+            f"Aerodynamic parameter warning: {warning_text}",
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
 
 # ── Airframe presets ─────────────────────────────────────────────────────────
@@ -176,6 +226,65 @@ class DroneState:
 class DroneCommand:
     thrust: float = 0.0              # N  (total, along body-Z up)
     torque: np.ndarray = field(default_factory=lambda: np.zeros(3))  # body [roll, pitch, yaw]
+
+
+@dataclass
+class FlockingParams:
+    neighbor_radius: float = 10.0
+    separation_radius: float = 2.0
+    separation_weight: float = 2.0
+    alignment_weight: float = 1.0
+    cohesion_weight: float = 1.0
+
+
+@dataclass
+class SwarmRecord:
+    t: float
+    positions: np.ndarray
+    velocities: np.ndarray
+
+
+def calculate_flocking_vector(me_position: np.ndarray,
+                              me_velocity: np.ndarray,
+                              neighbor_positions: List[np.ndarray],
+                              neighbor_velocities: List[np.ndarray],
+                              params: Optional[FlockingParams] = None) -> np.ndarray:
+    """Python mirror of `swarm_control/src/boids.rs::calculate_flocking_vector`."""
+    if params is None:
+        params = FlockingParams()
+
+    if len(neighbor_positions) == 0:
+        return np.zeros(3)
+
+    separation = np.zeros(3)
+    alignment = np.zeros(3)
+    cohesion = np.zeros(3)
+    neighbors_count = 0
+    center_of_mass = np.zeros(3)
+
+    for other_pos, other_vel in zip(neighbor_positions, neighbor_velocities):
+        diff = me_position - other_pos
+        dist = np.linalg.norm(diff)
+
+        if dist < params.neighbor_radius and dist > 0.0:
+            neighbors_count += 1
+
+            if dist < params.separation_radius:
+                separation += (diff / dist) / dist
+
+            alignment += other_vel
+            center_of_mass += other_pos
+
+    if neighbors_count > 0:
+        alignment /= neighbors_count
+        center_of_mass /= neighbors_count
+        cohesion = center_of_mass - me_position
+
+    return (
+        separation * params.separation_weight
+        + (alignment - me_velocity) * params.alignment_weight
+        + cohesion * params.cohesion_weight
+    )
 
 
 # ── Rotation helpers ─────────────────────────────────────────────────────────
@@ -290,6 +399,8 @@ def physics_step(state: DroneState, cmd: DroneCommand,
         t: Current simulation time (used by wind model).
         terrain: Optional TerrainMap for ground collision detection.
     """
+
+    _warn_if_aero_params_out_of_range(params)
 
     # Clamp commands
     thrust = np.clip(cmd.thrust, 0.0, params.max_thrust)
@@ -471,7 +582,7 @@ class PositionController:
             self.pid_yaw.update(err_yaw, dt),
         ])
 
-        return DroneCommand(thrust=thrust, torque=torque)
+        return DroneCommand(thrust=float(thrust), torque=torque)
 
     def reset(self):
         for pid in [self.pid_x, self.pid_y, self.pid_z,
@@ -545,6 +656,108 @@ def run_simulation(waypoints: List[np.ndarray],
                 controller.reset()
         else:
             hover_timer = 0.0
+
+        t += dt
+
+    return records
+
+
+def run_swarm_simulation(drone_waypoints: Dict[str, List[np.ndarray]],
+                         params: Optional[DroneParams] = None,
+                         dt: float = 0.01,
+                         waypoint_radius: float = 0.8,
+                         hover_time: float = 1.5,
+                         max_time: float = 120.0,
+                         wind=None,
+                         terrain=None,
+                         flocking_params: Optional[FlockingParams] = None,
+                         avoidance_gain: float = 0.8,
+                         min_separation: float = 1.5,
+                         max_speed: float = 8.0) -> List[SwarmRecord]:
+    """Run N-drone standalone simulation with shared wind/terrain and avoidance."""
+    if params is None:
+        params = DroneParams()
+    if flocking_params is None:
+        flocking_params = FlockingParams()
+
+    drone_ids = sorted(drone_waypoints.keys())
+    if len(drone_ids) == 0:
+        return []
+
+    states: Dict[str, DroneState] = {
+        drone_id: DroneState(position=np.array(drone_waypoints[drone_id][0], dtype=float))
+        for drone_id in drone_ids
+    }
+    controllers: Dict[str, PositionController] = {
+        drone_id: PositionController(params) for drone_id in drone_ids
+    }
+    wp_idx: Dict[str, int] = {drone_id: 0 for drone_id in drone_ids}
+    hover_timer: Dict[str, float] = {drone_id: 0.0 for drone_id in drone_ids}
+    records: List[SwarmRecord] = []
+
+    t = 0.0
+    while t < max_time:
+        all_done = True
+        next_states: Dict[str, DroneState] = {}
+
+        for drone_id in drone_ids:
+            waypoints = drone_waypoints[drone_id]
+            current_wp_idx = wp_idx[drone_id]
+            if current_wp_idx >= len(waypoints):
+                next_states[drone_id] = states[drone_id]
+                continue
+
+            all_done = False
+            state = states[drone_id]
+            target = waypoints[current_wp_idx]
+
+            neighbor_positions = [states[n].position for n in drone_ids if n != drone_id]
+            neighbor_velocities = [states[n].velocity for n in drone_ids if n != drone_id]
+            flock_vec = calculate_flocking_vector(
+                me_position=state.position,
+                me_velocity=state.velocity,
+                neighbor_positions=neighbor_positions,
+                neighbor_velocities=neighbor_velocities,
+                params=flocking_params,
+            )
+
+            avoid_vec = np.zeros(3)
+            for other_id in drone_ids:
+                if other_id == drone_id:
+                    continue
+                diff = state.position - states[other_id].position
+                dist = np.linalg.norm(diff)
+                if 0.0 < dist < min_separation:
+                    avoid_vec += (diff / dist) * ((min_separation - dist) / min_separation)
+
+            target_adjusted = target.copy() + (flock_vec + avoidance_gain * avoid_vec)
+            cmd = controllers[drone_id].compute(state, target_adjusted, target_yaw=0.0, dt=dt)
+            state_next = physics_step(state, cmd, params, dt, wind=wind, t=t, terrain=terrain)
+
+            speed = np.linalg.norm(state_next.velocity)
+            if speed > max_speed:
+                state_next.velocity = (state_next.velocity / speed) * max_speed
+
+            next_states[drone_id] = state_next
+
+            dist = np.linalg.norm(state_next.position - target)
+            if dist < waypoint_radius and speed < 1.2:
+                hover_timer[drone_id] += dt
+                if hover_timer[drone_id] >= hover_time:
+                    wp_idx[drone_id] += 1
+                    hover_timer[drone_id] = 0.0
+                    controllers[drone_id].reset()
+            else:
+                hover_timer[drone_id] = 0.0
+
+        states = next_states
+
+        positions = np.array([states[drone_id].position.copy() for drone_id in drone_ids])
+        velocities = np.array([states[drone_id].velocity.copy() for drone_id in drone_ids])
+        records.append(SwarmRecord(t=t, positions=positions, velocities=velocities))
+
+        if all_done:
+            break
 
         t += dt
 

@@ -8,6 +8,7 @@ Website: https://marysia.app
 
 import numpy as np
 import pytest
+import warnings
 from drone_physics import (
     DroneParams, DroneState, DroneCommand,
     PositionController, PIDController,
@@ -16,10 +17,12 @@ from drone_physics import (
     AeroCoefficients, Atmosphere, _compute_quadratic_drag,
     _compute_lift, compute_aoa,
     FixedWingAero, make_generic_quad, make_holybro_x500, make_fixed_wing,
+    run_swarm_simulation, calculate_flocking_vector, FlockingParams,
 )
 from wind_model import WindField
 from terrain import TerrainMap
 from validation import (
+    BENCHMARK_PROFILES,
     ValidationResult,
     ValidationEnvelope,
     assert_validation_pass,
@@ -592,7 +595,7 @@ class TestValidation:
         with pytest.raises(AssertionError, match="Validation failed"):
             assert_validation_pass(result, envelope, profile_name="unit")
 
-    @pytest.mark.parametrize("profile_name", ["moderate", "strong_wind"])
+    @pytest.mark.parametrize("profile_name", sorted(BENCHMARK_PROFILES.keys()))
     def test_benchmark_profiles_are_deterministic(self, profile_name):
         profile = get_benchmark_profile(profile_name)
         first = run_benchmark(profile_name)
@@ -789,6 +792,25 @@ class TestFixedWingAero:
         F_pitch = np.linalg.norm(_compute_quadratic_drag(V_pitch, fw_aero, rho))
         assert F_pitch > F_level
 
+    def test_runtime_warning_for_out_of_range_aero_params(self):
+        """Out-of-range aero params should emit a runtime warning once."""
+        params = DroneParams(
+            mass=50.0,
+            aero=AeroCoefficients(reference_area=2.0, C_D=3.0),
+            atmo=Atmosphere(),
+        )
+        state = DroneState(position=np.array([0.0, 0.0, 10.0]))
+        cmd = DroneCommand(thrust=0.0)
+
+        with pytest.warns(RuntimeWarning, match="Aerodynamic parameter warning"):
+            physics_step(state, cmd, params, dt=0.01)
+
+        # Second call should not re-emit warnings for the same params object.
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            physics_step(state, cmd, params, dt=0.01)
+        assert len(record) == 0
+
 
 # ── Phase 3: MAVLink Bridge ───────────────────────────────────────────────
 
@@ -878,7 +900,7 @@ class TestMAVLink:
 
     def test_command_long_parse(self):
         """COMMAND_LONG parsing should extract command ID and params."""
-        from mavlink_bridge import (encode_mavlink_v2, parse_mavlink_payload,
+        from mavlink_bridge import (parse_mavlink_payload,
                                      MAVLINK_MSG_ID_COMMAND_LONG,
                                      MAV_CMD_COMPONENT_ARM_DISARM)
         import struct
@@ -912,7 +934,7 @@ class TestMAVLink:
 
     def test_sim_state_from_record(self):
         """SimState should be correctly populated from a SimRecord."""
-        from mavlink_bridge import sim_state_from_record, SimState
+        from mavlink_bridge import sim_state_from_record
         from drone_physics import SimRecord
         record = SimRecord(
             t=5.0,
@@ -934,3 +956,103 @@ class TestMAVLink:
         assert decode_mavlink_v2(b'\x00\x01\x02') is None
         assert decode_mavlink_v2(b'') is None
         assert decode_mavlink_v2(b'\xFD' + b'\x00' * 20) is None
+
+
+# ── Phase C: Swarm-ready standalone twin ───────────────────────────────────
+
+class TestSwarmStandaloneTwin:
+    def test_flocking_vector_returns_zero_without_neighbors(self):
+        """No neighbors should yield a zero steering vector."""
+        got = calculate_flocking_vector(
+            me_position=np.array([1.0, 2.0, 3.0]),
+            me_velocity=np.array([0.5, -0.2, 0.1]),
+            neighbor_positions=[],
+            neighbor_velocities=[],
+            params=FlockingParams(),
+        )
+        np.testing.assert_allclose(got, np.zeros(3), atol=1e-12)
+
+    def test_flocking_vector_excludes_neighbor_at_radius_boundary(self):
+        """Neighbor exactly at radius boundary should be excluded like boids.rs (<, not <=)."""
+        params = FlockingParams(neighbor_radius=10.0)
+        got = calculate_flocking_vector(
+            me_position=np.array([0.0, 0.0, 0.0]),
+            me_velocity=np.array([0.3, -0.1, 0.0]),
+            neighbor_positions=[np.array([10.0, 0.0, 0.0])],
+            neighbor_velocities=[np.array([1.0, 1.0, 0.0])],
+            params=params,
+        )
+        np.testing.assert_allclose(got, -np.array([0.3, -0.1, 0.0]), atol=1e-12)
+
+    def test_flocking_vector_matches_rust_reference_case(self):
+        """Python boids helper should match boids.rs equation for a fixed case."""
+        params = FlockingParams(
+            neighbor_radius=10.0,
+            separation_radius=2.0,
+            separation_weight=2.0,
+            alignment_weight=1.0,
+            cohesion_weight=1.0,
+        )
+        me_position = np.array([0.0, 0.0, 0.0])
+        me_velocity = np.array([1.0, 0.0, 0.0])
+        neighbor_positions = [
+            np.array([1.0, 0.0, 0.0]),
+            np.array([0.0, 3.0, 0.0]),
+        ]
+        neighbor_velocities = [
+            np.array([0.0, 1.0, 0.0]),
+            np.array([0.0, 2.0, 0.0]),
+        ]
+
+        got = calculate_flocking_vector(
+            me_position,
+            me_velocity,
+            neighbor_positions,
+            neighbor_velocities,
+            params,
+        )
+
+        # Hand-computed from boids.rs formula:
+        # separation=[-1,0,0], alignment=[0,1.5,0], cohesion=[0.5,1.5,0]
+        # result = sep*2 + (align-me_vel)*1 + coh*1 = [-2.5, 3.0, 0]
+        expected = np.array([-2.5, 3.0, 0.0])
+        np.testing.assert_allclose(got, expected, atol=1e-9)
+
+    def test_six_agent_run_maintains_min_separation(self):
+        """Swarm scenario should sustain 6 agents without collisions."""
+        base_alt = 8.0
+        drone_waypoints = {
+            f"drone_{i}": [
+                np.array([
+                    10.0 * np.cos(i * np.pi / 3.0),
+                    10.0 * np.sin(i * np.pi / 3.0),
+                    base_alt,
+                ]),
+                np.array([
+                    10.0 * np.cos(i * np.pi / 3.0 + np.pi / 6.0),
+                    10.0 * np.sin(i * np.pi / 3.0 + np.pi / 6.0),
+                    base_alt,
+                ]),
+            ]
+            for i in range(6)
+        }
+
+        records = run_swarm_simulation(
+            drone_waypoints,
+            params=make_generic_quad(),
+            dt=0.02,
+            hover_time=0.4,
+            max_time=6.0,
+            min_separation=1.5,
+        )
+
+        assert len(records) > 0
+        min_dist = float("inf")
+        for rec in records:
+            positions = rec.positions
+            for i in range(len(positions)):
+                for j in range(i + 1, len(positions)):
+                    d = np.linalg.norm(positions[i] - positions[j])
+                    min_dist = min(min_dist, d)
+
+        assert min_dist >= 1.45

@@ -17,6 +17,8 @@ The following paper-aligned foundations are already in the codebase and covered 
 - Flight log parsing + validation utilities in `simulation/flight_log.py` and `simulation/validation.py`
 - Fixed-wing aerodynamic model (`FixedWingAero`) with stall behaviour
 - MAVLink v2 bridge for simulator ↔ GCS integration in `simulation/mavlink_bridge.py`
+- Phase B operation loop baseline: compose startup profile + health-check contract + QGroundControl replay protocol docs
+- Aerodynamic parameter provenance registry and runtime out-of-range warnings
 
 Baseline verification command for the above:
 
@@ -42,7 +44,7 @@ cd simulation && pytest -q test_drone_physics.py
 
 ## 3) Active refactor roadmap (new)
 
-### Phase A — Reproducible paper-style validation baseline (**P0**)
+### Phase A — Reproducible paper-style validation baseline (**P0**) ✅ Completed on 2026-03-24
 
 #### A1. Create canonical benchmark scenarios
 - **Target files:**
@@ -76,7 +78,7 @@ cd simulation && pytest -q test_drone_physics.py
 - **Acceptance criteria:**
   - Fresh contributor can reproduce validation results without ad-hoc steps
 
-### Phase B — Full open-source DT operation loop (**P1**)
+### Phase B — Full open-source DT operation loop (**P1**) ✅ Completed on 2026-03-25
 
 #### B1. SITL + Gazebo + bridge workflow hardening
 - **Target files:**
@@ -111,7 +113,7 @@ cd simulation && pytest -q test_drone_physics.py
 - **Acceptance criteria:**
   - Every preset has documented origin and uncertainty notes
 
-### Phase C — Project-priority extension: swarm-ready standalone twin (**P1/P2**)
+### Phase C — Project-priority extension: swarm-ready standalone twin (**P1/P2**) ✅ Completed on 2026-03-25
 
 #### C1. Multi-drone standalone simulation core
 - **Target files:**
@@ -141,17 +143,17 @@ cd simulation && pytest -q test_drone_physics.py
 | Item category | Verification method | Current status |
 |:---|:---|:---|
 | Implemented physics + wind + terrain + flight-log + fixed-wing + MAVLink | `pytest simulation/test_drone_physics.py` | **Available now** |
-| End-to-end SITL reproducibility | scripted startup + health checks + mission replay log | **To implement** |
-| Quantitative acceptance gates | automated threshold checks in tests/CI | **To implement** |
-| Multi-drone standalone behaviour | dedicated scenario + collision/formation metrics | **To implement** |
+| End-to-end SITL reproducibility | scripted startup + health checks + mission replay log | **Available now** |
+| Quantitative acceptance gates | automated threshold checks in tests/CI | **Available now** |
+| Multi-drone standalone behaviour | dedicated scenario + collision/formation metrics | **Available now** |
 
 ---
 
 ## 5) Execution order
 
-1. **Phase A (P0)** — make validation deterministic and enforceable first.
-2. **Phase B (P1)** — harden full DT operation loop with SITL/Gazebo/GCS workflows.
-3. **Phase C (P1/P2)** — extend to swarm-ready standalone twin aligned with project roadmap.
+1. **Phase A (P0)** — make validation deterministic and enforceable first. ✅
+2. **Phase B (P1)** — harden full DT operation loop with SITL/Gazebo/GCS workflows. ✅
+3. **Phase C (P1/P2)** — extend to swarm-ready standalone twin aligned with project roadmap. ✅
 
 ---
 

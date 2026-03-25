@@ -12,12 +12,19 @@ services:
         ipv4_address: 10.10.1.11
     environment:
       - ROS_DOMAIN_ID=1
+    profiles: ["phase_b_stack"]
     command: tail -f /dev/null
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'test -f /dev/null'"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
   swarm_node_1:
     image: sar_swarm_companion:latest
     container_name: swarm_node_1
     restart: always
+    profiles: ["phase_b_stack"]
     networks:
       swarm_net:
         ipv4_address: 10.10.1.21
@@ -27,6 +34,11 @@ services:
       - ./swarm_control:/root/workspace/swarm_control
       - ./simulation:/root/workspace/simulation
     command: bash -c "cd /root/workspace/swarm_control && cargo run"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'pgrep -f cargo >/dev/null'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     depends_on:
       - sitl_drone_1
 
@@ -38,6 +50,7 @@ services:
         ipv4_address: 10.10.1.31
     environment:
       - ROS_DOMAIN_ID=1
+    profiles: ["phase_b_stack"]
     volumes:
       - ./perception:/root/workspace/perception
     command: bash -c "export PYTHONPATH=\$PYTHONPATH:/root/workspace/perception && ros2 run sar_perception detector"
@@ -52,6 +65,7 @@ services:
         ipv4_address: 10.10.1.12
     environment:
       - ROS_DOMAIN_ID=2
+    profiles: ["phase_b_stack"]
     command: tail -f /dev/null
 
   swarm_node_2:
@@ -62,6 +76,7 @@ services:
         ipv4_address: 10.10.1.22
     environment:
       - ROS_DOMAIN_ID=2
+    profiles: ["phase_b_stack"]
     volumes:
       - ./swarm_control:/root/workspace/swarm_control
       - ./simulation:/root/workspace/simulation
@@ -77,6 +92,7 @@ services:
         ipv4_address: 10.10.1.13
     environment:
       - ROS_DOMAIN_ID=3
+    profiles: ["phase_b_stack"]
     command: tail -f /dev/null
 
   swarm_node_3:
@@ -87,6 +103,7 @@ services:
         ipv4_address: 10.10.1.23
     environment:
       - ROS_DOMAIN_ID=3
+    profiles: ["phase_b_stack"]
     volumes:
       - ./swarm_control:/root/workspace/swarm_control
       - ./simulation:/root/workspace/simulation

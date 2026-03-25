@@ -2,14 +2,14 @@
 
 This document tracks the high-level testing status and provides detailed explanations of the verification suite across the Swarm Digital Twin project.
 
-## 🧪 Current Status (2026-03-24)
+## 🧪 Current Status (2026-03-25)
 
 | Module | Unit Tests | Integration Tests | SITL / Hardware | Status |
 | :--- | :---: | :---: | :---: | :--- |
 | `sar_swarm_control` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM Verified. |
 | `sar_perception` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (68) | ✅ Pass (Scenario + Benchmarks) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A validation gates |
+| **Drone Physics** (Python) | ✅ Pass (73) | ✅ Pass (Scenario + Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A/B/C validation gates |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `sar_swarm_control` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -77,10 +77,10 @@ The following tests verify the AI-driven human detection and 3D localization log
 Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py`
 
 #### A0. Phase A Reproducible Validation Baseline
-- **`./run_scenario.sh --phase-a`**:
-    - **Purpose**: Runs one-command Phase A baseline verification (unit tests + deterministic benchmark gates).
-    - **Input**: Canonical benchmark profiles (`moderate`, `strong_wind`) with fixed seeds from `simulation/validation.py`.
-    - **Expected Outcome**: Both benchmark profiles pass `assert_validation_pass(...)`; repeated runs on same commit produce equivalent RMSE metrics within configured tolerance.
+- **`./run_scenario.sh --benchmark`**:
+    - **Purpose**: Runs one-command deterministic benchmark validation gates for the canonical profile set.
+    - **Input**: Canonical benchmark profiles (`moderate`, `strong_wind`, `crosswind`, `storm`) with fixed seeds from `simulation/validation.py`.
+    - **Expected Outcome**: All benchmark profiles pass `assert_validation_pass(...)`; repeated runs on same commit produce equivalent RMSE metrics within configured tolerance.
 
 #### A. Rotation Math
 - **`test_identity`**: `euler_to_rotation(0,0,0)` produces identity matrix.
@@ -146,7 +146,10 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_flight_log_csv_roundtrip`**: FlightLog parses CSV, returns correct shape, origin at (0,0,0).
 - **`test_validation_gate_passes_within_envelope`**: Gate accepts metrics that remain below all configured envelope thresholds.
 - **`test_validation_gate_fails_outside_envelope`**: Gate rejects metrics above threshold and raises `AssertionError`.
-- **`test_benchmark_profiles_are_deterministic`**: `moderate` and `strong_wind` profiles produce repeatable RMSE values within profile tolerance across two consecutive runs.
+- **`test_benchmark_profiles_are_deterministic`**: All canonical benchmark profiles (`moderate`, `strong_wind`, `crosswind`, `storm`) produce repeatable RMSE values within profile tolerance across two consecutive runs.
+
+#### N2. Phase B Runtime Guardrails
+- **`test_runtime_warning_for_out_of_range_aero_params`**: Out-of-range aerodynamic coefficients emit one-shot runtime warning tied to documented validity envelopes.
 
 #### O. Terrain (Phase 2)
 - **`test_flat_terrain_elevation`**: Flat terrain returns constant elevation at all query points.
@@ -182,6 +185,12 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_enu_to_gps_conversion`**: ENU→GPS: zero offset returns ref point; +Y increases latitude.
 - **`test_sim_state_from_record`**: SimRecord converts to SimState with correct thrust %.
 - **`test_invalid_message_returns_none`**: Garbage data and truncated messages return None.
+
+#### R. Swarm Standalone Twin (Phase C)
+- **`test_flocking_vector_returns_zero_without_neighbors`**: Empty neighbor list returns zero steering vector (stable no-neighbor behavior).
+- **`test_flocking_vector_excludes_neighbor_at_radius_boundary`**: Neighbor exactly at `neighbor_radius` is excluded, mirroring Rust `<` condition.
+- **`test_flocking_vector_matches_rust_reference_case`**: Python boids helper matches hand-derived Rust reference vector.
+- **`test_six_agent_run_maintains_min_separation`**: 6-agent deterministic run remains above separation threshold (no collisions).
 
 ### 5. `sar_simulation` — Swarm Sim (`test_swarm_flight.py`)
 - **`test_swarm_flight`**:
