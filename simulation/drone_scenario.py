@@ -23,11 +23,15 @@ from drone_physics import (
 )
 from wind_model import WindField
 from terrain import TerrainMap
+from flight_log import FlightLog
 from validation import (
     compute_rmse,
+    compare_sim_real,
+    plot_comparison,
     get_benchmark_profile,
     assert_validation_pass,
     summarize_validation,
+    interpolate_to_common_times,
 )
 
 
@@ -155,6 +159,153 @@ def run_benchmark(profile_name: str):
         print(f"  {metric}: {summary[metric]:.4f}")
 
     return result
+
+
+def run_irs4_benchmark(profile_name: str):
+    """Run IRS-4 quadrotor benchmark at Quito altitude."""
+    from drone_physics import make_irs4_quadrotor
+    profile = get_benchmark_profile(profile_name)
+    np.random.seed(profile.seed)
+
+    params = make_irs4_quadrotor()
+
+    # Quadrotor-style short waypoints (Carolina/EPN-like square path)
+    waypoints = [
+        np.array([0.0, 0.0, 20.0]),
+        np.array([10.0, 0.0, 20.0]),
+        np.array([10.0, 10.0, 20.0]),
+        np.array([0.0, 10.0, 20.0]),
+        np.array([0.0, 0.0, 20.0]),
+        np.array([0.0, 0.0, 1.0]),
+    ]
+
+    ref_wind = WindField(wind_speed=0.0, wind_direction=profile.wind_direction,
+                         turbulence_type="none")
+    sim_wind = WindField(wind_speed=profile.wind_speed,
+                         wind_direction=profile.wind_direction,
+                         turbulence_type="constant")
+
+    ref_records = run_simulation(
+        waypoints=waypoints, params=params, dt=0.005,
+        waypoint_radius=0.5, hover_time=1.5, max_time=120.0,
+        wind=ref_wind,
+    )
+    sim_records = run_simulation(
+        waypoints=waypoints, params=params, dt=0.005,
+        waypoint_radius=0.5, hover_time=1.5, max_time=120.0,
+        wind=sim_wind,
+    )
+
+    n = min(len(ref_records), len(sim_records))
+    ref_pos = np.array([r.position for r in ref_records[:n]])
+    sim_pos = np.array([r.position for r in sim_records[:n]])
+    result = compute_rmse(sim_pos, ref_pos)
+    assert_validation_pass(result, profile.envelope, profile_name=profile.name)
+
+    summary = summarize_validation(result)
+    print(f"IRS-4 Benchmark '{profile.name}' PASS (seed={profile.seed})")
+    for metric in ["rmse_x", "rmse_y", "rmse_z", "rmse_total", "median_error", "p75_error", "max_error"]:
+        print(f"  {metric}: {summary[metric]:.4f}")
+    return result
+
+
+def replay_mission(log_source, airframe: DroneParams,
+                    wind_source: str = "from_log",
+                    dt: float = 0.005,
+                    output_plot: str = None) -> dict:
+    """Automated mission replay pipeline (Phase J2).
+
+    Loads a flight log → extracts waypoints + wind profile →
+    runs simulation with matching airframe/atmosphere →
+    returns Table 5 metrics (compare_sim_real format).
+
+    Args:
+        log_source: Path to .bin/.csv file, or a FlightLog object.
+        airframe: DroneParams preset (e.g., make_valencia_fixed_wing()).
+        wind_source: "from_log" (extract from altitude deviations),
+                     "from_log_3d" (3D extraction), or "none".
+        dt: Simulation timestep.
+        output_plot: If set, save comparison plot to this path.
+
+    Returns:
+        Dict with rmse_z, rmse_x, rmse_y, rmse_total, median, n_points.
+    """
+    # Load flight log
+    if isinstance(log_source, FlightLog):
+        log = log_source
+    elif isinstance(log_source, str):
+        path = str(log_source)
+        if path.endswith(".bin"):
+            log = FlightLog.from_bin(path)
+        else:
+            log = FlightLog.from_csv(path)
+    else:
+        raise ValueError(f"log_source must be a path or FlightLog, got {type(log_source)}")
+
+    if len(log.timestamps) < 10:
+        raise ValueError("Flight log too short for replay (< 10 data points)")
+
+    # Extract waypoints from flight log
+    waypoints = log.extract_waypoints()
+    if len(waypoints) < 2:
+        # Fall back: use start and end positions
+        waypoints = [log.positions[0].copy(), log.positions[-1].copy()]
+
+    # Extract wind profile
+    wind = None
+    if wind_source == "from_log":
+        wind_profile = log.get_wind_profile()
+        if len(wind_profile) > 0:
+            wind = WindField(
+                wind_speed=1.0,
+                wind_direction=np.array([0.0, 0.0, 1.0]),
+                turbulence_type="from_log",
+                altitude_profile=wind_profile,
+            )
+    elif wind_source == "from_log_3d":
+        wind_profile_3d = log.get_wind_profile_3d()
+        if len(wind_profile_3d) > 0:
+            wind = WindField(
+                wind_speed=1.0,
+                wind_direction=np.array([0.0, 0.0, 1.0]),
+                turbulence_type="from_log_3d",
+                wind_profile_3d=wind_profile_3d,
+            )
+
+    # Run simulation with matching parameters
+    flight_duration = log.timestamps[-1] - log.timestamps[0]
+    max_time = max(flight_duration * 1.5, 60.0)
+
+    records = run_simulation(
+        waypoints=waypoints,
+        params=airframe,
+        dt=dt,
+        waypoint_radius=0.8,
+        hover_time=1.5,
+        max_time=max_time,
+        wind=wind,
+    )
+
+    if len(records) < 10:
+        raise RuntimeError("Simulation produced too few records (< 10)")
+
+    # Extract simulation trajectory
+    sim_times = np.array([r.t for r in records])
+    sim_positions = np.array([r.position for r in records])
+
+    # Reference trajectory from flight log
+    ref_times = log.timestamps - log.timestamps[0]
+    ref_positions = log.positions.copy()
+
+    # Compute Table 5 metrics
+    metrics = compare_sim_real(sim_times, sim_positions, ref_times, ref_positions)
+
+    # Optional plot
+    if output_plot:
+        plot_comparison(sim_times, sim_positions, ref_times, ref_positions,
+                        output_plot, title="Mission Replay Validation")
+
+    return metrics
 
 
 def main():
@@ -286,6 +437,21 @@ def main():
 
 if __name__ == '__main__':
     if len(sys.argv) >= 3 and sys.argv[1] == "--benchmark":
-        run_benchmark(sys.argv[2])
+        profile_name = sys.argv[2]
+        if profile_name.startswith("irs4_"):
+            run_irs4_benchmark(profile_name)
+        else:
+            run_benchmark(profile_name)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "--replay":
+        from drone_physics import make_valencia_fixed_wing, make_irs4_quadrotor
+        bin_path = sys.argv[2]
+        airframe_name = sys.argv[3] if len(sys.argv) > 3 else "fixed_wing"
+        airframe = (make_irs4_quadrotor() if "quad" in airframe_name
+                    else make_valencia_fixed_wing())
+        plot_path = sys.argv[4] if len(sys.argv) > 4 else None
+        metrics = replay_mission(bin_path, airframe, output_plot=plot_path)
+        print(f"Mission replay results for {bin_path}:")
+        for k, v in metrics.items():
+            print(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
     else:
         main()

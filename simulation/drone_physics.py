@@ -266,6 +266,41 @@ def make_holybro_x500() -> DroneParams:
     )
 
 
+def make_irs4_quadrotor(altitude_msl: float = 2800.0) -> DroneParams:
+    """Paper-exact IRS-4 quadrotor preset (Valencia et al. 2025, Section 3.2).
+
+    Used for urban validation experiments at Carolina Park and EPN campus
+    in Quito, Ecuador (~2800m MSL). Matches default ArduPilot IRS-4 config.
+
+    Paper Table 4 missions:
+      - Carolina-40: 326m path, 40m AGL
+      - Carolina-20: 326m path, 20m AGL
+      - EPN-30: 226m path, 30m AGL
+      - EPN-20: 226m path, 20m AGL
+
+    Paper Table 5 RMSE targets: Z ≤ 0.10m, X ≤ 0.071m, Y ≤ 0.055m.
+    """
+    return DroneParams(
+        mass=1.8,                       # IRS-4 platform (3D-printed, Li-Po, PixHawk)
+        arm_length=0.22,                # motor-to-center distance
+        drag_coeff=0.1,
+        ang_drag_coeff=0.015,
+        max_thrust=35.0,                # 4x ~8.75N per motor
+        max_torque=5.0,
+        inertia=np.array([
+            [0.025,  0.0,    0.0  ],    # Jx — roll
+            [0.0,    0.025,  0.0  ],    # Jy — pitch (symmetric X-frame)
+            [0.0,    0.0,    0.042],    # Jz — yaw
+        ]),
+        aero=AeroCoefficients(
+            reference_area=0.05,         # frontal area (compact quad frame)
+            C_D=1.0,                     # bluff-body drag
+            C_L=0.0,                     # no lift for quadrotor
+        ),
+        atmo=Atmosphere(altitude_msl=altitude_msl),  # Quito altitude
+    )
+
+
 @dataclass
 class DroneState:
     position: np.ndarray = field(default_factory=lambda: np.zeros(3))

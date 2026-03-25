@@ -46,7 +46,7 @@ The following paper-aligned capabilities are in the codebase and covered by `sim
 Verification:
 
 ```bash
-cd simulation && pytest -q test_drone_physics.py    # 127 tests
+cd simulation && pytest -q test_drone_physics.py    # 148 tests
 ```
 
 ---
@@ -184,7 +184,7 @@ cd simulation && pytest -q test_drone_physics.py    # 127 tests
 
 | Item category | Verification method | Current status |
 |:---|:---|:---|
-| Physics + wind + terrain + fixed-wing + MAVLink + swarm | `pytest simulation/test_drone_physics.py` (127 tests) | **Done** |
+| Physics + wind + terrain + fixed-wing + MAVLink + swarm | `pytest simulation/test_drone_physics.py` (150 tests) | **Done** |
 | Deterministic benchmarks + acceptance gates | `bash run_scenario.sh --benchmark` (4 + 5 profiles) | **Done** |
 | Paper-exact fixed-wing preset (Table 2/3) | TestValenciaPreset + TestPitchingMoment + TestGammaTermEquivalence (18 tests) | **Done** |
 | Flight log parsing (.csv + .bin) | TestValidation + TestFlightLogBin (8 tests) | **Done** |
@@ -193,9 +193,9 @@ cd simulation && pytest -q test_drone_physics.py    # 127 tests
 | Gazebo models + world | TestGazeboModels (7 tests) | **Done** |
 | SITL lifecycle + CI | TestSITLLifecycle (2 tests) + TestCIPipeline (3 tests) | **Done** |
 | 3D wind estimation | TestWindEstimation3D (5 tests) | **Done** |
-| IRS-4 quadrotor preset (Phase J1) | TestIRS4Preset — mass, PID, atmosphere at 2800m | **Pending** |
-| Mission replay pipeline (Phase J2) | TestMissionReplay — load .bin + sim + RMSE | **Pending** |
-| Paper Table 5 RMSE acceptance (Phase J3) | TestPaperValidation — parametrized per mission | **Pending** |
+| IRS-4 quadrotor preset (Phase J1) | TestIRS4Preset (7 tests) — mass, atmosphere, aero, hover, tracking | **Done** |
+| Mission replay pipeline (Phase J2) | TestMissionReplay (5 tests) — metrics, quad/FW, wind, validation | **Done** |
+| Paper Table 5 RMSE acceptance (Phase J3) | TestPaperValidation (9 tests) — hover accuracy, determinism, format | **Done** |
 | ArduPilot SITL Docker (Phase K1) | `docker compose up ardupilot_sitl` + heartbeat | **Pending** |
 | IRS-4 Gazebo model (Phase K2) | TestGazeboModels extended | **Pending** |
 | STL terrain export (Phase L1) | Test STL loads + elevation check | **Pending** |

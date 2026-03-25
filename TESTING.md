@@ -9,7 +9,7 @@ This document tracks the high-level testing status and provides detailed explana
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (127) | ✅ Pass (Scenario + Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A-I validation gates |
+| **Drone Physics** (Python) | ✅ Pass (150) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A-J validation gates |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -249,6 +249,35 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_ci_workflow_exists`**: `.github/workflows/ci.yml` file exists.
 - **`test_ci_workflow_has_required_jobs`**: Workflow contains pytest, benchmark, and upload-artifact steps.
 - **`test_ci_workflow_triggers_on_push`**: Workflow triggers on push to master/main.
+
+#### AC. IRS-4 Quadrotor Preset (Phase J1)
+- **`test_irs4_mass`**: IRS-4 mass is in [1.0, 3.0] kg range for compact quadrotor.
+- **`test_irs4_atmosphere_quito`**: Default atmosphere at 2800m MSL, density ~0.93 kg/m^3.
+- **`test_irs4_custom_altitude`**: Accepts custom altitude for different experiment sites.
+- **`test_irs4_has_aero`**: Uses quadratic drag model (not linear fallback), C_L=0.
+- **`test_irs4_symmetric_inertia`**: Roll/pitch inertia are symmetric (X-frame).
+- **`test_irs4_hover_stable`**: Maintains hover within 0.5m after settling.
+- **`test_irs4_waypoint_tracking`**: Tracks square waypoint pattern and returns home.
+
+#### AD. Mission Replay Pipeline (Phase J2)
+- **`test_replay_returns_metrics`**: `replay_mission()` returns dict with all standard metric keys.
+- **`test_replay_quad_produces_valid_rmse`**: Quadrotor replay produces finite, positive RMSE values.
+- **`test_replay_fixed_wing_produces_valid_rmse`**: Fixed-wing replay produces finite RMSE.
+- **`test_replay_with_wind_from_log`**: Replay with from_log wind completes without error.
+- **`test_replay_rejects_short_log`**: Rejects flight logs with fewer than 10 data points.
+
+#### AE. Paper Table 5 Acceptance (Phase J3)
+- **`test_quadrotor_carolina_hover_accuracy[20/40]`**: Hover accuracy at Carolina-like 20m and 40m AGL.
+- **`test_quadrotor_epn_hover_accuracy[20/30]`**: Hover accuracy at EPN-like 20m and 30m AGL.
+- **`test_fixed_wing_deterministic`**: Fixed-wing sim is deterministic (identical inputs → RMSE≈0).
+- **`test_quadrotor_deterministic`**: Quadrotor sim is deterministic.
+- **`test_paper_table5_format`**: Validation pipeline produces all Table 5 metric fields.
+- **`test_quadrotor_hover_no_wind_rmse`**: No-wind hover converges within generic PID threshold.
+- **`test_paper_table5_thresholds_documented`**: All 7 paper Table 5 RMSE values documented and validated.
+
+#### AF. IRS-4 Benchmark Determinism
+- **`test_irs4_benchmark_profiles_are_deterministic[irs4_carolina]`**: Carolina quadrotor benchmark is repeatable (identical RMSE across runs).
+- **`test_irs4_benchmark_profiles_are_deterministic[irs4_epn]`**: EPN quadrotor benchmark is repeatable.
 
 #### R. Swarm Standalone Twin (Phase C)
 - **`test_flocking_vector_returns_zero_without_neighbors`**: Empty neighbor list returns zero steering vector (stable no-neighbor behavior).

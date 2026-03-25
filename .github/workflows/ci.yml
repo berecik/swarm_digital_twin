@@ -40,13 +40,19 @@ jobs:
         run: |
           python -m pytest test_drone_physics.py -v --tb=short --junitxml=../test-results.xml 2>&1 | tee ../test-output.log
 
-      - name: Run deterministic benchmarks
+      - name: Run fixed-wing benchmarks
         working-directory: simulation
         run: |
           python drone_scenario.py --benchmark moderate
           python drone_scenario.py --benchmark strong_wind
           python drone_scenario.py --benchmark crosswind
           python drone_scenario.py --benchmark storm
+
+      - name: Run IRS-4 quadrotor benchmarks
+        working-directory: simulation
+        run: |
+          python drone_scenario.py --benchmark irs4_carolina
+          python drone_scenario.py --benchmark irs4_epn
 
       - name: Run swarm benchmarks
         working-directory: simulation

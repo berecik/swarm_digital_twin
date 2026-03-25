@@ -738,3 +738,4 @@ cython_debug/
 
 /.output.txt
 /simulation/swarm_data.npz
+/simulation/validation_plots/
