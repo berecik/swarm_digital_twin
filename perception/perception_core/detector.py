@@ -14,7 +14,7 @@ import message_filters
 
 class PerceptionNode(Node):
     def __init__(self):
-        super().__init__('sar_perception')
+        super().__init__('perception_core')
         self.bridge = CvBridge()
 
         # Load YOLOv8 model
@@ -53,7 +53,7 @@ class PerceptionNode(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
         self.camera_info = None
-        self.get_logger().info("SAR Perception Node (YOLOv8 + Depth Fusion) Initialized")
+        self.get_logger().info("Perception Node (YOLOv8 + Depth Fusion) Initialized")
 
     def info_callback(self, msg):
         self.camera_info = msg

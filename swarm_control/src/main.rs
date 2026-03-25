@@ -108,7 +108,7 @@ impl OffboardController {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let context = rclrs::Context::new(env::args())?;
-    let node = rclrs::Node::new(&context, "sar_swarm_control")?;
+    let node = rclrs::Node::new(&context, "swarm_control_core")?;
 
     let controller = Arc::new(Mutex::new(OffboardController::new(&node)?));
 

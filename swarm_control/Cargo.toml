@@ -1,5 +1,5 @@
 [package]
-name = "sar_swarm_control"
+name = "swarm_control_core"
 version = "0.1.0"
 authors = ["beret <beret@hipisi.org.pl>", "Marysia Software Limited <ceo@marysia.app>"]
 edition = "2021"
@@ -18,7 +18,7 @@ zenoh = "1.0.0-rc"
 raft = "0.7"
 
 [lib]
-name = "sar_swarm_control"
+name = "swarm_control_core"
 path = "src/lib.rs"
 
 [[bin]]

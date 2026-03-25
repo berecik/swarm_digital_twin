@@ -7,7 +7,7 @@
 
 ## Overview
 
-**Swarm Digital Twin** is a digital twin framework for developing and testing autonomous drone swarm behavior without physical hardware. It provides a complete simulation environment for the [DAS-SAR Vingilot](https://github.com/berecik/das_sar) project's distributed aerial search and rescue system.
+**Swarm Digital Twin** is a digital twin framework for developing and testing autonomous drone swarm behavior without physical hardware. It provides a complete simulation environment for a distributed aerial mission system.
 
 The framework enables:
 - **Standalone drone physics simulation** with rigid-body dynamics, PID control, and 3D visualization
@@ -136,8 +136,8 @@ The scenario flies a drone through 7 waypoints over rolling-hill terrain with qu
 # Standalone physics tests (no ROS 2 needed)
 ./run_scenario.sh --test
 
-# Phase A reproducible validation baseline (tests + benchmark gates)
-./run_scenario.sh --phase-a
+# Reproducible validation baseline (tests + benchmark gates)
+./run_scenario.sh --all
 
 # Rust swarm control (requires ROS 2 environment)
 cd swarm_control
@@ -152,7 +152,7 @@ See [TESTING.md](TESTING.md) for the full test catalog and [AGENTS.md](AGENTS.md
 
 ## Related Projects
 
-- **[DAS-SAR Vingilot](https://github.com/berecik/das_sar)** — Project documentation, architecture, safety case, and business analysis for the DAS-SAR system.
+- **[Vingilot Project](https://github.com/berecik/das_sar)** — Project documentation, architecture, safety case, and business analysis.
 
 ## Authors & Contact
 

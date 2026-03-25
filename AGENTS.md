@@ -14,7 +14,7 @@ This document provides a comprehensive technical overview and context for autono
 ---
 
 ## 🚁 Project Essence
-**Swarm Digital Twin** (DAS-SAR) is a dual-phase Search and Rescue (SAR) system:
+**Swarm Digital Twin** is a dual-phase autonomous mission system:
 1.  **Phase 1 (Scout Swarm):** Agile, man-portable drones (Holybro X500 V2) for autonomous area search and human detection.
 2.  **Phase 2 (Heavy Lift):** A **Distributed Lift System (DLS)** using a minimum of **6 heavy-lift agents** (coaxial X8) to evacuate human casualties (100kg+ payload).
 

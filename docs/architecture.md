@@ -1,11 +1,11 @@
 # 🏗 System Architecture - Swarm Digital Twin
 
-This document provides a detailed technical overview of the **Swarm Digital Twin** (DAS-SAR) system architecture, components, and communication protocols.
+This document provides a detailed technical overview of the **Swarm Digital Twin** system architecture, components, and communication protocols.
 
 ---
 
 ## 🚁 Project Essence
-**Swarm Digital Twin** is a dual-phase Search and Rescue (SAR) system designed for rapid deployment and high-capacity evacuation.
+**Swarm Digital Twin** is a dual-phase autonomous mission system designed for rapid deployment and high-capacity evacuation.
 
 1.  **Phase 1 (Scout Swarm):**
     - **Hardware:** Agile, man-portable drones (e.g., Holybro X500 V2).

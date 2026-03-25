@@ -1,6 +1,6 @@
 from setuptools import setup
 
-package_name = 'sar_perception'
+package_name = 'perception_core'
 
 setup(
     name=package_name,
@@ -20,9 +20,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'detector = sar_perception.detector:main',
-            'search_planner = sar_perception.search_planner:main',
-            'object_localizer = sar_perception.object_localizer:main'
+            'detector = perception_core.detector:main',
+            'search_planner = perception_core.search_planner:main',
+            'object_localizer = perception_core.object_localizer:main'
         ],
     },
 )

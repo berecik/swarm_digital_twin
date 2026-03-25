@@ -26,7 +26,7 @@ Safety-critical flight and swarm logic.
 | `test_process_raw_data` | Communication | Validates Zenoh message serialization and handling. |
 | `test_handshake_logic` | FSM | Verifies the state sequence for taking offboard control. |
 
-### 2. `sar_perception` (Python)
+### 2. `perception_core` (Python)
 AI detection and 3D vision logic.
 
 | Test Name | Component | Purpose |

@@ -50,7 +50,7 @@ sys.modules['tf2_geometry_msgs'] = MagicMock()
 # Mock cv2
 sys.modules['cv2'] = MagicMock()
 
-from sar_perception.object_localizer import ObjectLocalizerNode
+from perception_core.object_localizer import ObjectLocalizerNode
 
 class TestObjectLocalizer(unittest.TestCase):
     def setUp(self):

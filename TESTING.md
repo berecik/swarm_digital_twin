@@ -7,7 +7,7 @@ This document tracks the high-level testing status and provides detailed explana
 | Module | Unit Tests | Integration Tests | SITL / Hardware | Status |
 | :--- | :---: | :---: | :---: | :--- |
 | `sar_swarm_control` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM Verified. |
-| `sar_perception` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
+| `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
 | **Drone Physics** (Python) | ✅ Pass (73) | ✅ Pass (Scenario + Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A/B/C validation gates |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
@@ -44,7 +44,7 @@ The following tests verify the mission-critical flight logic and swarm coordinat
     - **Verification**: Tests valid messages, messages from self (ignored), and malformed payloads.
 - **`test_handshake_logic`**: Verifies PX4 Offboard handshake state machine.
 
-### 2. `sar_perception` (Python AI)
+### 2. `perception_core` (Python AI)
 The following tests verify the AI-driven human detection and 3D localization logic:
 
 #### A. Detector Logic (`test_detector.py`)

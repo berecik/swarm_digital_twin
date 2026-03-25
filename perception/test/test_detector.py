@@ -47,12 +47,12 @@ sys.modules['tf2_geometry_msgs'] = MagicMock()
 sys.modules['cv2'] = MagicMock()
 sys.modules['ultralytics'] = MagicMock()
 
-from sar_perception.detector import PerceptionNode
+from perception_core.detector import PerceptionNode
 import unittest
 import numpy as np
 
 class TestDetector(unittest.TestCase):
-    @patch('sar_perception.detector.YOLO')
+    @patch('perception_core.detector.YOLO')
     def setUp(self, mock_yolo):
         self.node = PerceptionNode()
 

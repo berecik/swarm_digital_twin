@@ -53,7 +53,7 @@ services:
     profiles: ["phase_b_stack"]
     volumes:
       - ./perception:/root/workspace/perception
-    command: bash -c "export PYTHONPATH=\$PYTHONPATH:/root/workspace/perception && ros2 run sar_perception detector"
+    command: bash -c "export PYTHONPATH=\$PYTHONPATH:/root/workspace/perception && ros2 run perception_core detector"
     depends_on:
       - sitl_drone_1
 

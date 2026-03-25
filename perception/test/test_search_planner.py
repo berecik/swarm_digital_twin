@@ -34,7 +34,7 @@ mock_gm = MagicMock()
 mock_gm.Point = Point
 sys.modules['geometry_msgs.msg'] = mock_gm
 
-from sar_perception.search_planner import SearchPlannerNode
+from perception_core.search_planner import SearchPlannerNode
 import unittest
 
 class TestSearchPlanner(unittest.TestCase):
