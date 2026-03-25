@@ -1,4 +1,4 @@
-# Testing Strategy for `sar_swarm_control`
+# Testing Strategy for `swarm_control_core`
 
 This document describes the testing approach for the Rust ROS 2 node that manages the PX4 Offboard Control Loop.
 
@@ -90,7 +90,7 @@ Full integration testing should be performed using the PX4 SITL (Software-in-the
    ```
 3. Run the swarm node:
    ```bash
-   ros2 run sar_swarm_control swarm_node
+   ros2 run swarm_control_core swarm_node
    ```
 4. Observe the drone in Gazebo switching to Offboard mode, arming, and hovering at 5m.
 

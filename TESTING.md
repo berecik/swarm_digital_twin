@@ -6,17 +6,17 @@ This document tracks the high-level testing status and provides detailed explana
 
 | Module | Unit Tests | Integration Tests | SITL / Hardware | Status |
 | :--- | :---: | :---: | :---: | :--- |
-| `sar_swarm_control` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM Verified. |
+| `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
 | **Drone Physics** (Python) | ✅ Pass (73) | ✅ Pass (Scenario + Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A/B/C validation gates |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
-\* *Note: Rust tests for `sar_swarm_control` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
+\* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
 
 ## 📂 Detailed Test Catalog
 
-### 1. `sar_swarm_control` (Rust Core)
+### 1. `swarm_control_core` (Rust Core)
 
 The following tests verify the mission-critical flight logic and swarm coordination:
 
@@ -72,7 +72,7 @@ The following tests verify the AI-driven human detection and 3D localization log
     - **Purpose**: Verifies the extraction sequence state machine (IDLE -> EN_ROUTE -> DESCENDING -> LIFTING -> RETURN -> IDLE).
     - **Verification**: Validates correctness of the `transition()` function and `next_state()` logic.
 
-### 4. `sar_simulation` — Drone Physics Engine (`test_drone_physics.py`)
+### 4. `simulation` — Drone Physics Engine (`test_drone_physics.py`)
 
 Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py`
 
@@ -193,7 +193,7 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_flocking_vector_matches_rust_reference_case`**: Python boids helper matches hand-derived Rust reference vector.
 - **`test_six_agent_run_maintains_min_separation`**: 6-agent deterministic run remains above separation threshold (no collisions).
 
-### 5. `sar_simulation` — Swarm Sim (`test_swarm_flight.py`)
+### 5. `simulation` — Swarm Sim (`test_swarm_flight.py`)
 - **`test_swarm_flight`**:
     - **Purpose**: Validates the end-to-end swarm flight logic in the mock simulator.
     - **Verification**: Ensures drones reach targets and maintain boid constraints.

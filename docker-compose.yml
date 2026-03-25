@@ -5,7 +5,7 @@ services:
       company: "Marysia Software Limited"
       website: "https://marysia.app"
       domain: "app.marysia.drone"
-    image: sar_swarm_companion:latest
+    image: swarm_companion:latest
     container_name: sitl_drone_1
     networks:
       swarm_net:
@@ -21,7 +21,7 @@ services:
       retries: 3
 
   swarm_node_1:
-    image: sar_swarm_companion:latest
+    image: swarm_companion:latest
     container_name: swarm_node_1
     restart: always
     profiles: ["phase_b_stack"]
@@ -43,7 +43,7 @@ services:
       - sitl_drone_1
 
   perception_node_1:
-    image: sar_swarm_companion:latest
+    image: swarm_companion:latest
     container_name: perception_node_1
     networks:
       swarm_net:
@@ -58,7 +58,7 @@ services:
       - sitl_drone_1
 
   sitl_drone_2:
-    image: sar_swarm_companion:latest
+    image: swarm_companion:latest
     container_name: sitl_drone_2
     networks:
       swarm_net:
@@ -69,7 +69,7 @@ services:
     command: tail -f /dev/null
 
   swarm_node_2:
-    image: sar_swarm_companion:latest
+    image: swarm_companion:latest
     container_name: swarm_node_2
     networks:
       swarm_net:
@@ -85,7 +85,7 @@ services:
       - sitl_drone_2
 
   sitl_drone_3:
-    image: sar_swarm_companion:latest
+    image: swarm_companion:latest
     container_name: sitl_drone_3
     networks:
       swarm_net:
@@ -96,7 +96,7 @@ services:
     command: tail -f /dev/null
 
   swarm_node_3:
-    image: sar_swarm_companion:latest
+    image: swarm_companion:latest
     container_name: swarm_node_3
     networks:
       swarm_net:

@@ -16,7 +16,7 @@ Our strategy follows a "Swiss Cheese" model with multiple layers of defense:
 
 ## 📂 Test Catalog
 
-### 1. `sar_swarm_control` (Rust)
+### 1. `swarm_control_core` (Rust)
 Safety-critical flight and swarm logic.
 
 | Test Name | Component | Purpose |
