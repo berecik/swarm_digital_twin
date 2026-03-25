@@ -29,6 +29,7 @@ from validation import (
     get_benchmark_profile,
 )
 from drone_scenario import run_benchmark
+from swarm_scenario import run_swarm_benchmark, SWARM_BENCHMARK_PROFILES, get_swarm_benchmark_profile
 
 
 # ── Rotation helpers ─────────────────────────────────────────────────────────
@@ -605,6 +606,17 @@ class TestValidation:
         np.testing.assert_allclose(first.rmse_y, second.rmse_y, atol=profile.tolerance)
         np.testing.assert_allclose(first.rmse_z, second.rmse_z, atol=profile.tolerance)
         np.testing.assert_allclose(first.rmse_total, second.rmse_total, atol=profile.tolerance)
+
+    @pytest.mark.parametrize("profile_name", sorted(SWARM_BENCHMARK_PROFILES.keys()))
+    def test_swarm_benchmark_profiles_are_deterministic(self, profile_name):
+        profile = get_swarm_benchmark_profile(profile_name)
+        first = run_swarm_benchmark(profile_name)
+        second = run_swarm_benchmark(profile_name)
+
+        np.testing.assert_allclose(first["min_separation"], second["min_separation"], atol=profile.tolerance)
+        np.testing.assert_allclose(first["mean_tracking_error"], second["mean_tracking_error"], atol=profile.tolerance)
+        np.testing.assert_allclose(first["p75_tracking_error"], second["p75_tracking_error"], atol=profile.tolerance)
+        np.testing.assert_allclose(first["max_tracking_error"], second["max_tracking_error"], atol=profile.tolerance)
 
 
 # ── Phase 2: Terrain ────────────────────────────────────────────────────────

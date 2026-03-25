@@ -92,10 +92,16 @@ run_single_scenario() {
 run_benchmark() {
     info "Running deterministic benchmark validation gates..."
     local profiles=(moderate strong_wind crosswind storm)
+    local swarm_profiles=(baseline crosswind gusty)
     local profile
     for profile in "${profiles[@]}"; do
-        info "Running deterministic benchmark: $profile"
+        info "Running single-drone benchmark: $profile"
         python "$SIM_DIR/drone_scenario.py" --benchmark "$profile"
+    done
+
+    for profile in "${swarm_profiles[@]}"; do
+        info "Running swarm benchmark: $profile"
+        python "$SIM_DIR/swarm_scenario.py" --benchmark "$profile"
     done
 
     ok "Deterministic benchmark validation passed"

@@ -50,7 +50,7 @@ Standalone physics engine tests for rigid-body quadrotor dynamics.
 
 | Command | Purpose | Expected Outcome |
 | :--- | :--- | :--- |
-| `./run_scenario.sh --benchmark` | Single-entry benchmark verification aligned with Phase A deterministic gates (`A1+A2`). Runs canonical deterministic benchmarks (`moderate`, `strong_wind`, `crosswind`, `storm`). | Command exits with success only when all benchmark profiles pass `assert_validation_pass(...)` gates. |
+| `./run_scenario.sh --benchmark` | Single-entry benchmark verification aligned with Phase A deterministic gates (`A1+A2`) and Phase C swarm benchmark gates. Runs single-drone profiles (`moderate`, `strong_wind`, `crosswind`, `storm`) and swarm profiles (`baseline`, `crosswind`, `gusty`). | Command exits with success only when all single-drone and swarm benchmark profiles pass their configured validation envelopes. |
 
 ### 5. Phase B Mission Replay Verification (SITL/GCS)
 
@@ -69,6 +69,7 @@ Standalone physics engine tests for rigid-body quadrotor dynamics.
 | 6-agent standalone sim safety gate | `cd simulation && pytest -q test_drone_physics.py -k test_six_agent_run_maintains_min_separation` | Test passes and minimum pairwise separation stays above the configured threshold (no collisions). |
 | Boids parity reference | `cd simulation && pytest -q test_drone_physics.py -k test_flocking_vector_matches_rust_reference_case` | Python boids steering vector matches the Rust equation reference case within tolerance. |
 | Boids edge parity (empty + radius boundary) | `cd simulation && pytest -q test_drone_physics.py -k "test_flocking_vector_returns_zero_without_neighbors or test_flocking_vector_excludes_neighbor_at_radius_boundary"` | Empty-neighbor case returns zero vector, and a neighbor exactly at `neighbor_radius` is excluded (`<` contract parity with Rust). |
+| Swarm deterministic benchmark profiles | `cd simulation && pytest -q test_drone_physics.py -k test_swarm_benchmark_profiles_are_deterministic` | All canonical swarm profiles (`baseline`, `crosswind`, `gusty`) pass gates and remain deterministic within profile tolerance across two consecutive runs. |
 | Standalone swarm demo run | `python simulation/swarm_scenario.py` | Simulation completes, prints record count and minimum separation for 6 agents in shared wind/terrain. |
 
 ---

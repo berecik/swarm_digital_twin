@@ -78,9 +78,9 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 
 #### A0. Phase A Reproducible Validation Baseline
 - **`./run_scenario.sh --benchmark`**:
-    - **Purpose**: Runs one-command deterministic benchmark validation gates for the canonical profile set.
-    - **Input**: Canonical benchmark profiles (`moderate`, `strong_wind`, `crosswind`, `storm`) with fixed seeds from `simulation/validation.py`.
-    - **Expected Outcome**: All benchmark profiles pass `assert_validation_pass(...)`; repeated runs on same commit produce equivalent RMSE metrics within configured tolerance.
+    - **Purpose**: Runs one-command deterministic benchmark validation gates for both single-drone and swarm profile sets.
+    - **Input**: Single-drone canonical profiles (`moderate`, `strong_wind`, `crosswind`, `storm`) from `simulation/validation.py` and swarm profiles (`baseline`, `crosswind`, `gusty`) from `simulation/swarm_scenario.py`, all with fixed seeds.
+    - **Expected Outcome**: All profiles pass configured envelopes; repeated runs on same commit produce equivalent metrics within configured tolerance.
 
 #### A. Rotation Math
 - **`test_identity`**: `euler_to_rotation(0,0,0)` produces identity matrix.
@@ -147,6 +147,7 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_validation_gate_passes_within_envelope`**: Gate accepts metrics that remain below all configured envelope thresholds.
 - **`test_validation_gate_fails_outside_envelope`**: Gate rejects metrics above threshold and raises `AssertionError`.
 - **`test_benchmark_profiles_are_deterministic`**: All canonical benchmark profiles (`moderate`, `strong_wind`, `crosswind`, `storm`) produce repeatable RMSE values within profile tolerance across two consecutive runs.
+- **`test_swarm_benchmark_profiles_are_deterministic`**: All canonical swarm benchmark profiles (`baseline`, `crosswind`, `gusty`) produce repeatable safety/tracking metrics within profile tolerance across two consecutive runs.
 
 #### N2. Phase B Runtime Guardrails
 - **`test_runtime_warning_for_out_of_range_aero_params`**: Out-of-range aerodynamic coefficients emit one-shot runtime warning tied to documented validity envelopes.
