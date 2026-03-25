@@ -22,7 +22,8 @@ class WindField:
       - "none": no wind (baseline)
       - "constant": uniform wind vector
       - "dryden": MIL-F-8785C Dryden turbulence model
-      - "from_log": replay altitude-derived perturbation from real data
+      - "from_log": replay altitude-derived perturbation from real data (1D)
+      - "from_log_3d": replay 3D wind profile from lateral deviation analysis
     """
     wind_speed: float = 0.0
     wind_direction: np.ndarray = field(
@@ -31,6 +32,7 @@ class WindField:
     gust_intensity: float = 0.0
     turbulence_type: str = "none"
     altitude_profile: Optional[np.ndarray] = None  # Nx2 array: [time, wind_speed]
+    wind_profile_3d: Optional[np.ndarray] = None  # Nx4 array: [time, wx, wy, wz]
     _dryden_state: np.ndarray = field(
         default_factory=lambda: np.zeros(3), repr=False
     )
@@ -52,6 +54,9 @@ class WindField:
 
         if self.turbulence_type == "from_log":
             return self._from_log_wind(t)
+
+        if self.turbulence_type == "from_log_3d":
+            return self._from_log_3d_wind(t)
 
         return np.zeros(3)
 
@@ -143,3 +148,21 @@ class WindField:
         if norm < 1e-8:
             return np.zeros(3)
         return speed * (d / norm)
+
+    def _from_log_3d_wind(self, t: float) -> np.ndarray:
+        """Replay 3D wind profile from lateral deviation analysis.
+
+        wind_profile_3d is Nx4: [[t, wx, wy, wz], ...]
+        Returns interpolated 3D wind velocity vector at time t.
+        """
+        if self.wind_profile_3d is None or len(self.wind_profile_3d) == 0:
+            return np.zeros(3)
+
+        times = self.wind_profile_3d[:, 0]
+        wx = np.interp(t, times, self.wind_profile_3d[:, 1],
+                        left=self.wind_profile_3d[0, 1], right=self.wind_profile_3d[-1, 1])
+        wy = np.interp(t, times, self.wind_profile_3d[:, 2],
+                        left=self.wind_profile_3d[0, 2], right=self.wind_profile_3d[-1, 2])
+        wz = np.interp(t, times, self.wind_profile_3d[:, 3],
+                        left=self.wind_profile_3d[0, 3], right=self.wind_profile_3d[-1, 3])
+        return np.array([wx, wy, wz])

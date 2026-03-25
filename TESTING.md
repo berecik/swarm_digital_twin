@@ -9,7 +9,7 @@ This document tracks the high-level testing status and provides detailed explana
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (73) | ✅ Pass (Scenario + Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A/B/C validation gates |
+| **Drone Physics** (Python) | ✅ Pass (127) | ✅ Pass (Scenario + Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A-I validation gates |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -188,6 +188,67 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_enu_to_gps_conversion`**: ENU→GPS: zero offset returns ref point; +Y increases latitude.
 - **`test_sim_state_from_record`**: SimRecord converts to SimState with correct thrust %.
 - **`test_invalid_message_returns_none`**: Garbage data and truncated messages return None.
+
+#### S. Pitching Moment (Phase D)
+- **`test_pitching_moment_pre_stall`**: C_M is negative and proportional to alpha below stall (stabilizing).
+- **`test_pitching_moment_post_stall`**: C_M uses C_Ma_stall slope above stall angle.
+- **`test_pitching_moment_zero_at_zero_alpha`**: No pitching moment at zero AoA.
+- **`test_pitching_moment_applied_in_physics_step`**: Physics step applies aero pitching moment on pitch axis for fixed-wing.
+- **`test_quadrotor_has_no_pitching_moment`**: Base AeroCoefficients returns zero C_M.
+
+#### T. Valencia Paper-Exact Preset (Phase D)
+- **`test_valencia_fixed_wing_mass`**: Mass matches paper Table 2 (2.5 kg).
+- **`test_valencia_fixed_wing_ref_area`**: Wing reference area = 0.3997 m^2.
+- **`test_valencia_fixed_wing_chord`**: Chord = 0.235 m.
+- **`test_valencia_fixed_wing_aero_coefficients`**: All Table 3 CFD coefficients match.
+- **`test_valencia_fixed_wing_high_altitude_atmosphere`**: Antisana atmosphere at 4500m MSL, rho ~0.77.
+- **`test_valencia_fixed_wing_passes_provenance_check`**: No out-of-range warnings.
+
+#### U. Gamma-Term Equivalence (Phase D)
+- **`test_gamma_terms_match_matrix_form`**: Expanded paper Eq. 4 Gamma terms match matrix-form `I_inv @ (tau - omega x I@omega)` within 1e-12 for non-diagonal inertia tensor.
+
+#### V. Flight Log Binary Parser (Phase E)
+- **`test_bin_parser_creates_flight_log`**: Synthetic DataFlash binary with FMT+GPS messages parses into FlightLog with correct positions.
+- **`test_bin_parser_file_not_found`**: Missing .bin file raises FileNotFoundError.
+- **`test_get_elevator_returns_pitch_rate`**: `get_elevator()` returns pitch rate derivative as elevator estimate.
+- **`test_extract_waypoints_from_dwell`**: `extract_waypoints()` detects dwell points where speed drops below threshold.
+
+#### W. Sim-vs-Real Comparison (Phase E)
+- **`test_compare_sim_real_identical`**: Identical sim and real trajectories produce zero RMSE in all axes.
+- **`test_compare_sim_real_known_offset`**: Constant 5m Z-offset produces expected RMSE and percentile metrics.
+- **`test_compare_signals_perfect_match`**: Identical signals produce RMSE=0 and correlation=1.0.
+- **`test_compare_signals_anticorrelated`**: Anticorrelated signals produce correlation=-1.0.
+
+#### X. SRTM Terrain Pipeline (Phase F)
+- **`test_from_hgt_synthetic`**: Synthetic .hgt file (3601x3601 int16 big-endian) loads into TerrainMap with correct GPS origin.
+- **`test_gps_elevation_query`**: `get_elevation_gps(lat, lon)` returns correct elevation for known GPS coordinates.
+- **`test_gps_query_without_origin_raises`**: GPS query on TerrainMap without `origin_gps` raises ValueError.
+- **`test_hgt_parser_file_not_found`**: Missing .hgt file raises FileNotFoundError.
+
+#### Y. Gazebo Model Integration (Phase G)
+- **`test_sdf_model_exists`**: `gazebo/models/valencia_fixed_wing/model.sdf` file exists.
+- **`test_sdf_model_config_exists`**: `gazebo/models/valencia_fixed_wing/model.config` file exists.
+- **`test_sdf_contains_liftdrag_plugin`**: SDF file contains `<plugin>` with LiftDrag configuration.
+- **`test_sdf_mass_matches_paper`**: SDF inertial mass matches paper Table 2 (2.5 kg).
+- **`test_antisana_world_exists`**: `gazebo/worlds/antisana.world` file exists.
+- **`test_antisana_world_gps_origin`**: World file contains Antisana GPS coordinates (-0.508333, -78.141667).
+- **`test_parm_file_exists`**: `gazebo/models/valencia_fixed_wing/valencia_fw.parm` file exists.
+
+#### Z. SITL Mission Lifecycle (Phase H)
+- **`test_sitl_script_exists`**: `scripts/run_sitl_mission.sh` exists and is executable.
+- **`test_sitl_script_has_required_steps`**: Script contains all 6 lifecycle steps (start, health check, upload, arm, capture, validate).
+
+#### AA. 3D Wind Estimation (Phase H2)
+- **`test_still_trajectory_gives_zero_wind`**: Stationary drone produces near-zero 3D wind estimate.
+- **`test_constant_drift_detected`**: Sinusoidal lateral deviation produces non-zero Y-component wind.
+- **`test_3d_profile_has_correct_shape`**: 3D wind profile returns Nx4 array [t, wx, wy, wz].
+- **`test_3d_profile_too_short_returns_zero`**: Trajectory with < 3 points returns zero wind.
+- **`test_from_log_3d_wind_replay`**: WindField with `from_log_3d` correctly interpolates 3D wind profile.
+
+#### AB. CI Pipeline (Phase I1)
+- **`test_ci_workflow_exists`**: `.github/workflows/ci.yml` file exists.
+- **`test_ci_workflow_has_required_jobs`**: Workflow contains pytest, benchmark, and upload-artifact steps.
+- **`test_ci_workflow_triggers_on_push`**: Workflow triggers on push to master/main.
 
 #### R. Swarm Standalone Twin (Phase C)
 - **`test_flocking_vector_returns_zero_without_neighbors`**: Empty neighbor list returns zero steering vector (stable no-neighbor behavior).

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <!-- Antisana Digital Twin Launch File
+       Based on Valencia et al. (2025) simulation scheme (Fig. 1).
+
+       GPS Origin: Antisana volcano (-0.508333, -78.141667), 4500m ASL
+       Wind: 4-14 m/s (typical Antisana conditions)
+  -->
+
+  <!-- Gazebo world -->
+  <arg name="world" default="$(find swarm_digital_twin)/gazebo/worlds/antisana.world"/>
+  <arg name="verbose" default="false"/>
+  <arg name="gui" default="true"/>
+
+  <!-- Aircraft model -->
+  <arg name="model" default="valencia_fixed_wing"/>
+  <arg name="vehicle" default="plane"/>
+
+  <!-- SITL connection -->
+  <arg name="fdm_port_in" default="9002"/>
+  <arg name="fdm_port_out" default="9003"/>
+  <arg name="mavlink_port" default="14550"/>
+
+  <!-- Launch Gazebo -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(arg world)"/>
+    <arg name="verbose" value="$(arg verbose)"/>
+    <arg name="gui" value="$(arg gui)"/>
+  </include>
+
+  <!-- Spawn aircraft model -->
+  <node name="spawn_model" pkg="gazebo_ros" type="spawn_model"
+        args="-sdf -model $(arg model)
+              -file $(find swarm_digital_twin)/gazebo/models/$(arg model)/model.sdf
+              -x 0 -y 0 -z 4510"
+        output="screen"/>
+
+  <!-- Wind perturbation node (paper Section 2.3.1) -->
+  <node name="wind_perturbation" pkg="swarm_digital_twin" type="wind_node.py"
+        output="screen">
+    <param name="wind_speed_min" value="4.0"/>
+    <param name="wind_speed_max" value="14.0"/>
+    <param name="altitude_msl" value="4500.0"/>
+    <param name="air_density" value="0.83"/>
+  </node>
+
+  <!-- MAV Proxy for QGC connection -->
+  <node name="mavproxy" pkg="swarm_digital_twin" type="mavproxy_bridge.sh"
+        output="screen">
+    <param name="master_port" value="$(arg fdm_port_out)"/>
+    <param name="qgc_port" value="$(arg mavlink_port)"/>
+  </node>
+
+</launch>

@@ -1,0 +1,55 @@
+# ArduPilot Parameter File - Valencia Fixed-Wing UAV
+# Based on Valencia et al. (2025) Table 2/3
+# For use with ArduPilot SITL + Gazebo LiftDrag plugin
+
+# Frame type: fixed-wing plane
+FRAME_CLASS,1
+
+# Aircraft physical parameters (Table 2)
+# Wingspan: 2.20m, Chord: 0.235m, Mass: 2.5kg, Cruise: 12 m/s
+
+# Cruise speed
+TRIM_ARSPD_CM,1200
+
+# Throttle settings
+THR_MIN,0
+THR_MAX,100
+TRIM_THROTTLE,45
+
+# Navigation
+WP_RADIUS,30
+WP_LOITER_RAD,60
+
+# Altitude limits (Antisana: 4500m base)
+ALT_HOLD_RTL,100
+
+# PID tuning (matching paper's Ardupilot configuration)
+RLL_RATE_P,0.08
+RLL_RATE_I,0.04
+RLL_RATE_D,0.01
+PTCH_RATE_P,0.08
+PTCH_RATE_I,0.04
+PTCH_RATE_D,0.01
+YAW_RATE_P,0.1
+YAW_RATE_I,0.02
+
+# Airspeed sensor
+ARSPD_ENABLE,1
+ARSPD_TYPE,0
+
+# GPS
+GPS_TYPE,1
+
+# Barometer (important at high altitude)
+GND_ABS_PRESS,57182
+GND_TEMP,5
+BARO_ALT_OFFSET,0
+
+# Failsafe
+FS_SHORT_ACTN,0
+FS_LONG_ACTN,0
+
+# Simulation origin: Antisana volcano
+SIM_OPOS_LAT,-0.508333
+SIM_OPOS_LNG,-78.141667
+SIM_OPOS_ALT,4500

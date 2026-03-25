@@ -58,6 +58,10 @@ class AeroCoefficients:
         """Return lift coefficient at angle of attack alpha [rad]."""
         return self.C_L
 
+    def get_CM(self, alpha: float) -> float:
+        """Return pitching moment coefficient at angle of attack alpha [rad]."""
+        return 0.0
+
 
 @dataclass
 class FixedWingAero(AeroCoefficients):
@@ -73,6 +77,9 @@ class FixedWingAero(AeroCoefficients):
     C_Da: float = 0.63662             # induced drag slope (pre-stall) [1/rad^2]
     C_La_stall: float = -1.1459       # lift slope (post-stall) [1/rad]
     C_Da_stall: float = 2.29183       # drag slope (post-stall) [1/rad^2]
+    C_Ma: float = -0.2040            # pitching moment slope (pre-stall) [1/rad] (Table 3)
+    C_Ma_stall: float = -0.1313      # pitching moment slope (post-stall) [1/rad] (Table 3)
+    chord: float = 0.235             # mean aerodynamic chord [m] (Table 2)
 
     def get_CL(self, alpha: float) -> float:
         """AoA-dependent lift coefficient with stall model."""
@@ -87,6 +94,13 @@ class FixedWingAero(AeroCoefficients):
             return self.C_D0 + self.C_Da * alpha**2
         else:
             return self.C_D0 + self.C_Da_stall * alpha**2
+
+    def get_CM(self, alpha: float) -> float:
+        """AoA-dependent pitching moment coefficient (paper Table 3)."""
+        if abs(alpha) < self.alpha_stall:
+            return self.C_Ma * alpha
+        else:
+            return self.C_Ma_stall * alpha
 
 
 # ── Data classes ─────────────────────────────────────────────────────────────
@@ -192,6 +206,44 @@ def make_fixed_wing() -> DroneParams:
             C_Da_stall=2.29183,
         ),
         atmo=Atmosphere(),
+    )
+
+
+def make_valencia_fixed_wing() -> DroneParams:
+    """Paper-exact fixed-wing preset (Valencia et al. 2025, Tables 2-3).
+
+    Dimensions: wingspan 2.20m, chord 0.235m, wing_ref_area 0.3997m^2,
+    total_ref_area 0.5125m^2, weight 2.5kg, cruise 12.0 m/s.
+    Aero coefficients from CFD (OpenFOAM) per Table 3.
+    """
+    return DroneParams(
+        mass=2.5,                   # Table 2: Weight 2.5 kg
+        arm_length=0.0,             # N/A for fixed-wing
+        drag_coeff=0.1,
+        ang_drag_coeff=0.05,
+        max_thrust=25.0,            # propeller thrust estimate
+        max_torque=8.0,
+        inertia=np.array([
+            [0.08,  0.0,   0.004],  # Jx, estimated from wingspan/mass
+            [0.0,   0.12,  0.0  ],  # Jy, estimated from chord/fuselage
+            [0.004, 0.0,   0.16 ],  # Jz, Jxz product of inertia
+        ]),
+        aero=FixedWingAero(
+            reference_area=0.3997,   # Table 2: Wing reference area [m^2]
+            C_D=0.03,
+            C_L=0.0,
+            alpha_0=0.05236,         # Table 3: Zero-lift AoA [rad]
+            alpha_stall=0.26180,     # Table 3: Stall angle [rad]
+            C_D0=0.02,
+            C_La=3.50141,            # Table 3: Lift slope pre-stall
+            C_Da=0.63662,            # Table 3: Drag slope pre-stall
+            C_La_stall=-1.1459,      # Table 3: Lift slope post-stall
+            C_Da_stall=2.29183,      # Table 3: Drag slope post-stall
+            C_Ma=-0.2040,            # Table 3: Moment slope pre-stall
+            C_Ma_stall=-0.1313,      # Table 3: Moment slope post-stall
+            chord=0.235,             # Table 2: Mean aerodynamic chord [m]
+        ),
+        atmo=Atmosphere(altitude_msl=4500.0),  # Antisana altitude
     )
 
 
@@ -473,8 +525,20 @@ def physics_step(state: DroneState, cmd: DroneCommand,
     I = params.inertia
     I_inv = np.linalg.inv(I)
 
-    # Euler's rotation equation: I·alpha = torque - omega x (I·omega) - drag
-    alpha = I_inv @ (torque - np.cross(omega, I @ omega) + ang_drag)
+    # Aerodynamic pitching moment: M_pitch = 0.5 * rho * A * c * V^2 * C_M(alpha)
+    aero_torque = np.zeros(3)
+    if aero is not None and isinstance(aero, FixedWingAero):
+        rho_m = (atmo.rho if atmo is not None else 1.225)
+        V_body_m = R.T @ state.velocity
+        V_mag = np.linalg.norm(V_body_m)
+        if V_mag > 1e-6:
+            aoa = compute_aoa(V_body_m)
+            q_dyn = 0.5 * rho_m * V_mag**2
+            M_pitch = q_dyn * aero.reference_area * aero.chord * aero.get_CM(aoa)
+            aero_torque[1] = M_pitch  # pitch axis is body Y
+
+    # Euler's rotation equation: I·alpha = torque - omega x (I·omega) - drag + aero_moment
+    alpha = I_inv @ (torque + aero_torque - np.cross(omega, I @ omega) + ang_drag)
     new_omega = omega + alpha * dt
 
     # ── Rotation integration (first-order) ───────────────────────────────

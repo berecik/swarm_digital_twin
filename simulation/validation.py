@@ -295,3 +295,105 @@ def plot_comparison(sim_times: np.ndarray, sim_positions: np.ndarray,
     plt.savefig(output_path, dpi=150)
     plt.close()
     return result
+
+
+def compare_sim_real(sim_times: np.ndarray, sim_positions: np.ndarray,
+                     ref_times: np.ndarray, ref_positions: np.ndarray) -> Dict[str, float]:
+    """Compare simulation against real flight data (paper Table 5 format).
+
+    Returns dict with per-axis RMSE, median, percentiles — matching Table 5 columns.
+    """
+    common_t, sim_interp, ref_interp = interpolate_to_common_times(
+        sim_times, sim_positions, ref_times, ref_positions,
+    )
+    result = compute_rmse(sim_interp, ref_interp)
+    errors = sim_interp - ref_interp
+
+    return {
+        "rmse_z": result.rmse_z,
+        "rmse_x": result.rmse_x,
+        "rmse_y": result.rmse_y,
+        "median": float(np.median(errors[:, 2])),
+        "p75": float(np.percentile(errors[:, 2], 75)),
+        "p25": float(np.percentile(errors[:, 2], 25)),
+        "n_points": result.n_points,
+        "rmse_total": result.rmse_total,
+    }
+
+
+def compare_signals(sim_times: np.ndarray, sim_signal: np.ndarray,
+                    ref_times: np.ndarray, ref_signal: np.ndarray) -> Dict[str, float]:
+    """Compare two time-series signals (e.g. throttle, elevator).
+
+    Returns cross-correlation, RMSE, and time-aligned metrics.
+    """
+    # Interpolate to common timestamps
+    t_start = max(sim_times[0], ref_times[0])
+    t_end = min(sim_times[-1], ref_times[-1])
+    dt = max(np.median(np.diff(sim_times)), np.median(np.diff(ref_times)))
+    common_t = np.arange(t_start, t_end, dt)
+
+    if len(common_t) < 2:
+        return {"cross_correlation": 0.0, "rmse": float("inf"), "n_points": 0}
+
+    sim_interp = np.interp(common_t, sim_times, sim_signal)
+    ref_interp = np.interp(common_t, ref_times, ref_signal)
+
+    # Normalize for cross-correlation
+    sim_norm = sim_interp - np.mean(sim_interp)
+    ref_norm = ref_interp - np.mean(ref_interp)
+    sim_std = np.std(sim_interp)
+    ref_std = np.std(ref_interp)
+
+    if sim_std < 1e-12 or ref_std < 1e-12:
+        xcorr = 0.0
+    else:
+        xcorr = float(np.mean(sim_norm * ref_norm) / (sim_std * ref_std))
+
+    rmse = float(np.sqrt(np.mean((sim_interp - ref_interp) ** 2)))
+
+    return {
+        "cross_correlation": xcorr,
+        "rmse": rmse,
+        "n_points": len(common_t),
+    }
+
+
+def plot_signal_comparison(sim_times: np.ndarray, sim_signal: np.ndarray,
+                           ref_times: np.ndarray, ref_signal: np.ndarray,
+                           output_path: str, title: str = "Signal Comparison",
+                           ylabel: str = "Signal") -> Dict[str, float]:
+    """Generate paper-style signal comparison plot (Fig. 9/10 lower panels)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    metrics = compare_signals(sim_times, sim_signal, ref_times, ref_signal)
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+    fig.suptitle(f"{title}  (r={metrics['cross_correlation']:.3f})")
+
+    ax1.plot(sim_times, sim_signal, label="Simulation", linewidth=1, color="red")
+    ax1.plot(ref_times, ref_signal, label="Real data", linewidth=1, color="black")
+    ax1.set_ylabel(ylabel)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # Error over time (interpolated)
+    t_start = max(sim_times[0], ref_times[0])
+    t_end = min(sim_times[-1], ref_times[-1])
+    dt = max(np.median(np.diff(sim_times)), np.median(np.diff(ref_times)))
+    common_t = np.arange(t_start, t_end, dt)
+    sim_interp = np.interp(common_t, sim_times, sim_signal)
+    ref_interp = np.interp(common_t, ref_times, ref_signal)
+
+    ax2.plot(common_t, sim_interp - ref_interp, linewidth=1, color="blue")
+    ax2.set_xlabel("Time [s]")
+    ax2.set_ylabel("Error")
+    ax2.axhline(y=0, color="gray", linestyle="--", linewidth=0.5)
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    return metrics
