@@ -1477,7 +1477,8 @@ class TestGazeboModels:
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "gazebo", "models", "valencia_fixed_wing", "model.sdf"
         )
-        content = open(sdf_path).read()
+        with open(sdf_path, encoding="utf-8") as f:
+            content = f.read()
         assert "LiftDragPlugin" in content
         assert "3.50141" in content  # C_La
         assert "0.63662" in content  # C_Da
@@ -1490,7 +1491,8 @@ class TestGazeboModels:
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "gazebo", "models", "valencia_fixed_wing", "model.sdf"
         )
-        content = open(sdf_path).read()
+        with open(sdf_path, encoding="utf-8") as f:
+            content = f.read()
         assert "<mass>2.5</mass>" in content
 
     def test_antisana_world_exists(self):
@@ -1509,7 +1511,8 @@ class TestGazeboModels:
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "gazebo", "worlds", "antisana.world"
         )
-        content = open(world_path).read()
+        with open(world_path, encoding="utf-8") as f:
+            content = f.read()
         assert "-0.508333" in content  # Antisana latitude
         assert "-78.141667" in content  # Antisana longitude
         assert "4500" in content  # Elevation
@@ -1555,28 +1558,32 @@ class TestIRS4GazeboModel:
         """SDF mass should match make_irs4_quadrotor() (1.8 kg)."""
         import os
         sdf_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "model.sdf")
-        content = open(sdf_path).read()
+        with open(sdf_path, encoding="utf-8") as f:
+            content = f.read()
         assert "<mass>1.8</mass>" in content
 
     def test_irs4_sdf_has_4_rotors(self):
         """SDF should have 4 rotor joints."""
         import os
         sdf_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "model.sdf")
-        content = open(sdf_path).read()
+        with open(sdf_path, encoding="utf-8") as f:
+            content = f.read()
         assert content.count("rotor_") >= 8  # 4 links + 4 joints
 
     def test_irs4_sdf_has_ardupilot_plugin(self):
         """SDF should contain ArduPilot SITL plugin."""
         import os
         sdf_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "model.sdf")
-        content = open(sdf_path).read()
+        with open(sdf_path, encoding="utf-8") as f:
+            content = f.read()
         assert "ArduPilotPlugin" in content
 
     def test_irs4_sdf_has_liftdrag_plugin(self):
         """SDF should contain LiftDrag aero plugin with C_D=1.0."""
         import os
         sdf_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "model.sdf")
-        content = open(sdf_path).read()
+        with open(sdf_path, encoding="utf-8") as f:
+            content = f.read()
         assert "LiftDragPlugin" in content
         assert "<cda>1.0</cda>" in content
 
@@ -1584,7 +1591,8 @@ class TestIRS4GazeboModel:
         """SDF inertia should match make_irs4_quadrotor() values."""
         import os
         sdf_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "model.sdf")
-        content = open(sdf_path).read()
+        with open(sdf_path, encoding="utf-8") as f:
+            content = f.read()
         assert "<ixx>0.025</ixx>" in content
         assert "<iyy>0.025</iyy>" in content
         assert "<izz>0.042</izz>" in content
@@ -1593,14 +1601,16 @@ class TestIRS4GazeboModel:
         """Parameter file should configure copter frame."""
         import os
         parm_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "irs4_quad.parm")
-        content = open(parm_path).read()
+        with open(parm_path, encoding="utf-8") as f:
+            content = f.read()
         assert "FRAME_CLASS,1" in content
 
     def test_irs4_parm_carolina_origin(self):
         """Parameter file should have Carolina Park GPS origin."""
         import os
         parm_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "irs4_quad.parm")
-        content = open(parm_path).read()
+        with open(parm_path, encoding="utf-8") as f:
+            content = f.read()
         assert "SIM_OPOS_LAT,-0.189" in content
         assert "SIM_OPOS_ALT,2800" in content
 
@@ -1622,7 +1632,8 @@ class TestDockerSITL:
         """Dockerfile should build both arducopter and arduplane."""
         import os
         path = os.path.join(self._project_root(), "Dockerfile.sitl")
-        content = open(path).read()
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
         assert "arducopter" in content
         assert "arduplane" in content
 
@@ -1630,7 +1641,8 @@ class TestDockerSITL:
         """Dockerfile should expose required UDP/TCP ports."""
         import os
         path = os.path.join(self._project_root(), "Dockerfile.sitl")
-        content = open(path).read()
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
         assert "9002" in content
         assert "9003" in content
         assert "14550" in content
@@ -1639,21 +1651,24 @@ class TestDockerSITL:
         """Dockerfile should have a MAVLink heartbeat health check."""
         import os
         path = os.path.join(self._project_root(), "Dockerfile.sitl")
-        content = open(path).read()
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
         assert "HEALTHCHECK" in content
 
     def test_compose_has_sitl_service(self):
         """docker-compose.yml should have ardupilot_sitl service."""
         import os
         path = os.path.join(self._project_root(), "docker-compose.yml")
-        content = open(path).read()
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
         assert "ardupilot_sitl" in content
 
     def test_compose_sitl_ports(self):
         """SITL compose service should expose correct ports."""
         import os
         path = os.path.join(self._project_root(), "docker-compose.yml")
-        content = open(path).read()
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
         assert "9002:9002" in content
         assert "14550:14550" in content
 
@@ -1699,7 +1714,8 @@ class TestMissionFiles:
         missions_dir = os.path.join(self._project_root(), "missions")
         for name in ["fw_158.waypoints", "fw_178.waypoints", "fw_185.waypoints"]:
             path = os.path.join(missions_dir, name)
-            first_line = open(path).readline().strip()
+            with open(path, encoding="utf-8") as f:
+                first_line = f.readline().strip()
             assert first_line == "QGC WPL 110", f"{name} missing QGC header"
 
     def test_fw_missions_have_antisana_origin(self):
@@ -1707,7 +1723,8 @@ class TestMissionFiles:
         import os
         missions_dir = os.path.join(self._project_root(), "missions")
         for name in ["fw_158.waypoints", "fw_178.waypoints", "fw_185.waypoints"]:
-            content = open(os.path.join(missions_dir, name)).read()
+            with open(os.path.join(missions_dir, name), encoding="utf-8") as f:
+                content = f.read()
             assert "-0.508333" in content, f"{name} missing Antisana lat"
             assert "-78.141667" in content, f"{name} missing Antisana lon"
 
@@ -1716,7 +1733,8 @@ class TestMissionFiles:
         import os
         missions_dir = os.path.join(self._project_root(), "missions")
         for name in ["fw_158.waypoints", "fw_178.waypoints", "fw_185.waypoints"]:
-            lines = open(os.path.join(missions_dir, name)).readlines()
+            with open(os.path.join(missions_dir, name), encoding="utf-8") as f:
+                lines = f.readlines()
             # First line is header, rest are waypoints
             wp_count = len([l for l in lines[1:] if l.strip()])
             assert wp_count >= 5, f"{name} has only {wp_count} waypoints"
@@ -1793,7 +1811,8 @@ class TestSITLLifecycle:
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "scripts", "run_sitl_mission.sh"
         )
-        content = open(script_path).read()
+        with open(script_path, encoding="utf-8") as f:
+            content = f.read()
         assert "[1/6]" in content  # Start stack
         assert "[2/6]" in content  # Health check
         assert "[3/6]" in content  # Upload mission
@@ -1910,7 +1929,8 @@ class TestCIPipeline:
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             ".github", "workflows", "ci.yml"
         )
-        content = open(ci_path).read()
+        with open(ci_path, encoding="utf-8") as f:
+            content = f.read()
         assert "pytest" in content
         assert "benchmark" in content.lower()
         assert "upload-artifact" in content
@@ -1922,7 +1942,8 @@ class TestCIPipeline:
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             ".github", "workflows", "ci.yml"
         )
-        content = open(ci_path).read()
+        with open(ci_path, encoding="utf-8") as f:
+            content = f.read()
         assert "push" in content
         assert "master" in content or "main" in content
 
