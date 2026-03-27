@@ -6,22 +6,13 @@ use std::time::Duration;
 use nalgebra::Vector3;
 use tokio;
 
+use swarm_control_core::driver_core::{DriverAction, DriverCore, DriverStatus};
+
 mod utils;
 use utils::{enu_to_ned, get_clock_microseconds};
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum FlightState {
-    DISARMED,
-    OFFBOARD_REQUESTED,
-    ARMING,
-    TAKEOFF,
-    LOITER,
-}
-
 pub struct OffboardController {
-    flight_state: FlightState,
-    nav_state: u8,
-    arming_state: u8,
+    core: DriverCore,
     offboard_control_mode_publisher: Arc<rclrs::Publisher<OffboardControlMode>>,
     trajectory_setpoint_publisher: Arc<rclrs::Publisher<TrajectorySetpoint>>,
     vehicle_command_publisher: Arc<rclrs::Publisher<VehicleCommand>>,
@@ -29,14 +20,6 @@ pub struct OffboardController {
 
 impl OffboardController {
     pub fn new(node: &rclrs::Node) -> Result<Self, rclrs::RclrsError> {
-        let qos_best_effort = QosProfile {
-            reliability: ReliabilityPolicy::BestEffort,
-            durability: DurabilityPolicy::Volatile,
-            history: HistoryPolicy::KeepLast,
-            depth: 1,
-            ..QOS_PROFILE_DEFAULT
-        };
-
         let qos_reliable = QosProfile {
             reliability: ReliabilityPolicy::Reliable,
             durability: DurabilityPolicy::TransientLocal,
@@ -59,9 +42,7 @@ impl OffboardController {
         )?;
 
         Ok(Self {
-            flight_state: FlightState::DISARMED,
-            nav_state: 0,
-            arming_state: 0,
+            core: DriverCore::new(5.0),
             offboard_control_mode_publisher,
             trajectory_setpoint_publisher,
             vehicle_command_publisher,
@@ -103,6 +84,30 @@ impl OffboardController {
         msg.from_external = true;
         self.vehicle_command_publisher.publish(&msg)
     }
+
+    pub fn update_status(&mut self, msg: VehicleStatus) {
+        self.core.update_status(DriverStatus {
+            nav_state: msg.nav_state,
+            arming_state: msg.arming_state,
+        });
+    }
+
+    pub fn run_control_tick(&mut self) -> Result<(), rclrs::RclrsError> {
+        for action in self.core.tick() {
+            match action {
+                DriverAction::RequestOffboard => {
+                    self.send_command(176, 1.0, 6.0)?;
+                }
+                DriverAction::RequestArm => {
+                    self.send_command(400, 1.0, 0.0)?;
+                }
+                DriverAction::PublishSetpoint(enu_pos) => {
+                    self.publish_trajectory_setpoint(enu_pos)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[tokio::main]
@@ -139,8 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         qos_best_effort,
         move |msg: VehicleStatus| {
             let mut c = sub_controller.lock().unwrap();
-            c.nav_state = msg.nav_state;
-            c.arming_state = msg.arming_state;
+            c.update_status(msg);
         },
     )?;
 
@@ -155,45 +159,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rclrs::spin(&spin_node).unwrap();
     });
 
-    let takeoff_height = 5.0;
-
     loop {
         interval.tick().await;
         let mut c = main_controller.lock().unwrap();
-
-        match c.flight_state {
-            FlightState::DISARMED => {
-                println!("State: DISARMED. Requesting Offboard...");
-                c.send_command(176, 1.0, 6.0)?; // PX4_CUSTOM_MAIN_MODE_OFFBOARD = 6
-                c.flight_state = FlightState::OFFBOARD_REQUESTED;
-            }
-            FlightState::OFFBOARD_REQUESTED => {
-                if c.nav_state == 14 { // NAVIGATION_STATE_OFFBOARD
-                    println!("Offboard accepted. Arming...");
-                    c.send_command(400, 1.0, 0.0)?; // ARM
-                    c.flight_state = FlightState::ARMING;
-                } else {
-                    c.send_command(176, 1.0, 6.0)?;
-                }
-            }
-            FlightState::ARMING => {
-                if c.arming_state == 2 { // ARMED
-                    println!("Armed. Taking off...");
-                    c.flight_state = FlightState::TAKEOFF;
-                } else {
-                    c.send_command(400, 1.0, 0.0)?;
-                }
-            }
-            FlightState::TAKEOFF => {
-                c.publish_trajectory_setpoint(Vector3::new(0.0, 0.0, takeoff_height))?;
-                // Check if we are close to takeoff height
-                // Since we don't have current position here, let's just transition after one setpoint for this PoC
-                // or after some time. For now, let's keep it simple.
-                c.flight_state = FlightState::LOITER;
-            }
-            FlightState::LOITER => {
-                c.publish_trajectory_setpoint(Vector3::new(0.0, 0.0, takeoff_height))?;
-            }
-        }
+        c.run_control_tick()?;
     }
 }

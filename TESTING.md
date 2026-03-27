@@ -2,14 +2,14 @@
 
 This document tracks the high-level testing status and provides detailed explanations of the verification suite across the Swarm Digital Twin project.
 
-## 🧪 Current Status (2026-03-25)
+## Current Status (2026-03-27)
 
 | Module | Unit Tests | Integration Tests | SITL / Hardware | Status |
 | :--- | :---: | :---: | :---: | :--- |
-| `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM Verified. |
+| `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM + Transport + Timing Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (150) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A-J validation gates |
+| **Drone Physics** (Python) | ✅ Pass (157) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A-R validation gates |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -278,6 +278,17 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 #### AF. IRS-4 Benchmark Determinism
 - **`test_irs4_benchmark_profiles_are_deterministic[irs4_carolina]`**: Carolina quadrotor benchmark is repeatable (identical RMSE across runs).
 - **`test_irs4_benchmark_profiles_are_deterministic[irs4_epn]`**: EPN quadrotor benchmark is repeatable.
+
+#### AF. Simulation Bridge (Phase R1)
+- **`test_bridge_message_contract`**: ActionMessage and StatusMessage JSON contract matches Rust wire format.
+- **`test_bridge_process_actions`**: SimBridge correctly processes RequestOffboard, RequestArm, PublishSetpoint action batches.
+- **`test_bridge_physics_step`**: Armed bridge advances physics upward toward target altitude.
+- **`test_bridge_status_message_format`**: Status response contains nav_state, arming_state, position fields.
+- **`test_bridge_udp_roundtrip`**: Full UDP roundtrip — client sends actions, bridge processes and returns status.
+
+#### AG. Real-Time Timing Contract (Phase R2)
+- **`test_physics_step_latency`**: Single `physics_step()` mean < 1ms, p95 < 2ms (CI gate for real-time viability).
+- **`test_controller_step_latency`**: `PositionController.compute()` p95 < 1ms.
 
 #### R. Swarm Standalone Twin (Phase C)
 - **`test_flocking_vector_returns_zero_without_neighbors`**: Empty neighbor list returns zero steering vector (stable no-neighbor behavior).

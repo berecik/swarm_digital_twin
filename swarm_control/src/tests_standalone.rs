@@ -1,30 +1,37 @@
+use crate::driver_core::{DriverAction, DriverCore, DriverStatus, FlightState};
 use crate::utils::{enu_to_ned, get_clock_microseconds};
-use crate::LifecycleState;
-use crate::OffboardControlNode;
 use nalgebra::Vector3;
 
 #[test]
-fn test_lifecycle_initial_state() {
-    let node = OffboardControlNode::new();
-    assert_eq!(node.state, LifecycleState::Unconfigured);
+fn test_driver_core_initial_state() {
+    let core = DriverCore::new(5.0);
+    assert_eq!(core.flight_state, FlightState::Disarmed);
 }
 
 #[test]
-fn test_lifecycle_transitions() {
-    let mut node = OffboardControlNode::new();
+fn test_driver_core_transitions() {
+    let mut core = DriverCore::new(5.0);
 
-    // Manual transition for testing logic since on_configure requires rclrs::Node
-    node.state = LifecycleState::Inactive;
-    assert_eq!(node.state, LifecycleState::Inactive);
+    assert_eq!(core.tick(), vec![DriverAction::RequestOffboard]);
 
-    node.on_activate().unwrap();
-    assert_eq!(node.state, LifecycleState::Active);
+    core.update_status(DriverStatus {
+        nav_state: 14,
+        arming_state: 0,
+    });
+    assert_eq!(core.tick(), vec![DriverAction::RequestArm]);
 
-    node.on_deactivate().unwrap();
-    assert_eq!(node.state, LifecycleState::Inactive);
+    core.update_status(DriverStatus {
+        nav_state: 14,
+        arming_state: 2,
+    });
+    assert!(core.tick().is_empty());
 
-    node.on_cleanup().unwrap();
-    assert_eq!(node.state, LifecycleState::Unconfigured);
+    let takeoff = core.tick();
+    assert_eq!(
+        takeoff,
+        vec![DriverAction::PublishSetpoint(Vector3::new(0.0, 0.0, 5.0))]
+    );
+    assert_eq!(core.flight_state, FlightState::Loiter);
 }
 
 #[test]

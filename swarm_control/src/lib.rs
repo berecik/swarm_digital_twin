@@ -8,11 +8,17 @@ use rclrs;
 
 pub mod boids;
 pub mod communication;
+pub mod driver_core;
+pub mod timing;
+pub mod transport;
 pub mod utils;
 pub mod search;
 #[path = "main.rs"]
 pub mod main_module;
-pub use main_module::{FlightState, OffboardController};
+pub use driver_core::{DriverAction, DriverCore, DriverStatus, FlightState};
+pub use main_module::OffboardController;
+pub use timing::TimingMetrics;
+pub use transport::Transport;
 
 #[cfg(test)]
 pub mod tests;

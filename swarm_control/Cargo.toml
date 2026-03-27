@@ -24,3 +24,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "swarm_node"
 path = "src/main.rs"
+
+[[bin]]
+name = "sim_realtime_driver"
+path = "src/bin/sim_realtime_driver.rs"

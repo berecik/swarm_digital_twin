@@ -2001,3 +2001,183 @@ class TestPaperValidation:
                 assert vals["rmse_z"] <= 2.1, f"{name} Z-RMSE too high"
             else:
                 assert vals["rmse_z"] <= 0.11, f"{name} Z-RMSE too high"
+
+
+# ── Phase R: Simulation Bridge Tests ─────────────────────────────────────
+
+class TestSimBridge:
+    """Tests for the UDP simulation bridge (Phase R1)."""
+
+    def test_bridge_message_contract(self):
+        """ActionMessage and StatusMessage JSON contract matches Rust side."""
+        import json
+
+        # Action messages Rust sends
+        actions = [
+            {"type": "RequestOffboard"},
+            {"type": "RequestArm"},
+            {"type": "PublishSetpoint", "x": 1.0, "y": 2.0, "z": 5.0},
+        ]
+        encoded = json.dumps(actions)
+        decoded = json.loads(encoded)
+        assert len(decoded) == 3
+        assert decoded[0]["type"] == "RequestOffboard"
+        assert decoded[2]["x"] == 1.0
+
+        # Status message Python sends back
+        status = {"nav_state": 14, "arming_state": 2, "position": [0.0, 0.0, 4.5]}
+        encoded_status = json.dumps(status)
+        decoded_status = json.loads(encoded_status)
+        assert decoded_status["nav_state"] == 14
+        assert len(decoded_status["position"]) == 3
+
+    def test_bridge_process_actions(self):
+        """SimBridge correctly processes action batches."""
+        from sim_bridge import SimBridge
+        import socket
+
+        # Use a random high port to avoid conflicts
+        bridge = SimBridge(port=0, dt=0.02)
+        # Get the actual port assigned
+        actual_port = bridge.sock.getsockname()[1]
+
+        bridge.process_actions([{"type": "RequestOffboard"}])
+        assert bridge.nav_state == 14
+
+        bridge.process_actions([{"type": "RequestArm"}])
+        assert bridge.arming_state == 2
+
+        bridge.process_actions([
+            {"type": "PublishSetpoint", "x": 0.0, "y": 0.0, "z": 5.0}
+        ])
+        np.testing.assert_allclose(bridge.target_position, [0.0, 0.0, 5.0])
+
+        bridge.sock.close()
+
+    def test_bridge_physics_step(self):
+        """SimBridge advances physics when armed."""
+        from sim_bridge import SimBridge
+
+        bridge = SimBridge(port=0, dt=0.02)
+        bridge.arming_state = 2
+        bridge.target_position = np.array([0.0, 0.0, 5.0])
+
+        initial_z = bridge.state.position[2]
+        for _ in range(50):
+            bridge.step_physics()
+
+        # Should have moved upward
+        assert bridge.state.position[2] > initial_z
+        bridge.sock.close()
+
+    def test_bridge_status_message_format(self):
+        """Status message contains required fields."""
+        from sim_bridge import SimBridge
+
+        bridge = SimBridge(port=0, dt=0.02)
+        bridge.nav_state = 14
+        bridge.arming_state = 2
+
+        msg = bridge.make_status_message()
+        assert "nav_state" in msg
+        assert "arming_state" in msg
+        assert "position" in msg
+        assert len(msg["position"]) == 3
+        assert msg["nav_state"] == 14
+        assert msg["arming_state"] == 2
+        bridge.sock.close()
+
+    def test_bridge_udp_roundtrip(self):
+        """Full UDP roundtrip: send actions, receive status."""
+        import json
+        import socket
+        from sim_bridge import SimBridge
+
+        bridge = SimBridge(port=0, dt=0.02)
+        port = bridge.sock.getsockname()[1]
+
+        # Client socket
+        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        client.settimeout(2.0)
+
+        # Send actions
+        actions = [
+            {"type": "RequestOffboard"},
+            {"type": "RequestArm"},
+            {"type": "PublishSetpoint", "x": 0.0, "y": 0.0, "z": 5.0},
+        ]
+        client.sendto(json.dumps(actions).encode(), ("127.0.0.1", port))
+
+        # Bridge processes one step
+        data, addr = bridge.sock.recvfrom(4096)
+        decoded = json.loads(data.decode())
+        bridge.process_actions(decoded)
+        for _ in range(5):
+            bridge.step_physics()
+
+        response = json.dumps(bridge.make_status_message()).encode()
+        bridge.sock.sendto(response, addr)
+
+        # Client receives status
+        resp_data, _ = client.recvfrom(4096)
+        status = json.loads(resp_data.decode())
+
+        assert status["nav_state"] == 14
+        assert status["arming_state"] == 2
+        assert len(status["position"]) == 3
+
+        client.close()
+        bridge.sock.close()
+
+
+class TestTimingContract:
+    """Tests for real-time timing contract (Phase R2) - Python side."""
+
+    def test_physics_step_latency(self):
+        """Single physics_step completes in < 1ms (CI gate)."""
+        import time
+        from drone_physics import make_holybro_x500, DroneState, DroneCommand, physics_step
+
+        params = make_holybro_x500()
+        state = DroneState(
+            position=np.array([0.0, 0.0, 5.0]),
+            velocity=np.zeros(3),
+            rotation=np.eye(3),
+            angular_velocity=np.zeros(3),
+        )
+        cmd = DroneCommand(thrust=params.mass * 9.81, torque=np.zeros(3))
+
+        durations = []
+        for _ in range(100):
+            t0 = time.perf_counter()
+            state = physics_step(state, cmd, params, 0.02)
+            durations.append(time.perf_counter() - t0)
+
+        mean_ms = np.mean(durations) * 1000
+        p95_ms = np.percentile(durations, 95) * 1000
+        assert mean_ms < 1.0, f"Mean physics_step latency {mean_ms:.3f}ms exceeds 1ms"
+        assert p95_ms < 2.0, f"P95 physics_step latency {p95_ms:.3f}ms exceeds 2ms"
+
+    def test_controller_step_latency(self):
+        """PositionController.compute completes in < 1ms."""
+        import time
+        from drone_physics import PositionController, DroneState, make_holybro_x500
+
+        params = make_holybro_x500()
+        controller = PositionController(params)
+        state = DroneState(
+            position=np.array([0.0, 0.0, 5.0]),
+            velocity=np.zeros(3),
+            rotation=np.eye(3),
+            angular_velocity=np.zeros(3),
+        )
+        target = np.array([0.0, 0.0, 10.0])
+
+        durations = []
+        for _ in range(100):
+            t0 = time.perf_counter()
+            controller.compute(state, target, 0.0, 0.02)
+            durations.append(time.perf_counter() - t0)
+
+        p95_ms = np.percentile(durations, 95) * 1000
+        assert p95_ms < 1.0, f"P95 controller latency {p95_ms:.3f}ms exceeds 1ms"

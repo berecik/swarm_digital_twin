@@ -143,6 +143,9 @@ The scenario flies a drone through 7 waypoints over rolling-hill terrain with qu
 cd swarm_control
 cargo test
 
+# Real-time simulation driver emulation (shared offboard driver core)
+cargo run --bin sim_realtime_driver
+
 # Python perception
 cd perception
 python -m pytest test/
