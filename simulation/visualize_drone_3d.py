@@ -479,7 +479,8 @@ def main():
     ani = FuncAnimation(fig, update, frames=len(idx),
                         interval=33, blit=False, repeat=True)
 
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+    fig.subplots_adjust(left=0.04, right=0.98, bottom=0.06, top=0.92,
+                        wspace=0.25, hspace=0.28)
     plt.show()
 
 

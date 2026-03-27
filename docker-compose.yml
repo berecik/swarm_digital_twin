@@ -111,6 +111,68 @@ services:
     depends_on:
       - sitl_drone_3
 
+  # ── Phase K: ArduPilot SITL ───────────────────────────────────────────
+  ardupilot_sitl:
+    build:
+      context: .
+      dockerfile: Dockerfile.sitl
+    image: ardupilot-sitl:latest
+    container_name: ardupilot_sitl
+    profiles: ["sitl"]
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.50
+    environment:
+      - SIM_LAT=-0.508333
+      - SIM_LNG=-78.141667
+      - SIM_ALT=4500
+      - INSTANCE=0
+    ports:
+      - "9002:9002/udp"
+      - "9003:9003/udp"
+      - "14550:14550/udp"
+      - "14555:14555/udp"
+      - "5760:5760/tcp"
+    volumes:
+      - ./gazebo/models:/sitl/models:ro
+      - ./missions:/sitl/missions:ro
+      - sitl_logs:/sitl/logs
+    command: ["copter", "--param-file", "/sitl/params/irs4_quad.parm"]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import socket,sys; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.settimeout(2); s.bind(('0.0.0.0',14551)); d,_=s.recvfrom(300); sys.exit(0 if len(d)>0 else 1)\" 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      start_period: 20s
+      retries: 6
+
+  ardupilot_sitl_plane:
+    build:
+      context: .
+      dockerfile: Dockerfile.sitl
+    image: ardupilot-sitl:latest
+    container_name: ardupilot_sitl_plane
+    profiles: ["sitl_plane"]
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.51
+    environment:
+      - SIM_LAT=-0.508333
+      - SIM_LNG=-78.141667
+      - SIM_ALT=4500
+      - INSTANCE=1
+    ports:
+      - "9012:9002/udp"
+      - "9013:9003/udp"
+      - "14560:14550/udp"
+    volumes:
+      - ./gazebo/models:/sitl/models:ro
+      - ./missions:/sitl/missions:ro
+      - sitl_logs:/sitl/logs
+    command: ["plane", "--param-file", "/sitl/params/valencia_fw.parm"]
+
+volumes:
+  sitl_logs:
+
 networks:
   swarm_net:
     driver: bridge

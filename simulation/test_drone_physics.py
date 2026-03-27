@@ -498,8 +498,14 @@ class TestBodyFrame:
         dt = 0.001
         t_total = 1.0
 
-        for _ in range(int(t_total / dt)):
-            state = physics_step(state, cmd, params_body, dt)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"Aerodynamic parameter warning: C_D=0\.0000.*",
+                category=RuntimeWarning,
+            )
+            for _ in range(int(t_total / dt)):
+                state = physics_step(state, cmd, params_body, dt)
 
         expected_z = 100.0 - 0.5 * GRAVITY * t_total**2
         expected_vz = -GRAVITY * t_total
@@ -1516,6 +1522,254 @@ class TestGazeboModels:
             "gazebo", "models", "valencia_fixed_wing", "valencia_fw.parm"
         )
         assert os.path.exists(parm_path)
+
+
+# ── Phase K: IRS-4 Gazebo Model & Docker SITL ────────────────────────────
+
+class TestIRS4GazeboModel:
+    """Verify IRS-4 quadrotor Gazebo model (Phase K2)."""
+
+    def _project_root(self):
+        import os
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def test_irs4_sdf_exists(self):
+        """IRS-4 quadrotor SDF model file should exist."""
+        import os
+        sdf_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "model.sdf")
+        assert os.path.exists(sdf_path), f"SDF not found: {sdf_path}"
+
+    def test_irs4_model_config_exists(self):
+        """IRS-4 model config file should exist."""
+        import os
+        config_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "model.config")
+        assert os.path.exists(config_path)
+
+    def test_irs4_parm_exists(self):
+        """IRS-4 ArduPilot parameter file should exist."""
+        import os
+        parm_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "irs4_quad.parm")
+        assert os.path.exists(parm_path)
+
+    def test_irs4_sdf_mass_matches_preset(self):
+        """SDF mass should match make_irs4_quadrotor() (1.8 kg)."""
+        import os
+        sdf_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "model.sdf")
+        content = open(sdf_path).read()
+        assert "<mass>1.8</mass>" in content
+
+    def test_irs4_sdf_has_4_rotors(self):
+        """SDF should have 4 rotor joints."""
+        import os
+        sdf_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "model.sdf")
+        content = open(sdf_path).read()
+        assert content.count("rotor_") >= 8  # 4 links + 4 joints
+
+    def test_irs4_sdf_has_ardupilot_plugin(self):
+        """SDF should contain ArduPilot SITL plugin."""
+        import os
+        sdf_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "model.sdf")
+        content = open(sdf_path).read()
+        assert "ArduPilotPlugin" in content
+
+    def test_irs4_sdf_has_liftdrag_plugin(self):
+        """SDF should contain LiftDrag aero plugin with C_D=1.0."""
+        import os
+        sdf_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "model.sdf")
+        content = open(sdf_path).read()
+        assert "LiftDragPlugin" in content
+        assert "<cda>1.0</cda>" in content
+
+    def test_irs4_sdf_inertia_matches_preset(self):
+        """SDF inertia should match make_irs4_quadrotor() values."""
+        import os
+        sdf_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "model.sdf")
+        content = open(sdf_path).read()
+        assert "<ixx>0.025</ixx>" in content
+        assert "<iyy>0.025</iyy>" in content
+        assert "<izz>0.042</izz>" in content
+
+    def test_irs4_parm_copter_frame(self):
+        """Parameter file should configure copter frame."""
+        import os
+        parm_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "irs4_quad.parm")
+        content = open(parm_path).read()
+        assert "FRAME_CLASS,1" in content
+
+    def test_irs4_parm_carolina_origin(self):
+        """Parameter file should have Carolina Park GPS origin."""
+        import os
+        parm_path = os.path.join(self._project_root(), "gazebo", "models", "irs4_quadrotor", "irs4_quad.parm")
+        content = open(parm_path).read()
+        assert "SIM_OPOS_LAT,-0.189" in content
+        assert "SIM_OPOS_ALT,2800" in content
+
+
+class TestDockerSITL:
+    """Verify Docker SITL configuration (Phase K1)."""
+
+    def _project_root(self):
+        import os
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def test_dockerfile_sitl_exists(self):
+        """Dockerfile.sitl should exist."""
+        import os
+        path = os.path.join(self._project_root(), "Dockerfile.sitl")
+        assert os.path.exists(path)
+
+    def test_dockerfile_builds_copter_and_plane(self):
+        """Dockerfile should build both arducopter and arduplane."""
+        import os
+        path = os.path.join(self._project_root(), "Dockerfile.sitl")
+        content = open(path).read()
+        assert "arducopter" in content
+        assert "arduplane" in content
+
+    def test_dockerfile_exposes_ports(self):
+        """Dockerfile should expose required UDP/TCP ports."""
+        import os
+        path = os.path.join(self._project_root(), "Dockerfile.sitl")
+        content = open(path).read()
+        assert "9002" in content
+        assert "9003" in content
+        assert "14550" in content
+
+    def test_dockerfile_has_healthcheck(self):
+        """Dockerfile should have a MAVLink heartbeat health check."""
+        import os
+        path = os.path.join(self._project_root(), "Dockerfile.sitl")
+        content = open(path).read()
+        assert "HEALTHCHECK" in content
+
+    def test_compose_has_sitl_service(self):
+        """docker-compose.yml should have ardupilot_sitl service."""
+        import os
+        path = os.path.join(self._project_root(), "docker-compose.yml")
+        content = open(path).read()
+        assert "ardupilot_sitl" in content
+
+    def test_compose_sitl_ports(self):
+        """SITL compose service should expose correct ports."""
+        import os
+        path = os.path.join(self._project_root(), "docker-compose.yml")
+        content = open(path).read()
+        assert "9002:9002" in content
+        assert "14550:14550" in content
+
+    def test_sitl_entrypoint_exists(self):
+        """SITL entrypoint script should exist and be executable."""
+        import os, stat
+        path = os.path.join(self._project_root(), "scripts", "sitl_entrypoint.sh")
+        assert os.path.exists(path)
+        mode = os.stat(path).st_mode
+        assert mode & stat.S_IXUSR
+
+
+# ── Phase N: Mission Waypoint Files ──────────────────────────────────────
+
+class TestMissionFiles:
+    """Verify paper mission waypoint files (Phase N1)."""
+
+    def _project_root(self):
+        import os
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def test_fw_158_exists(self):
+        """Fixed-wing mission 158 waypoint file should exist."""
+        import os
+        path = os.path.join(self._project_root(), "missions", "fw_158.waypoints")
+        assert os.path.exists(path)
+
+    def test_fw_178_exists(self):
+        """Fixed-wing mission 178 waypoint file should exist."""
+        import os
+        path = os.path.join(self._project_root(), "missions", "fw_178.waypoints")
+        assert os.path.exists(path)
+
+    def test_fw_185_exists(self):
+        """Fixed-wing mission 185 waypoint file should exist."""
+        import os
+        path = os.path.join(self._project_root(), "missions", "fw_185.waypoints")
+        assert os.path.exists(path)
+
+    def test_fw_missions_qgc_format(self):
+        """All FW mission files should start with QGC WPL 110 header."""
+        import os
+        missions_dir = os.path.join(self._project_root(), "missions")
+        for name in ["fw_158.waypoints", "fw_178.waypoints", "fw_185.waypoints"]:
+            path = os.path.join(missions_dir, name)
+            first_line = open(path).readline().strip()
+            assert first_line == "QGC WPL 110", f"{name} missing QGC header"
+
+    def test_fw_missions_have_antisana_origin(self):
+        """FW missions should reference Antisana GPS coordinates."""
+        import os
+        missions_dir = os.path.join(self._project_root(), "missions")
+        for name in ["fw_158.waypoints", "fw_178.waypoints", "fw_185.waypoints"]:
+            content = open(os.path.join(missions_dir, name)).read()
+            assert "-0.508333" in content, f"{name} missing Antisana lat"
+            assert "-78.141667" in content, f"{name} missing Antisana lon"
+
+    def test_fw_missions_have_waypoints(self):
+        """Each FW mission should have at least 5 waypoints."""
+        import os
+        missions_dir = os.path.join(self._project_root(), "missions")
+        for name in ["fw_158.waypoints", "fw_178.waypoints", "fw_185.waypoints"]:
+            lines = open(os.path.join(missions_dir, name)).readlines()
+            # First line is header, rest are waypoints
+            wp_count = len([l for l in lines[1:] if l.strip()])
+            assert wp_count >= 5, f"{name} has only {wp_count} waypoints"
+
+    def test_quad_missions_module_exists(self):
+        """Quadrotor mission definitions module should exist."""
+        import os
+        path = os.path.join(self._project_root(), "missions", "quad_missions.py")
+        assert os.path.exists(path)
+
+    def test_quad_missions_importable(self):
+        """Quadrotor missions should be importable and contain 4 missions."""
+        import sys, os
+        missions_dir = os.path.join(self._project_root(), "missions")
+        sys.path.insert(0, missions_dir)
+        try:
+            from quad_missions import ALL_QUAD_MISSIONS, get_mission, mission_to_qgc_wpl
+            assert len(ALL_QUAD_MISSIONS) == 4
+            assert "carolina_40" in ALL_QUAD_MISSIONS
+            assert "carolina_20" in ALL_QUAD_MISSIONS
+            assert "epn_30" in ALL_QUAD_MISSIONS
+            assert "epn_20" in ALL_QUAD_MISSIONS
+        finally:
+            sys.path.remove(missions_dir)
+
+    def test_quad_mission_to_qgc_wpl(self):
+        """mission_to_qgc_wpl should produce valid QGC format."""
+        import sys, os
+        missions_dir = os.path.join(self._project_root(), "missions")
+        sys.path.insert(0, missions_dir)
+        try:
+            from quad_missions import get_mission, mission_to_qgc_wpl
+            mission = get_mission("carolina_40")
+            wpl = mission_to_qgc_wpl(mission)
+            assert wpl.startswith("QGC WPL 110")
+            lines = [l for l in wpl.strip().split("\n") if l.strip()]
+            assert len(lines) >= 5
+        finally:
+            sys.path.remove(missions_dir)
+
+    def test_quad_missions_have_correct_origins(self):
+        """Carolina missions at -0.189, EPN missions at -0.210."""
+        import sys, os
+        missions_dir = os.path.join(self._project_root(), "missions")
+        sys.path.insert(0, missions_dir)
+        try:
+            from quad_missions import get_mission
+            carolina = get_mission("carolina_40")
+            assert carolina["origin"]["lat"] == -0.189
+            epn = get_mission("epn_30")
+            assert epn["origin"]["lat"] == -0.210
+        finally:
+            sys.path.remove(missions_dir)
 
 
 # ── Phase H: SITL Lifecycle Script ─────────────────────────────────────────

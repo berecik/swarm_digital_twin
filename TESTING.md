@@ -9,7 +9,7 @@ This document tracks the high-level testing status and provides detailed explana
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM + Transport + Timing Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (157) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A-R validation gates |
+| **Drone Physics** (Python) | ✅ Pass (184) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A-N validation gates |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -289,6 +289,39 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 #### AG. Real-Time Timing Contract (Phase R2)
 - **`test_physics_step_latency`**: Single `physics_step()` mean < 1ms, p95 < 2ms (CI gate for real-time viability).
 - **`test_controller_step_latency`**: `PositionController.compute()` p95 < 1ms.
+
+#### AH. IRS-4 Gazebo Model (Phase K2)
+- **`test_irs4_sdf_exists`**: IRS-4 SDF model file exists.
+- **`test_irs4_model_config_exists`**: Model config XML exists.
+- **`test_irs4_parm_exists`**: ArduPilot parameter file exists.
+- **`test_irs4_sdf_mass_matches_preset`**: SDF mass matches `make_irs4_quadrotor()` (1.8 kg).
+- **`test_irs4_sdf_has_4_rotors`**: SDF contains 4 rotor link/joint pairs.
+- **`test_irs4_sdf_has_ardupilot_plugin`**: ArduPilot SITL plugin present.
+- **`test_irs4_sdf_has_liftdrag_plugin`**: LiftDrag aero plugin with C_D=1.0.
+- **`test_irs4_sdf_inertia_matches_preset`**: Inertia matches Ixx=0.025, Iyy=0.025, Izz=0.042.
+- **`test_irs4_parm_copter_frame`**: Parameter file configures copter frame (FRAME_CLASS=1).
+- **`test_irs4_parm_carolina_origin`**: GPS origin at Carolina Park (-0.189, 2800m).
+
+#### AI. Docker SITL Configuration (Phase K1)
+- **`test_dockerfile_sitl_exists`**: Dockerfile.sitl exists.
+- **`test_dockerfile_builds_copter_and_plane`**: Dockerfile builds both arducopter and arduplane.
+- **`test_dockerfile_exposes_ports`**: Required UDP/TCP ports (9002, 9003, 14550) exposed.
+- **`test_dockerfile_has_healthcheck`**: MAVLink heartbeat health check configured.
+- **`test_compose_has_sitl_service`**: docker-compose.yml contains ardupilot_sitl service.
+- **`test_compose_sitl_ports`**: SITL compose service maps correct ports.
+- **`test_sitl_entrypoint_exists`**: Entrypoint script exists and is executable.
+
+#### AJ. Mission Waypoint Files (Phase N1)
+- **`test_fw_158_exists`**: FW mission 158 waypoint file exists.
+- **`test_fw_178_exists`**: FW mission 178 waypoint file exists.
+- **`test_fw_185_exists`**: FW mission 185 waypoint file exists.
+- **`test_fw_missions_qgc_format`**: All FW missions start with QGC WPL 110 header.
+- **`test_fw_missions_have_antisana_origin`**: FW missions reference Antisana GPS coords.
+- **`test_fw_missions_have_waypoints`**: Each FW mission has >=5 waypoints.
+- **`test_quad_missions_module_exists`**: Quadrotor missions Python module exists.
+- **`test_quad_missions_importable`**: Module importable, contains 4 missions.
+- **`test_quad_mission_to_qgc_wpl`**: `mission_to_qgc_wpl()` produces valid QGC format.
+- **`test_quad_missions_have_correct_origins`**: Carolina=-0.189, EPN=-0.210.
 
 #### R. Swarm Standalone Twin (Phase C)
 - **`test_flocking_vector_returns_zero_without_neighbors`**: Empty neighbor list returns zero steering vector (stable no-neighbor behavior).

@@ -1,0 +1,71 @@
+# ArduPilot Parameter File - IRS-4 Quadrotor
+# Based on Valencia et al. (2025) Section 3.2
+# Platform: IRS-4 quadrotor at Carolina Park / EPN campus (Quito, ~2800m MSL)
+# For use with ArduPilot SITL Copter + Gazebo plugin
+
+# Frame type: quadrotor X
+FRAME_CLASS,1
+FRAME_TYPE,1
+
+# ── Physical parameters ───────────────────────────────────────────────
+# Mass: 1.8 kg, arm length: 0.22 m
+
+# ── Altitude controller ───────────────────────────────────────────────
+# Tuned for low-wind urban hover at 2800m MSL
+PSC_POSZ_P,1.0
+PSC_VELZ_P,5.0
+PSC_ACCZ_P,0.3
+PSC_ACCZ_I,1.0
+PSC_ACCZ_D,0.0
+
+# ── Position controller ──────────────────────────────────────────────
+PSC_POSXY_P,1.0
+PSC_VELXY_P,2.0
+PSC_VELXY_I,1.0
+PSC_VELXY_D,0.5
+
+# ── Attitude rate PID ────────────────────────────────────────────────
+ATC_RAT_RLL_P,0.135
+ATC_RAT_RLL_I,0.090
+ATC_RAT_RLL_D,0.004
+ATC_RAT_PIT_P,0.135
+ATC_RAT_PIT_I,0.090
+ATC_RAT_PIT_D,0.004
+ATC_RAT_YAW_P,0.18
+ATC_RAT_YAW_I,0.018
+ATC_RAT_YAW_D,0.0
+
+# ── Throttle ─────────────────────────────────────────────────────────
+MOT_THST_HOVER,0.45
+THR_MIN,0
+THR_MAX,100
+
+# ── Navigation ───────────────────────────────────────────────────────
+WPNAV_SPEED,500
+WPNAV_SPEED_UP,250
+WPNAV_SPEED_DN,150
+WPNAV_RADIUS,200
+
+# ── GPS ──────────────────────────────────────────────────────────────
+GPS_TYPE,1
+
+# ── Barometer (high altitude: ~2800m MSL) ────────────────────────────
+# Pressure at 2800m ISA: ~72580 Pa
+GND_ABS_PRESS,72580
+GND_TEMP,15
+BARO_ALT_OFFSET,0
+
+# ── Failsafe ─────────────────────────────────────────────────────────
+FS_THR_ENABLE,0
+FS_GCS_ENABLE,0
+
+# ── Simulation origins ───────────────────────────────────────────────
+# Carolina Park (Quito) — default for Section 3.2 experiments
+SIM_OPOS_LAT,-0.189
+SIM_OPOS_LNG,-78.488
+SIM_OPOS_ALT,2800
+
+# EPN Campus (alternative)
+# SIM_OPOS_LAT,-0.210
+# SIM_OPOS_LNG,-78.491
+# SIM_OPOS_ALT,2820

@@ -1,0 +1,98 @@
+# Dockerfile.sitl — ArduPilot SITL for Swarm Digital Twin
+# Builds ArduPilot SITL (plane + copter) for use with Gazebo plugin bridge.
+#
+# Usage:
+#   docker build -f Dockerfile.sitl -t ardupilot-sitl .
+#   docker compose --profile sitl up ardupilot_sitl
+
+FROM ubuntu:22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-setuptools \
+    build-essential \
+    g++ \
+    ccache \
+    cmake \
+    libtool \
+    automake \
+    autoconf \
+    libexpat1-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone ArduPilot
+ARG ARDUPILOT_TAG=Copter-4.5.7
+RUN git clone --recurse-submodules --depth 1 --branch ${ARDUPILOT_TAG} \
+    https://github.com/ArduPilot/ardupilot.git /ardupilot
+
+WORKDIR /ardupilot
+
+# Install Python dependencies
+RUN pip3 install --no-cache-dir future lxml pymavlink MAVProxy pexpect
+
+# Build SITL for copter
+RUN ./waf configure --board sitl && ./waf copter
+
+# Build SITL for plane
+RUN ./waf plane
+
+# ── Runtime stage ─────────────────────────────────────────────────────────
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-setuptools \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir future lxml pymavlink MAVProxy pexpect
+
+# Copy built SITL binaries
+COPY --from=builder /ardupilot/build/sitl/bin/arducopter /usr/local/bin/arducopter
+COPY --from=builder /ardupilot/build/sitl/bin/arduplane /usr/local/bin/arduplane
+COPY --from=builder /ardupilot/Tools/autotest /ardupilot/Tools/autotest
+COPY --from=builder /ardupilot/Tools/mavproxy_modules /ardupilot/Tools/mavproxy_modules
+
+# Default parameters directory
+RUN mkdir -p /sitl/params /sitl/missions /sitl/logs
+
+# Copy project parameter files and missions
+COPY gazebo/models/valencia_fixed_wing/valencia_fw.parm /sitl/params/valencia_fw.parm
+COPY gazebo/models/irs4_quadrotor/irs4_quad.parm /sitl/params/irs4_quad.parm
+
+# Expose ports:
+#   9002/9003 — Gazebo FDM bridge (ArduPilot ↔ Gazebo plugin)
+#   14550     — MAVLink GCS (QGroundControl / MAVProxy)
+#   14555     — MAVLink API (pymavlink / MAVSDK)
+#   5760      — MAVLink TCP (MAVProxy)
+EXPOSE 9002/udp 9003/udp 14550/udp 14555/udp 5760/tcp
+
+WORKDIR /sitl
+
+# Health check: wait for MAVLink heartbeat on port 14550
+HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=6 \
+    CMD python3 -c " \
+import socket, struct, sys; \
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); \
+s.settimeout(2); \
+s.bind(('0.0.0.0', 14551)); \
+try: \
+    d, _ = s.recvfrom(300); \
+    sys.exit(0) if len(d) > 0 else sys.exit(1); \
+except: sys.exit(1)" || exit 1
+
+# Default: start copter SITL
+# Override with --vehicle plane for fixed-wing
+COPY scripts/sitl_entrypoint.sh /sitl/entrypoint.sh
+RUN chmod +x /sitl/entrypoint.sh
+
+ENTRYPOINT ["/sitl/entrypoint.sh"]
+CMD ["copter"]
