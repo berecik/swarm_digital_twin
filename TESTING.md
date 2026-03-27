@@ -9,7 +9,7 @@ This document tracks the high-level testing status and provides detailed explana
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM + Transport + Timing Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (184) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A-N validation gates |
+| **Drone Physics** (Python) | ✅ Pass (207) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A-N + L/M validation gates |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -322,6 +322,37 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_quad_missions_importable`**: Module importable, contains 4 missions.
 - **`test_quad_mission_to_qgc_wpl`**: `mission_to_qgc_wpl()` produces valid QGC format.
 - **`test_quad_missions_have_correct_origins`**: Carolina=-0.189, EPN=-0.210.
+
+#### AK. Terrain STL Export (Phase L1)
+- **`test_export_stl_creates_file`**: export_stl writes a binary STL with correct triangle count (2 per grid cell).
+- **`test_export_stl_expected_size`**: STL file size = 84 + n_triangles × 50 bytes.
+- **`test_export_stl_roundtrip`**: export → from_stl preserves center elevation within 2m.
+- **`test_export_stl_with_scale`**: Scale factor correctly multiplies vertex coordinates.
+- **`test_export_stl_rejects_1x1`**: 1×1 grid raises ValueError (cannot tessellate).
+- **`test_export_stl_normals_point_up`**: Triangle normals on flat terrain point upward (nz > 0.99).
+
+#### AL. Terrain Coloring (Phase L2)
+- **`test_material_file_exists`**: Gazebo material script exists.
+- **`test_vertex_shader_exists`**: GLSL vertex shader file exists.
+- **`test_fragment_shader_exists`**: GLSL fragment shader file exists.
+- **`test_material_references_shaders`**: Material file references both shaders and HeightColored name.
+- **`test_fragment_has_elevation_bands`**: Fragment shader contains green_max, brown_max, snow_min uniforms.
+- **`test_world_references_material`**: antisana.world references the terrain material.
+
+#### AM. Position-Aware Wind (Phase M1)
+- **`test_wind_node_has_pose_subscription`**: wind_node.py subscribes to /mavros/local_position/pose.
+- **`test_wind_node_has_pose_callback`**: _pose_callback method exists.
+- **`test_wind_node_uses_drone_pos`**: Hardcoded `np.zeros(3)` TODO removed, uses self.drone_pos.
+- **`test_wind_node_altitude_density`**: _get_altitude_density method and base_altitude_msl parameter exist.
+- **`test_isa_density_at_altitude`**: ISA density at 4500m is 55–70% of sea level.
+
+#### AN. Euler Rate Kinematics (Phase M2)
+- **`test_identity_at_zero_attitude`**: At phi=theta=0, euler rates equal body rates.
+- **`test_pure_roll_rate`**: Pure p maps to phi_dot only.
+- **`test_pitched_yaw_coupling`**: Body yaw rate couples into phi_dot and psi_dot at nonzero pitch.
+- **`test_numerical_differentiation`**: Euler rates self-consistent under small perturbation.
+- **`test_gimbal_lock_raises`**: ValueError at theta=π/2 (cos(theta)≈0).
+- **`test_symmetric_roll`**: Negating phi changes coupling sign on theta_dot.
 
 #### R. Swarm Standalone Twin (Phase C)
 - **`test_flocking_vector_returns_zero_without_neighbors`**: Empty neighbor list returns zero steering vector (stable no-neighbor behavior).

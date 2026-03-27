@@ -398,6 +398,45 @@ def rotation_to_euler(R: np.ndarray) -> Tuple[float, float, float]:
     return roll, pitch, yaw
 
 
+def euler_rates_from_body_rates(phi: float, theta: float,
+                                p: float, q: float, r: float) -> np.ndarray:
+    """Convert body angular rates to Euler angle rates (paper Eq. 2).
+
+    [phi_dot, theta_dot, psi_dot]^T = E(phi, theta) @ [p, q, r]^T
+
+    where E is the kinematic transformation matrix:
+        | 1   sin(phi)*tan(theta)   cos(phi)*tan(theta) |
+        | 0   cos(phi)              -sin(phi)           |
+        | 0   sin(phi)/cos(theta)   cos(phi)/cos(theta) |
+
+    Args:
+        phi: Roll angle [rad].
+        theta: Pitch angle [rad].
+        p: Body roll rate [rad/s].
+        q: Body pitch rate [rad/s].
+        r: Body yaw rate [rad/s].
+
+    Returns:
+        Array [phi_dot, theta_dot, psi_dot] in rad/s.
+
+    Raises:
+        ValueError: If theta is at gimbal lock (±π/2).
+    """
+    ct = np.cos(theta)
+    if abs(ct) < 1e-8:
+        raise ValueError(f"Gimbal lock: theta={theta:.4f} rad (cos(theta)≈0)")
+
+    sp, cp = np.sin(phi), np.cos(phi)
+    tt = np.tan(theta)
+
+    E = np.array([
+        [1.0,  sp * tt,   cp * tt],
+        [0.0,  cp,       -sp],
+        [0.0,  sp / ct,   cp / ct],
+    ])
+    return E @ np.array([p, q, r])
+
+
 def skew(v: np.ndarray) -> np.ndarray:
     return np.array([
         [    0, -v[2],  v[1]],

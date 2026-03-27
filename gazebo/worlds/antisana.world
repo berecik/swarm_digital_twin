@@ -76,19 +76,29 @@
 
     <!--
       To use SRTM terrain mesh:
-      1. Generate STL from SRTM data using BlenderGIS or terrain.py
-      2. Replace ground_plane with:
-      <model name="antisana_terrain">
-        <static>true</static>
-        <link name="terrain_link">
-          <collision name="collision">
-            <geometry><mesh><uri>model://antisana_terrain/mesh.stl</uri></mesh></geometry>
-          </collision>
-          <visual name="visual">
-            <geometry><mesh><uri>model://antisana_terrain/mesh.stl</uri></mesh></geometry>
-          </visual>
-        </link>
-      </model>
+      1. Generate STL: python -c "from terrain import TerrainMap; t = TerrainMap.from_srtm(-0.508333, -78.141667, 5.0); t.export_stl('mesh.stl')"
+      2. Place mesh.stl in gazebo/models/antisana_terrain/
+      3. Uncomment the antisana_terrain model below and remove ground_plane above
+    -->
+
+    <!--
+    <model name="antisana_terrain">
+      <static>true</static>
+      <link name="terrain_link">
+        <collision name="collision">
+          <geometry><mesh><uri>model://antisana_terrain/mesh.stl</uri></mesh></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><mesh><uri>model://antisana_terrain/mesh.stl</uri></mesh></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/antisana_terrain.material</uri>
+              <name>AntisanaTerrain/HeightColored</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+    </model>
     -->
 
   </world>

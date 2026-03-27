@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'simulati
 try:
     import rclpy
     from rclpy.node import Node
-    from geometry_msgs.msg import Vector3Stamped, WrenchStamped
+    from geometry_msgs.msg import Vector3Stamped, WrenchStamped, PoseStamped
     ROS_AVAILABLE = True
 except ImportError:
     ROS_AVAILABLE = False
@@ -54,6 +54,10 @@ class WindNode(Node if ROS_AVAILABLE else object):
         turb = self.get_parameter('turbulence_type').value
         rate = self.get_parameter('publish_rate').value
 
+        self.declare_parameter('base_altitude_msl', 4500.0)
+
+        self.base_alt_msl = self.get_parameter('base_altitude_msl').value
+
         self.wind = WindField(
             wind_speed=speed,
             wind_direction=np.array([dir_x, dir_y, dir_z]),
@@ -61,8 +65,11 @@ class WindNode(Node if ROS_AVAILABLE else object):
             turbulence_type=turb,
         )
         self.aero = AeroCoefficients()
-        self.atmo = Atmosphere()
+        self.atmo = Atmosphere(altitude_msl=self.base_alt_msl)
         self.t0 = self.get_clock().now()
+
+        # Drone position (updated by subscription)
+        self.drone_pos = np.zeros(3)
 
         # Publishers
         self.vel_pub = self.create_publisher(
@@ -72,16 +79,39 @@ class WindNode(Node if ROS_AVAILABLE else object):
             WrenchStamped, '/wind/force', 10,
         )
 
+        # Subscribe to drone position for altitude-dependent wind
+        self.pose_sub = self.create_subscription(
+            PoseStamped,
+            '/mavros/local_position/pose',
+            self._pose_callback,
+            10,
+        )
+
         dt = 1.0 / rate
         self.timer = self.create_timer(dt, self.publish_wind)
         self.get_logger().info(
-            f'Wind node started: speed={speed} m/s, type={turb}'
+            f'Wind node started: speed={speed} m/s, type={turb}, '
+            f'base_alt={self.base_alt_msl}m MSL'
         )
+
+    def _pose_callback(self, msg: 'PoseStamped'):
+        """Update drone position from MAVROS local position."""
+        p = msg.pose.position
+        self.drone_pos = np.array([p.x, p.y, p.z])
+
+    def _get_altitude_density(self) -> float:
+        """Compute air density at current drone altitude using ISA model.
+
+        Combines the base MSL altitude with the drone's local Z (AGL)
+        to get the true MSL altitude, then computes ISA density.
+        """
+        alt_msl = self.base_alt_msl + self.drone_pos[2]
+        return Atmosphere(altitude_msl=alt_msl).rho
 
     def publish_wind(self):
         now = self.get_clock().now()
         t = (now - self.t0).nanoseconds * 1e-9
-        pos = np.zeros(3)  # TODO: subscribe to drone position
+        pos = self.drone_pos
 
         # Velocity
         vel = self.wind.get_wind_velocity(t, pos)
@@ -93,8 +123,9 @@ class WindNode(Node if ROS_AVAILABLE else object):
         vel_msg.vector.z = float(vel[2])
         self.vel_pub.publish(vel_msg)
 
-        # Force
-        force = self.wind.get_force(t, pos, self.aero, self.atmo.rho)
+        # Force — use altitude-dependent air density
+        rho = self._get_altitude_density()
+        force = self.wind.get_force(t, pos, self.aero, rho)
         force_msg = WrenchStamped()
         force_msg.header.stamp = now.to_msg()
         force_msg.header.frame_id = 'world'

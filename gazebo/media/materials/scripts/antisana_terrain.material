@@ -1,0 +1,46 @@
+// Elevation-based terrain coloring for Antisana volcano region
+// Height bands: green lowlands → brown highlands → white peaks
+// Paper reference: Valencia et al. (2025), Fig. 3
+
+vertex_program AntisanaTerrain/HeightColorVP glsl
+{
+  source antisana_height_color.vert
+}
+
+fragment_program AntisanaTerrain/HeightColorFP glsl
+{
+  source antisana_height_color.frag
+  default_params
+  {
+    // Elevation thresholds [m above world origin]
+    param_named green_max float 4200.0
+    param_named brown_max float 4800.0
+    param_named snow_min  float 5000.0
+  }
+}
+
+material AntisanaTerrain/HeightColored
+{
+  technique
+  {
+    pass
+    {
+      ambient  0.5 0.5 0.5 1.0
+      diffuse  0.8 0.8 0.8 1.0
+      specular 0.1 0.1 0.1 1.0 10
+
+      vertex_program_ref AntisanaTerrain/HeightColorVP {}
+      fragment_program_ref AntisanaTerrain/HeightColorFP {}
+    }
+  }
+
+  // Fallback for systems without GLSL support
+  technique
+  {
+    pass
+    {
+      ambient  0.4 0.35 0.25 1.0
+      diffuse  0.5 0.45 0.3  1.0
+    }
+  }
+}

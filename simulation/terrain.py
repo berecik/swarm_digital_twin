@@ -312,6 +312,60 @@ class TerrainMap:
         n = np.array([-dzdx, -dzdy, 1.0])
         return n / np.linalg.norm(n)
 
+    def export_stl(self, path: str, scale: float = 1.0) -> None:
+        """Export terrain as a binary STL mesh.
+
+        Tessellates the elevation grid into triangles (2 per grid cell)
+        and writes a binary STL file suitable for Gazebo.
+
+        Args:
+            path: Output file path.
+            scale: Coordinate scale factor (e.g. to match Gazebo world units).
+        """
+        ny, nx = self.elevations.shape
+        if nx < 2 or ny < 2:
+            raise ValueError("Need at least 2x2 grid to export STL")
+
+        n_cells = (nx - 1) * (ny - 1)
+        n_triangles = n_cells * 2
+
+        # Build vertex coordinates
+        xs = self.origin[0] + np.arange(nx) * self.resolution * scale
+        ys = self.origin[1] + np.arange(ny) * self.resolution * scale
+        zs = self.elevations * scale
+
+        p = Path(path)
+        with open(p, 'wb') as f:
+            # 80-byte header
+            header = b'Binary STL from TerrainMap.export_stl()' + b'\0' * 41
+            f.write(header[:80])
+            # Triangle count
+            f.write(struct.pack('<I', n_triangles))
+
+            for iy in range(ny - 1):
+                for ix in range(nx - 1):
+                    # Four corners of this grid cell
+                    v00 = (xs[ix],     ys[iy],     zs[iy, ix])
+                    v10 = (xs[ix + 1], ys[iy],     zs[iy, ix + 1])
+                    v01 = (xs[ix],     ys[iy + 1], zs[iy + 1, ix])
+                    v11 = (xs[ix + 1], ys[iy + 1], zs[iy + 1, ix + 1])
+
+                    # Triangle 1: v00, v10, v01
+                    n1 = _triangle_normal(v00, v10, v01)
+                    f.write(struct.pack('<fff', *n1))
+                    f.write(struct.pack('<fff', *v00))
+                    f.write(struct.pack('<fff', *v10))
+                    f.write(struct.pack('<fff', *v01))
+                    f.write(struct.pack('<H', 0))
+
+                    # Triangle 2: v10, v11, v01
+                    n2 = _triangle_normal(v10, v11, v01)
+                    f.write(struct.pack('<fff', *n2))
+                    f.write(struct.pack('<fff', *v10))
+                    f.write(struct.pack('<fff', *v11))
+                    f.write(struct.pack('<fff', *v01))
+                    f.write(struct.pack('<H', 0))
+
     @property
     def bounds(self) -> Tuple[float, float, float, float]:
         """Return (x_min, y_min, x_max, y_max) of the terrain grid."""
@@ -322,6 +376,20 @@ class TerrainMap:
             self.origin[0] + (nx - 1) * self.resolution,
             self.origin[1] + (ny - 1) * self.resolution,
         )
+
+
+# ── STL helpers ──────────────────────────────────────────────────────────────
+
+def _triangle_normal(v0, v1, v2):
+    """Compute unit normal of a triangle from three vertices (tuples)."""
+    e1 = np.array(v1) - np.array(v0)
+    e2 = np.array(v2) - np.array(v0)
+    n = np.cross(e1, e2)
+    mag = np.linalg.norm(n)
+    if mag < 1e-12:
+        return (0.0, 0.0, 1.0)
+    n = n / mag
+    return (float(n[0]), float(n[1]), float(n[2]))
 
 
 # ── STL reader ───────────────────────────────────────────────────────────────

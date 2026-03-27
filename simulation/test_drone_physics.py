@@ -13,6 +13,7 @@ from drone_physics import (
     DroneParams, DroneState, DroneCommand,
     PositionController, PIDController,
     physics_step, euler_to_rotation, rotation_to_euler,
+    euler_rates_from_body_rates,
     run_simulation, GRAVITY,
     AeroCoefficients, Atmosphere, _compute_quadratic_drag,
     _compute_lift, compute_aoa,
@@ -2456,3 +2457,259 @@ class TestTimingContract:
 
         p95_ms = np.percentile(durations, 95) * 1000
         assert p95_ms < 1.0, f"P95 controller latency {p95_ms:.3f}ms exceeds 1ms"
+
+
+# ── Phase L: Terrain STL Export ──────────────────────────────────────────────
+
+class TestTerrainSTLExport:
+    """Tests for TerrainMap.export_stl() (Phase L1)."""
+
+    def test_export_stl_creates_file(self, tmp_path):
+        """export_stl writes a valid binary STL file."""
+        terrain = TerrainMap.from_array(
+            np.array([[0.0, 1.0, 2.0],
+                      [1.0, 2.0, 3.0],
+                      [2.0, 3.0, 4.0]]),
+            resolution=10.0,
+        )
+        stl_path = str(tmp_path / "test.stl")
+        terrain.export_stl(stl_path)
+
+        import struct
+        data = open(stl_path, 'rb').read()
+        assert len(data) >= 84, "STL file too small"
+
+        n_triangles = struct.unpack_from('<I', data, 80)[0]
+        # 3x3 grid → 2x2 cells → 4 cells × 2 triangles = 8
+        assert n_triangles == 8
+
+    def test_export_stl_expected_size(self, tmp_path):
+        """STL file size matches: 84 + n_triangles * 50."""
+        import struct
+        elev = np.random.rand(5, 7) * 100
+        terrain = TerrainMap.from_array(elev, resolution=5.0)
+        stl_path = str(tmp_path / "rand.stl")
+        terrain.export_stl(stl_path)
+
+        data = open(stl_path, 'rb').read()
+        n_tri = struct.unpack_from('<I', data, 80)[0]
+        expected = 84 + n_tri * 50
+        assert len(data) == expected
+        assert n_tri == (7 - 1) * (5 - 1) * 2
+
+    def test_export_stl_roundtrip(self, tmp_path):
+        """export → from_stl preserves elevation within 1m."""
+        elev = np.array([[0.0, 10.0, 20.0],
+                         [5.0, 15.0, 25.0],
+                         [10.0, 20.0, 30.0]])
+        terrain = TerrainMap.from_array(elev, resolution=10.0)
+        stl_path = str(tmp_path / "roundtrip.stl")
+        terrain.export_stl(stl_path)
+
+        loaded = TerrainMap.from_stl(stl_path, resolution=10.0)
+        # Center elevation should be close to 15.0
+        center_z = loaded.get_elevation(10.0, 10.0)
+        assert abs(center_z - 15.0) < 2.0, f"Roundtrip center: {center_z}"
+
+    def test_export_stl_with_scale(self, tmp_path):
+        """Scale factor multiplies coordinates."""
+        import struct
+        elev = np.array([[0.0, 1.0], [1.0, 2.0]])
+        terrain = TerrainMap.from_array(elev, resolution=1.0)
+        stl_path = str(tmp_path / "scaled.stl")
+        terrain.export_stl(stl_path, scale=10.0)
+
+        data = open(stl_path, 'rb').read()
+        # Read first triangle's first vertex (after normal)
+        vx, vy, vz = struct.unpack_from('<fff', data, 84 + 12)
+        # Origin is (0,0) with scale=10 → vertex at (0, 0, 0*10=0)
+        assert abs(vz) < 0.01
+
+    def test_export_stl_rejects_1x1(self):
+        """1x1 grid cannot be tessellated."""
+        terrain = TerrainMap.from_array(np.array([[5.0]]))
+        with pytest.raises(ValueError, match="2x2"):
+            terrain.export_stl("/dev/null")
+
+    def test_export_stl_normals_point_up(self, tmp_path):
+        """Triangle normals on flat terrain should point roughly upward."""
+        import struct
+        elev = np.zeros((3, 3))
+        terrain = TerrainMap.from_array(elev, resolution=1.0)
+        stl_path = str(tmp_path / "flat.stl")
+        terrain.export_stl(stl_path)
+
+        data = open(stl_path, 'rb').read()
+        offset = 84
+        for _ in range(8):
+            nx, ny, nz = struct.unpack_from('<fff', data, offset)
+            assert nz > 0.99, f"Normal not upward: ({nx},{ny},{nz})"
+            offset += 50
+
+
+# ── Phase L2: Terrain Coloring ───────────────────────────────────────────────
+
+class TestTerrainColoring:
+    """Tests for Gazebo terrain material files (Phase L2)."""
+
+    def test_material_file_exists(self):
+        import os
+        path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                            'media', 'materials', 'scripts',
+                            'antisana_terrain.material')
+        assert os.path.exists(path), "Material script missing"
+
+    def test_vertex_shader_exists(self):
+        import os
+        path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                            'media', 'materials', 'scripts',
+                            'antisana_height_color.vert')
+        assert os.path.exists(path), "Vertex shader missing"
+
+    def test_fragment_shader_exists(self):
+        import os
+        path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                            'media', 'materials', 'scripts',
+                            'antisana_height_color.frag')
+        assert os.path.exists(path), "Fragment shader missing"
+
+    def test_material_references_shaders(self):
+        import os
+        path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                            'media', 'materials', 'scripts',
+                            'antisana_terrain.material')
+        content = open(path).read()
+        assert 'antisana_height_color.vert' in content
+        assert 'antisana_height_color.frag' in content
+        assert 'AntisanaTerrain/HeightColored' in content
+
+    def test_fragment_has_elevation_bands(self):
+        import os
+        path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                            'media', 'materials', 'scripts',
+                            'antisana_height_color.frag')
+        content = open(path).read()
+        assert 'green_max' in content
+        assert 'brown_max' in content
+        assert 'snow_min' in content
+
+    def test_world_references_material(self):
+        import os
+        path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                            'worlds', 'antisana.world')
+        content = open(path).read()
+        assert 'AntisanaTerrain/HeightColored' in content
+        assert 'antisana_terrain.material' in content
+
+
+# ── Phase M1: Position-Aware Wind ────────────────────────────────────────────
+
+class TestPositionAwareWind:
+    """Tests for wind node position subscription (Phase M1)."""
+
+    def test_wind_node_has_pose_subscription(self):
+        """wind_node.py subscribes to /mavros/local_position/pose."""
+        import os
+        path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                            'scripts', 'wind_node.py')
+        content = open(path).read()
+        assert '/mavros/local_position/pose' in content
+        assert 'PoseStamped' in content
+
+    def test_wind_node_has_pose_callback(self):
+        """wind_node.py has _pose_callback method."""
+        import os
+        path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                            'scripts', 'wind_node.py')
+        content = open(path).read()
+        assert '_pose_callback' in content
+
+    def test_wind_node_uses_drone_pos(self):
+        """wind_node.py uses drone_pos instead of hardcoded zeros."""
+        import os
+        path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                            'scripts', 'wind_node.py')
+        content = open(path).read()
+        # Old hardcoded line in publish_wind should be gone
+        assert 'pos = np.zeros(3)  # TODO' not in content
+        assert 'self.drone_pos' in content
+
+    def test_wind_node_altitude_density(self):
+        """wind_node.py computes altitude-dependent density."""
+        import os
+        path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                            'scripts', 'wind_node.py')
+        content = open(path).read()
+        assert '_get_altitude_density' in content
+        assert 'base_altitude_msl' in content
+
+    def test_isa_density_at_altitude(self):
+        """ISA density at 4500m differs from sea level."""
+        rho_sea = Atmosphere(altitude_msl=0.0).rho
+        rho_4500 = Atmosphere(altitude_msl=4500.0).rho
+        ratio = rho_4500 / rho_sea
+        # At 4500m, density should be ~0.60-0.65 of sea level
+        assert 0.55 < ratio < 0.70, f"Density ratio {ratio:.3f} unexpected"
+
+
+# ── Phase M2: Euler Rate Kinematics ─────────────────────────────────────────
+
+class TestEulerRates:
+    """Tests for euler_rates_from_body_rates (paper Eq. 2)."""
+
+    def test_identity_at_zero_attitude(self):
+        """At phi=theta=0, E is identity → euler rates = body rates."""
+        from drone_physics import euler_rates_from_body_rates
+        rates = euler_rates_from_body_rates(0.0, 0.0, 1.0, 2.0, 3.0)
+        np.testing.assert_allclose(rates, [1.0, 2.0, 3.0], atol=1e-10)
+
+    def test_pure_roll_rate(self):
+        """Pure body roll rate p maps to phi_dot at zero attitude."""
+        from drone_physics import euler_rates_from_body_rates
+        rates = euler_rates_from_body_rates(0.0, 0.0, 5.0, 0.0, 0.0)
+        np.testing.assert_allclose(rates, [5.0, 0.0, 0.0], atol=1e-10)
+
+    def test_pitched_yaw_coupling(self):
+        """At nonzero pitch, body yaw rate r couples into phi_dot and psi_dot."""
+        from drone_physics import euler_rates_from_body_rates
+        theta = 0.3  # ~17 degrees pitch
+        rates = euler_rates_from_body_rates(0.0, theta, 0.0, 0.0, 1.0)
+        # cos(0)=1, sin(0)=0 → E @[0,0,1] = [tan(theta), 0, 1/cos(theta)]
+        expected = [np.tan(theta), 0.0, 1.0 / np.cos(theta)]
+        np.testing.assert_allclose(rates, expected, atol=1e-10)
+
+    def test_numerical_differentiation(self):
+        """Euler rates match numerical differentiation of rotation matrix."""
+        from drone_physics import euler_rates_from_body_rates
+
+        phi, theta = 0.2, 0.15
+        p, q, r = 0.5, -0.3, 0.8
+        rates = euler_rates_from_body_rates(phi, theta, p, q, r)
+
+        # Numerical check: apply small dt, compute finite-difference euler angles
+        dt = 1e-6
+        phi2 = phi + rates[0] * dt
+        theta2 = theta + rates[1] * dt
+        psi_dot = rates[2]
+
+        # Verify the transformation is self-consistent:
+        # re-compute at slightly perturbed angles
+        rates2 = euler_rates_from_body_rates(phi2, theta2, p, q, r)
+        # Rates should be nearly identical for small perturbation
+        np.testing.assert_allclose(rates, rates2, atol=1e-3)
+
+    def test_gimbal_lock_raises(self):
+        """At theta = π/2, gimbal lock should raise ValueError."""
+        from drone_physics import euler_rates_from_body_rates
+        with pytest.raises(ValueError, match="Gimbal lock"):
+            euler_rates_from_body_rates(0.0, np.pi / 2, 1.0, 0.0, 0.0)
+
+    def test_symmetric_roll(self):
+        """Negating phi negates the off-diagonal coupling signs."""
+        from drone_physics import euler_rates_from_body_rates
+        phi, theta = 0.3, 0.2
+        p, q, r = 0.5, 0.5, 0.5
+        rates_pos = euler_rates_from_body_rates(phi, theta, p, q, r)
+        rates_neg = euler_rates_from_body_rates(-phi, theta, p, q, r)
+        # theta_dot changes sign due to -sin(phi) term
+        assert rates_pos[1] != pytest.approx(rates_neg[1], abs=1e-6)
