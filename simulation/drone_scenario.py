@@ -32,6 +32,9 @@ from validation import (
     assert_validation_pass,
     summarize_validation,
     interpolate_to_common_times,
+    get_real_log_mission,
+    ensure_real_log_logs,
+    assert_real_log_validation_pass,
 )
 
 
@@ -212,7 +215,9 @@ def run_irs4_benchmark(profile_name: str):
 def replay_mission(log_source, airframe: DroneParams,
                     wind_source: str = "from_log",
                     dt: float = 0.005,
-                    output_plot: str = None) -> dict:
+                    output_plot: str = None,
+                    segment_start_s: float = 0.0,
+                    segment_end_s: float = None) -> dict:
     """Automated mission replay pipeline (Phase J2).
 
     Loads a flight log → extracts waypoints + wind profile →
@@ -226,6 +231,8 @@ def replay_mission(log_source, airframe: DroneParams,
                      "from_log_3d" (3D extraction), or "none".
         dt: Simulation timestep.
         output_plot: If set, save comparison plot to this path.
+        segment_start_s: Optional mission-window start time [s] from log start.
+        segment_end_s: Optional mission-window end time [s] from log start.
 
     Returns:
         Dict with rmse_z, rmse_x, rmse_y, rmse_total, median, n_points.
@@ -244,6 +251,25 @@ def replay_mission(log_source, airframe: DroneParams,
 
     if len(log.timestamps) < 10:
         raise ValueError("Flight log too short for replay (< 10 data points)")
+
+    if segment_end_s is not None:
+        rel_t = log.timestamps - log.timestamps[0]
+        mask = (rel_t >= segment_start_s) & (rel_t <= segment_end_s)
+        if int(np.sum(mask)) < 10:
+            raise ValueError(
+                f"Mission segment too short for replay (< 10 data points): "
+                f"[{segment_start_s}, {segment_end_s}]"
+            )
+        log = FlightLog(
+            timestamps=log.timestamps[mask],
+            positions=log.positions[mask],
+            attitudes=log.attitudes[mask] if len(log.attitudes) else log.attitudes,
+            airspeeds=log.airspeeds[mask] if len(log.airspeeds) else log.airspeeds,
+            throttle=log.throttle[mask] if len(log.throttle) else log.throttle,
+            origin_lat=log.origin_lat,
+            origin_lon=log.origin_lon,
+            origin_alt=log.origin_alt,
+        )
 
     # Extract waypoints from flight log
     waypoints = log.extract_waypoints()
@@ -306,6 +332,37 @@ def replay_mission(log_source, airframe: DroneParams,
                         output_plot, title="Mission Replay Validation")
 
     return metrics
+
+
+def run_real_log_validation(data_dir: str = "data/flight_logs",
+                            multiplier: float = 2.0):
+    """Run Phase V paper Table 5 validation with real OSSITLQUAD logs."""
+    from drone_physics import make_irs4_quadrotor
+
+    mission_names = ["quad_carolina_40", "quad_carolina_20", "quad_epn_30", "quad_epn_20"]
+    local_logs = ensure_real_log_logs(data_dir)
+    airframe = make_irs4_quadrotor()
+
+    print(f"Phase V: validating against real flight logs in '{data_dir}'")
+    results = {}
+    for mission_name in mission_names:
+        mission = get_real_log_mission(mission_name)
+        log_path = local_logs[mission.source_filename]
+        metrics = replay_mission(
+            log_path,
+            airframe,
+            segment_start_s=mission.segment_start_s,
+            segment_end_s=mission.segment_end_s,
+        )
+        assert_real_log_validation_pass(metrics, mission, multiplier=multiplier)
+        results[mission_name] = metrics
+        print(
+            f"  {mission_name}: rmse_z={metrics['rmse_z']:.4f}, "
+            f"rmse_x={metrics['rmse_x']:.4f}, rmse_y={metrics['rmse_y']:.4f}"
+        )
+
+    print("Phase V validation PASS")
+    return results
 
 
 def main():
@@ -557,6 +614,7 @@ def print_usage():
     print("  --single              Run single-drone flight scenario (default)")
     print("  --swarm [N]           Run N-drone swarm scenario (default: 6)")
     print("  --benchmark <name>    Run validation benchmark profile")
+    print("  --real-log            Run real-log validation against paper Table 5")
     print("  --swarm-benchmark <name>  Run swarm validation benchmark")
     print("  --replay <log> [airframe] [plot]  Replay flight log")
     print("  --export-terrain [dir]  Export Antisana SRTM terrain as STL")
@@ -567,6 +625,7 @@ def print_usage():
     print("  python drone_scenario.py --swarm")
     print("  python drone_scenario.py --swarm 10")
     print("  python drone_scenario.py --benchmark moderate")
+    print("  python drone_scenario.py --real-log")
     print("  python drone_scenario.py --benchmark irs4_carolina")
     print("  python drone_scenario.py --swarm-benchmark baseline")
     print("  python drone_scenario.py --replay flight.bin quad")
@@ -582,6 +641,8 @@ if __name__ == '__main__':
             run_irs4_benchmark(profile_name)
         else:
             run_benchmark(profile_name)
+    elif len(sys.argv) >= 2 and sys.argv[1] == "--real-log":
+        run_real_log_validation()
     elif len(sys.argv) >= 3 and sys.argv[1] == "--replay":
         from drone_physics import make_valencia_fixed_wing, make_irs4_quadrotor
         bin_path = sys.argv[2]

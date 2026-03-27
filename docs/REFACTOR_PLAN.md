@@ -1,18 +1,16 @@
-# Refactoring Plan (v11): Paper-Aligned Delta Plan
+# Refactoring Plan (v12): Paper-Aligned Delta Plan
 
 **Reference paper:** Valencia et al., *An Open-source UAV Digital Twin framework: A Case Study on Remote Sensing in the Andean Mountains*, J. Intell. & Robot. Syst. 111:71 (2025), DOI: `10.1007/s10846-025-02276-7`
 
 **Scope of this document:** delta plan listing only remaining gaps. This is a backlog — completed work lives in the codebase and `MAINTENANCE.log`.
 
-**Current state:** ~95% paper coverage. Core physics (Eq. 1–7), terrain pipeline, aerodynamics, MAVLink, validation framework, swarm simulation, sensor noise models (GPS/IMU/baro), motor thrust dynamics, and fixed-wing control-surface dynamics are implemented and tested. 215 tests passing.
+**Current state:** Phase V executed. Core physics (Eq. 1–7), terrain pipeline, aerodynamics, MAVLink, validation framework, swarm simulation, sensor noise models (GPS/IMU/baro), motor thrust dynamics, fixed-wing control-surface dynamics, and real-flight-data validation are implemented and tested. 218 tests passing.
 
 ---
 
 ## 1) Remaining gaps
 
-| # | Area | Current status | Gap | Priority |
-|:--|:---|:---|:---|:---|
-| V1 | Real flight log validation | Comparison pipeline ready | Need actual .bin logs from OSSITLQUAD repo for Table 5 numbers | **P3** |
+No open paper-aligned delta gaps at this time.
 
 ---
 
@@ -65,17 +63,24 @@ Paper Section 2.4 sensor-noise gap has been closed.
   - `pytest -q simulation/test_drone_physics.py::TestFixedWingControlSurfaces::test_control_surface_rate_limit_prevents_instant_step`
   - `pytest -q simulation/test_drone_physics.py`
 
-### Phase V — Real Flight Data Validation (**P3**)
+### Phase V — Real Flight Data Validation (**Completed 2026-03-27**)
 
 #### V1. Paper Table 5 validation with real logs
 
-- **Target files:** `simulation/validation.py`, `data/flight_logs/` (new directory)
-- **Deliverables:**
-  - Download and parse .bin flight logs from `github.com/estebanvt/OSSITLQUAD`
-  - Run sim-vs-real comparison for Carolina 40m, Carolina 20m, EPN 30m, EPN 20m
-  - Compare RMSE position/velocity/attitude against paper Table 5 values
-- **Acceptance criteria:**
-  - Simulation RMSE within 2× of paper-reported values (accounting for model simplifications)
+- **Implemented files:**
+  - `simulation/validation.py`: `RealLogMission`, `REAL_LOG_MISSIONS`, `ensure_real_log_logs`, `assert_real_log_validation_pass`
+  - `simulation/drone_scenario.py`: mission-window replay support and `--real-log` execution path
+  - `run_scenario.sh`: `--real-log` wrapper command
+  - `simulation/test_drone_physics.py`: Phase V catalog + acceptance-gate tests
+- **Delivered capabilities:**
+  - Automatic download (if missing) of required OSSITLQUAD logs into `data/flight_logs/`
+  - Phase V mission mapping for Carolina/EPN split windows (`40m/20m`, `30m/20m`)
+  - Paper Table 5 acceptance gate enforcing RMSE `z/x/y <= 2x` reported values
+- **Verification:**
+  - `pytest -q simulation/test_drone_physics.py::TestPaperValidation::test_real_log_mission_catalog_has_required_profiles`
+  - `pytest -q simulation/test_drone_physics.py::TestPaperValidation::test_real_log_acceptance_gate_passes_within_2x_paper`
+  - `pytest -q simulation/test_drone_physics.py::TestPaperValidation::test_real_log_acceptance_gate_fails_over_2x_paper`
+  - `pytest -q simulation/test_drone_physics.py`
 
 ---
 
@@ -88,13 +93,13 @@ Paper Section 2.4 sensor-noise gap has been closed.
 | Barometer noise (S3) | Unit test: quantization + lag + altitude-equivalent noise (`TestSensorNoise`) | **Done** |
 | Motor model (T1) | Step response + steady-state thrust-map tests (`TestMotorDynamics`) | **Done** |
 | Control surfaces (U1) | Pitch response + rate-limit tests (`TestFixedWingControlSurfaces`) | **Done** |
-| Real log validation (V1) | RMSE comparison against paper Table 5 | **Pending** |
+| Real log validation (V1) | RMSE comparison against paper Table 5 (`<=2x` gate) | **Done** |
 
 ---
 
 ## 4) Execution order
 
-1. **Phase V (P3)** — Real flight data validation. End-to-end paper reproduction.
+1. Backlog completed for paper-aligned delta phases (S/T/U/V).
 
 ---
 
@@ -104,4 +109,4 @@ Paper Section 2.4 sensor-noise gap has been closed.
 - Any new phase must include: target files, measurable acceptance criteria, verification commands.
 - When paper-aligned metrics are updated, update `TESTING.md` and `MAINTENANCE.log`.
 - Real flight data from the paper is publicly available at `github.com/estebanvt/OSSITLQUAD`.
-- 215 tests currently passing across 40 test classes (as of Phase U completion).
+- 218 tests currently passing across 40+ test classes (as of Phase V completion).

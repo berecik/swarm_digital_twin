@@ -14,6 +14,7 @@
 #   ./run_scenario.sh --viz-only   # open visualization (using existing single-drone data)
 #   ./run_scenario.sh --test       # run physics tests
 #   ./run_scenario.sh --benchmark  # run deterministic benchmark validation gates
+#   ./run_scenario.sh --real-log   # run real-log validation against paper Table 5
 #   ./run_scenario.sh --all        # run tests, benchmark, scenario, and visualization
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -110,6 +111,12 @@ run_benchmark() {
     ok "Deterministic benchmark validation passed"
 }
 
+run_real_log() {
+    info "Running real-log validation (paper Table 5)..."
+    python "$SIM_DIR/drone_scenario.py" --real-log
+    ok "Real-log validation passed"
+}
+
 run_ci_local() {
     info "Running local CI/CD pipeline equivalent (.github/workflows/ci.yml)..."
 
@@ -191,6 +198,7 @@ case "$MODE" in
         RUN_TESTS=1 ensure_venv
         run_tests
         run_benchmark
+        run_real_log
         run_single_scenario
         run_single_viz
         ;;
@@ -198,8 +206,12 @@ case "$MODE" in
         ensure_venv
         run_benchmark
         ;;
+    --real-log)
+        ensure_venv
+        run_real_log
+        ;;
     --help|-h)
-        echo "Usage: $0 [--single|--swarm [N]|--sim-only|--viz-only|--test|--benchmark|--ci-local|--all|--help]"
+        echo "Usage: $0 [--single|--swarm [N]|--sim-only|--viz-only|--test|--benchmark|--real-log|--ci-local|--all|--help]"
         echo ""
         echo "  (default)    Run single-drone scenario then open 3D visualization"
         echo "  --single     Run single-drone scenario then open 3D visualization"
@@ -208,6 +220,7 @@ case "$MODE" in
         echo "  --viz-only   Open visualization (uses existing single-drone data)"
         echo "  --test       Run physics tests"
         echo "  --benchmark  Run deterministic benchmark validation gates"
+        echo "  --real-log   Run real-log validation against paper Table 5"
         echo "  --ci-local   Run local CI/CD-equivalent pipeline (tests + all CI benchmarks)"
         echo "  --all        Run tests, benchmark, then swarm scenario and visualization"
         echo "  --help       Show this help"

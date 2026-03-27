@@ -29,6 +29,8 @@ from validation import (
     ValidationEnvelope,
     assert_validation_pass,
     get_benchmark_profile,
+    get_real_log_mission,
+    assert_real_log_validation_pass,
     compute_rmse,
     compare_sim_real,
 )
@@ -2482,6 +2484,38 @@ class TestPaperValidation:
                 assert vals["rmse_z"] <= 2.1, f"{name} Z-RMSE too high"
             else:
                 assert vals["rmse_z"] <= 0.11, f"{name} Z-RMSE too high"
+
+    def test_real_log_mission_catalog_has_required_profiles(self):
+        expected = {
+            "quad_carolina_40",
+            "quad_carolina_20",
+            "quad_epn_30",
+            "quad_epn_20",
+        }
+        for name in expected:
+            mission = get_real_log_mission(name)
+            assert mission.name == name
+            assert mission.source_filename.endswith(".bin")
+            assert mission.segment_end_s > mission.segment_start_s
+
+    def test_real_log_acceptance_gate_passes_within_2x_paper(self):
+        mission = get_real_log_mission("quad_epn_20")
+        metrics = {
+            "rmse_z": mission.paper_rmse_z * 1.9,
+            "rmse_x": mission.paper_rmse_x * 1.7,
+            "rmse_y": mission.paper_rmse_y * 1.5,
+        }
+        assert_real_log_validation_pass(metrics, mission, multiplier=2.0)
+
+    def test_real_log_acceptance_gate_fails_over_2x_paper(self):
+        mission = get_real_log_mission("quad_carolina_40")
+        metrics = {
+            "rmse_z": mission.paper_rmse_z * 2.1,
+            "rmse_x": mission.paper_rmse_x,
+            "rmse_y": mission.paper_rmse_y,
+        }
+        with pytest.raises(AssertionError):
+            assert_real_log_validation_pass(metrics, mission, multiplier=2.0)
 
 
 # ── Phase R: Simulation Bridge Tests ─────────────────────────────────────

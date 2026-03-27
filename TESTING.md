@@ -9,7 +9,7 @@ This document tracks the high-level testing status and provides detailed explana
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM + Transport + Timing Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (215) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates |
+| **Drone Physics** (Python) | ✅ Pass (218) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + Phase V real-log gate) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -75,6 +75,12 @@ The following tests verify the AI-driven human detection and 3D localization log
 ### 4. `simulation` — Drone Physics Engine (`test_drone_physics.py`)
 
 Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py`
+
+#### A1. Phase V Real Flight Data Validation
+- **`./run_scenario.sh --real-log`** / **`python simulation/drone_scenario.py --real-log`**:
+    - **Purpose**: Reproduce paper-aligned Table 5 validation against real OSSITLQUAD flight logs for Carolina/EPN mission windows.
+    - **Input**: `Carolina_quad_40m_plus_20m.bin` and `EPN_quad_30m_plus_20m.bin` (auto-downloaded to `data/flight_logs/` if missing), mission profiles `quad_carolina_40`, `quad_carolina_20`, `quad_epn_30`, `quad_epn_20`.
+    - **Expected Outcome**: Each mission passes RMSE gate `rmse_z/x/y <= 2x` paper-reported Table 5 values.
 
 #### A0. Phase A Reproducible Validation Baseline
 - **`./run_scenario.sh --benchmark`**:

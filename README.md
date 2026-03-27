@@ -95,7 +95,8 @@ No Docker, no ROS 2 — just Python 3 and a terminal:
 ./run_scenario.sh --viz-only   # open visualization with existing data
 ./run_scenario.sh --all        # tests → scenario → visualization
 ./run_scenario.sh --ci-local   # run local CI/CD-equivalent pipeline (tests + all CI benchmarks)
-./run_scenario.sh --phase-a    # tests + deterministic benchmark validation gates
+./run_scenario.sh --benchmark  # deterministic benchmark validation gates
+./run_scenario.sh --real-log   # real-log validation against paper Table 5 (auto-downloads logs)
 ```
 
 The scenario flies a drone through 7 waypoints over rolling-hill terrain with quadratic aerodynamic drag, ISA atmosphere, constant wind, body-frame dynamics, and terrain collision. The 3D visualization renders the terrain surface, wind direction, drone attitude, AGL tracking, and flight telemetry panels.
@@ -142,6 +143,9 @@ The scenario flies a drone through 7 waypoints over rolling-hill terrain with qu
 
 # Local CI/CD-equivalent gate (same sequence as .github/workflows/ci.yml)
 ./run_scenario.sh --ci-local
+
+# Real-flight-data validation gate
+./run_scenario.sh --real-log
 
 # Rust swarm control (requires ROS 2 environment)
 cd swarm_control

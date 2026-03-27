@@ -62,6 +62,14 @@ Standalone physics engine tests for rigid-body quadrotor dynamics.
 | MAVLink telemetry | Open QGroundControl on UDP `14550` | Continuous `HEARTBEAT`, `ATTITUDE`, `GLOBAL_POSITION_INT`, `VFR_HUD`, `SYS_STATUS`. |
 | Replay proof | Upload and execute a mission in QGC | Replay completes and `.tlog` is saved without link dropouts. |
 
+### 7. Real-Log Validation (Paper Table 5)
+
+| Check | Command / Action | Expected Outcome |
+| :--- | :--- | :--- |
+| Real-log end-to-end gate | `./run_scenario.sh --real-log` | Required OSSITLQUAD logs are present (auto-downloaded if missing) and all mission profiles (`quad_carolina_40`, `quad_carolina_20`, `quad_epn_30`, `quad_epn_20`) pass `rmse_z/x/y <= 2x` paper Table 5 values. |
+| Profile catalog sanity | `cd simulation && pytest -q test_drone_physics.py::TestPaperValidation::test_real_log_mission_catalog_has_required_profiles` | Mission catalog includes all four required paper-aligned quadrotor windows and valid source/segment metadata. |
+| Acceptance gate behavior | `cd simulation && pytest -q test_drone_physics.py::TestPaperValidation::test_real_log_acceptance_gate_passes_within_2x_paper test_drone_physics.py::TestPaperValidation::test_real_log_acceptance_gate_fails_over_2x_paper` | Gate accepts metrics within `2x` envelope and rejects metrics above envelope. |
+
 ### 6. Phase C Swarm-Ready Standalone Twin Verification
 
 | Check | Command / Action | Expected Outcome |
@@ -86,6 +94,9 @@ Standalone physics engine tests for rigid-body quadrotor dynamics.
 # Phase A deterministic benchmark baseline (validation gates)
 ./run_scenario.sh --benchmark
 
+# Phase V real-flight-data validation
+./run_scenario.sh --real-log
+
 # Swarm Control (Rust)
 cd swarm_control && cargo test
 
@@ -109,12 +120,12 @@ Agents receiving the "do tests" or "do maintenance" commands must:
 
 ---
 
-## 📈 Verification Status (Last Update: 2026-03-25)
+## 📈 Verification Status (Last Update: 2026-03-27)
 
 | Module | Unit Tests | Integration | SITL |
 | :--- | :---: | :---: | :---: |
 | Swarm Control | ✅ 17 Pass | ⏳ Pending | ✅ Pass |
 | Perception | ✅ 13 Pass | ⏳ Pending | ✅ Pass |
 | Heavy Lift | ✅ 1 Pass | ⏳ Pending | ⏳ Pending |
-| Physics Engine | ✅ 73 Pass | ✅ 1 Pass | N/A |
-| **Total** | **104 Pass** | **1 Pass** | **Green** |
+| Physics Engine | ✅ 218 Pass | ✅ Pass | N/A |
+| **Total** | **249+ Pass** | **Green** | **Green** |
