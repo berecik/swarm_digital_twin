@@ -22,7 +22,7 @@ from drone_physics import (
     DroneParams, AeroCoefficients, Atmosphere, run_simulation,
 )
 from wind_model import WindField
-from terrain import TerrainMap
+from terrain import TerrainMap, download_satellite_tile
 from flight_log import FlightLog
 from validation import (
     compute_rmse,
@@ -587,24 +587,31 @@ def run_swarm(n_drones: int = 6):
 
 
 def export_antisana_terrain(output_dir: str = None):
-    """Export SRTM terrain mesh for Antisana as STL (paper Section 2.1 pipeline).
+    """Export SRTM terrain mesh for Antisana with satellite texture for Gazebo.
 
-    Generates the Gazebo-ready terrain mesh from SRTM elevation data.
+    Generates Gazebo-ready OBJ/MTL + optional satellite texture with
+    deterministic offline fallback.
     """
     if output_dir is None:
         output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                    '..', 'gazebo', 'models', 'antisana_terrain')
     os.makedirs(output_dir, exist_ok=True)
 
-    print("Generating Antisana terrain mesh from SRTM data...")
+    print("Generating Antisana terrain mesh + satellite texture from SRTM data...")
     terrain = TerrainMap.from_srtm(-0.508333, -78.141667, size_km=5.0, resolution=30.0)
+    texture_path = download_satellite_tile(-0.508333, -78.141667, output_dir)
+    assets = terrain.export_gazebo_terrain_assets(output_dir, texture_path=texture_path)
     stl_path = os.path.join(output_dir, 'mesh.stl')
     terrain.export_stl(stl_path)
+    print(f"  Terrain OBJ saved to {assets['obj_path']}")
+    print(f"  Terrain MTL saved to {assets['mtl_path']}")
+    print(f"  Terrain material: {assets['material_name']}")
+    print(f"  Terrain texture: {texture_path}")
     print(f"  Terrain STL saved to {stl_path}")
     print(f"  Grid shape: {terrain.elevations.shape}")
     print(f"  Elevation range: [{terrain.elevations.min():.0f}, {terrain.elevations.max():.0f}] m")
     print(f"  Resolution: {terrain.resolution} m/cell")
-    return stl_path
+    return assets['obj_path']
 
 
 def print_usage():

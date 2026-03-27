@@ -3144,6 +3144,7 @@ class TestTerrainSatelliteTexture:
 
     def test_world_and_material_include_satellite_reference(self):
         import os
+        import xml.etree.ElementTree as ET
         material_path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
                                      'media', 'materials', 'scripts',
                                      'antisana_terrain.material')
@@ -3154,6 +3155,32 @@ class TestTerrainSatelliteTexture:
         assert 'AntisanaTerrain/SatelliteTextured' in material
         assert 'antisana_satellite.ppm' in material
         assert 'AntisanaTerrain/SatelliteTextured' in world
+
+        world_xml = ET.parse(world_path).getroot()
+        world_node = world_xml.find('world')
+        model_names = [m.get('name') for m in world_node.findall('model')]
+        assert 'antisana_terrain' in model_names
+        assert 'ground_plane' not in model_names
+
+
+class TestGazeboSensorVisibility:
+    """Checks that simulation model exposes visible sensors."""
+
+    def test_x500_has_visible_sensors(self):
+        import os
+        import xml.etree.ElementTree as ET
+
+        model_path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                                  'models', 'x500', 'model.sdf')
+        root = ET.parse(model_path).getroot()
+        sensors = root.findall('.//model[@name="x500"]/link[@name="base_link"]/sensor')
+        sensor_names = {s.get('name') for s in sensors}
+
+        assert {'imu_sensor', 'gps_sensor', 'barometer_sensor', 'magnetometer_sensor', 'front_camera'} <= sensor_names
+        for sensor in sensors:
+            vis = sensor.find('visualize')
+            assert vis is not None
+            assert vis.text == 'true'
 
 
 # ── Phase M1: Position-Aware Wind ────────────────────────────────────────────

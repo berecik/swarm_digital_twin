@@ -1,0 +1,5 @@
+newmtl AntisanaTerrain/SatelliteTextured
+Ka 1.0 1.0 1.0
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd sat_-0.5083_-78.1417_1024.ppm

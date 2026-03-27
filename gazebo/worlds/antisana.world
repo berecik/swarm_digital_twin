@@ -42,7 +42,8 @@
       <direction>-0.3 0.2 -0.9</direction>
     </light>
 
-    <!-- Ground plane (placeholder for SRTM terrain mesh) -->
+    <!-- Ground plane (fallback only; keep disabled when terrain mesh is active) -->
+    <!--
     <model name="ground_plane">
       <static>true</static>
       <link name="link">
@@ -73,6 +74,7 @@
         </visual>
       </link>
     </model>
+    -->
 
     <!--
       To use SRTM terrain mesh:
@@ -83,7 +85,6 @@
          (fallback: `AntisanaTerrain/HeightColored`)
     -->
 
-    <!--
     <model name="antisana_terrain">
       <static>true</static>
       <link name="terrain_link">
@@ -101,7 +102,6 @@
         </visual>
       </link>
     </model>
-    -->
 
   </world>
 </sdf>
