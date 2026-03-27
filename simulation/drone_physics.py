@@ -80,6 +80,14 @@ class FixedWingAero(AeroCoefficients):
     C_Ma: float = -0.2040            # pitching moment slope (pre-stall) [1/rad] (Table 3)
     C_Ma_stall: float = -0.1313      # pitching moment slope (post-stall) [1/rad] (Table 3)
     chord: float = 0.235             # mean aerodynamic chord [m] (Table 2)
+    wingspan: float = 2.20           # wingspan [m] (Table 2)
+    Cl_delta_a: float = 0.12         # roll moment effectiveness from aileron [1/rad]
+    Cm_delta_e: float = -0.50        # pitch moment effectiveness from elevator [1/rad]
+    Cn_delta_r: float = 0.10         # yaw moment effectiveness from rudder [1/rad]
+    elevator_max_deflection: float = 0.4363323129985824  # 25 deg [rad]
+    aileron_max_deflection: float = 0.3490658503988659   # 20 deg [rad]
+    rudder_max_deflection: float = 0.4363323129985824    # 25 deg [rad]
+    control_surface_rate_limit: float = 1.7453292519943295  # 100 deg/s [rad/s]
 
     def get_CL(self, alpha: float) -> float:
         """AoA-dependent lift coefficient with stall model."""
@@ -103,6 +111,48 @@ class FixedWingAero(AeroCoefficients):
             return self.C_Ma_stall * alpha
 
 
+@dataclass
+class MotorModel:
+    """First-order rotor dynamics and thrust mapping (paper Eq. 4-inspired)."""
+    k_T: float = 9.2e-6              # N / (rad/s)^2
+    k_D: float = 0.0                 # N / (rad/s)
+    tau_motor: float = 0.05          # s
+    num_motors: int = 4
+
+    def thrust_from_omega(self, omega: np.ndarray) -> np.ndarray:
+        omega_safe = np.maximum(np.asarray(omega, dtype=float), 0.0)
+        return self.k_T * omega_safe**2 + self.k_D * omega_safe
+
+    def omega_cmd_from_thrust_per_motor(self, thrust_per_motor: np.ndarray) -> np.ndarray:
+        thrust_safe = np.maximum(np.asarray(thrust_per_motor, dtype=float), 0.0)
+        if abs(self.k_T) < 1e-12:
+            if abs(self.k_D) < 1e-12:
+                return np.zeros_like(thrust_safe)
+            return thrust_safe / self.k_D
+
+        disc = np.maximum(self.k_D**2 + 4.0 * self.k_T * thrust_safe, 0.0)
+        return np.maximum((-self.k_D + np.sqrt(disc)) / (2.0 * self.k_T), 0.0)
+
+    def step(self, omega: np.ndarray, thrust_cmd_total: float, dt: float, max_thrust_total: float) -> Tuple[np.ndarray, float]:
+        n = max(int(self.num_motors), 1)
+        if omega.shape != (n,):
+            omega = np.zeros(n)
+
+        thrust_cmd_total = float(np.clip(thrust_cmd_total, 0.0, max_thrust_total))
+        thrust_cmd_per_motor = np.full(n, thrust_cmd_total / n)
+        omega_cmd = self.omega_cmd_from_thrust_per_motor(thrust_cmd_per_motor)
+
+        if self.tau_motor <= 1e-9:
+            omega_next = omega_cmd
+        else:
+            alpha = 1.0 - np.exp(-dt / self.tau_motor)
+            omega_next = omega + alpha * (omega_cmd - omega)
+
+        thrust_total = float(np.sum(self.thrust_from_omega(omega_next)))
+        thrust_total = float(np.clip(thrust_total, 0.0, max_thrust_total))
+        return omega_next, thrust_total
+
+
 # ── Data classes ─────────────────────────────────────────────────────────────
 
 @dataclass
@@ -116,6 +166,8 @@ class DroneParams:
     inertia: np.ndarray = field(
         default_factory=lambda: np.diag([0.02, 0.02, 0.04])  # kg·m²
     )
+    motor_model: Optional[MotorModel] = None
+    motor_dynamics_enabled: bool = False
     aero: Optional[AeroCoefficients] = None
     atmo: Optional[Atmosphere] = None
     _aero_ranges_checked: bool = field(default=False, repr=False, compare=False)
@@ -292,6 +344,13 @@ def make_irs4_quadrotor(altitude_msl: float = 2800.0) -> DroneParams:
             [0.0,    0.025,  0.0  ],    # Jy — pitch (symmetric X-frame)
             [0.0,    0.0,    0.042],    # Jz — yaw
         ]),
+        motor_model=MotorModel(
+            k_T=9.2e-6,                 # IRS-4 class propulsive map constant
+            k_D=0.0,
+            tau_motor=0.05,             # paper-aligned motor spin-up timescale
+            num_motors=4,
+        ),
+        motor_dynamics_enabled=False,   # keep legacy hover behavior unless explicitly enabled
         aero=AeroCoefficients(
             reference_area=0.05,         # frontal area (compact quad frame)
             C_D=1.0,                     # bluff-body drag
@@ -307,12 +366,17 @@ class DroneState:
     velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
     rotation: np.ndarray = field(default_factory=lambda: np.eye(3))     # body→world
     angular_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))  # body frame
+    motor_omega: Optional[np.ndarray] = None
+    control_surface_deflections: Optional[np.ndarray] = None  # [elevator, aileron, rudder] [rad]
 
 
 @dataclass
 class DroneCommand:
     thrust: float = 0.0              # N  (total, along body-Z up)
     torque: np.ndarray = field(default_factory=lambda: np.zeros(3))  # body [roll, pitch, yaw]
+    elevator: float = 0.0            # desired elevator deflection [rad]
+    aileron: float = 0.0             # desired aileron deflection [rad]
+    rudder: float = 0.0              # desired rudder deflection [rad]
 
 
 @dataclass
@@ -528,14 +592,41 @@ def physics_step(state: DroneState, cmd: DroneCommand,
 
     _warn_if_aero_params_out_of_range(params)
 
-    # Clamp commands
-    thrust = np.clip(cmd.thrust, 0.0, params.max_thrust)
+    # Clamp commands and optionally apply motor dynamics layer
+    thrust_cmd = float(np.clip(cmd.thrust, 0.0, params.max_thrust))
+    motor_omega_next = state.motor_omega
+    if params.motor_dynamics_enabled and params.motor_model is not None:
+        n = max(int(params.motor_model.num_motors), 1)
+        motor_omega = state.motor_omega if state.motor_omega is not None else np.zeros(n)
+        thrust_omega, thrust = params.motor_model.step(motor_omega, thrust_cmd, dt, params.max_thrust)
+        motor_omega_next = thrust_omega
+    else:
+        thrust = thrust_cmd
     torque = np.clip(cmd.torque, -params.max_torque, params.max_torque)
 
     R = state.rotation
     omega = state.angular_velocity
     aero = params.aero
     atmo = params.atmo
+
+    control_surface_next = state.control_surface_deflections
+    control_surface_current = np.zeros(3)
+    if aero is not None and isinstance(aero, FixedWingAero):
+        if state.control_surface_deflections is not None:
+            control_surface_current = np.asarray(state.control_surface_deflections, dtype=float)
+
+        cmd_surfaces = np.array([cmd.elevator, cmd.aileron, cmd.rudder], dtype=float)
+        max_surfaces = np.array(
+            [aero.elevator_max_deflection, aero.aileron_max_deflection, aero.rudder_max_deflection],
+            dtype=float,
+        )
+        cmd_surfaces = np.clip(cmd_surfaces, -max_surfaces, max_surfaces)
+        max_step = max(float(aero.control_surface_rate_limit), 0.0) * dt
+        control_surface_next = control_surface_current + np.clip(
+            cmd_surfaces - control_surface_current,
+            -max_step,
+            max_step,
+        )
 
     if aero is not None:
         # ── Body-frame dynamics (paper Eq. 3) ─────────────────────────────
@@ -608,8 +699,15 @@ def physics_step(state: DroneState, cmd: DroneCommand,
         if V_mag > 1e-6:
             aoa = compute_aoa(V_body_m)
             q_dyn = 0.5 * rho_m * V_mag**2
-            M_pitch = q_dyn * aero.reference_area * aero.chord * aero.get_CM(aoa)
-            aero_torque[1] = M_pitch  # pitch axis is body Y
+            delta_e, delta_a, delta_r = control_surface_next
+
+            coeff_roll = aero.Cl_delta_a * delta_a
+            coeff_pitch = aero.get_CM(aoa) + aero.Cm_delta_e * delta_e
+            coeff_yaw = aero.Cn_delta_r * delta_r
+
+            aero_torque[0] = q_dyn * aero.reference_area * aero.wingspan * coeff_roll
+            aero_torque[1] = q_dyn * aero.reference_area * aero.chord * coeff_pitch
+            aero_torque[2] = q_dyn * aero.reference_area * aero.wingspan * coeff_yaw
 
     # Euler's rotation equation: I·alpha = torque - omega x (I·omega) - drag + aero_moment
     alpha = I_inv @ (torque + aero_torque - np.cross(omega, I @ omega) + ang_drag)
@@ -628,6 +726,8 @@ def physics_step(state: DroneState, cmd: DroneCommand,
         velocity=new_vel,
         rotation=new_R,
         angular_velocity=new_omega,
+        motor_omega=motor_omega_next,
+        control_surface_deflections=control_surface_next,
     )
 
 

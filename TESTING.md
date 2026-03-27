@@ -9,7 +9,7 @@ This document tracks the high-level testing status and provides detailed explana
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM + Transport + Timing Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (207) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + Phase A-N + L/M validation gates |
+| **Drone Physics** (Python) | ✅ Pass (215) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -176,6 +176,10 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_fixed_wing_preset`**: `make_fixed_wing()` returns FixedWingAero with correct parameters.
 - **`test_fixed_wing_generates_lift_in_flight`**: Forward flight with descent generates upward lift.
 - **`test_quadratic_drag_uses_aoa_dependent_cd`**: Drag uses `get_CD(alpha)` — higher AoA → more drag.
+
+#### P2. Fixed-Wing Control Surfaces (Phase U)
+- **`test_elevator_pitch_response_matches_control_effectiveness`**: Elevator deflection produces pitch response consistent with the configured control-effectiveness model within 10% tolerance.
+- **`test_control_surface_rate_limit_prevents_instant_step`**: Elevator/aileron/rudder deflections are rate-limited and cannot jump instantaneously in one physics step.
 
 #### Q. MAVLink Bridge (Phase 3)
 - **`test_crc_computation`**: MAVLink X.25 CRC is consistent and in range [0, 0xFFFF].
@@ -353,6 +357,11 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_numerical_differentiation`**: Euler rates self-consistent under small perturbation.
 - **`test_gimbal_lock_raises`**: ValueError at theta=π/2 (cos(theta)≈0).
 - **`test_symmetric_roll`**: Negating phi changes coupling sign on theta_dot.
+
+#### AO. Sensor Noise Models (Phase S)
+- **`test_gps_noise_quantization_and_statistics`**: GPS output quantized to 1e-7 deg; horizontal CEP < 3.5m; altitude σ < 6m.
+- **`test_imu_noise_density_matches_order_of_magnitude`**: Accelerometer/gyro white noise σ matches configured density within 20%.
+- **`test_baro_noise_quantization_and_lag`**: Barometer output quantized to 0.12 hPa; first-order lag visible on step input; sea-level altitude noise σ ≤ 1m.
 
 #### R. Swarm Standalone Twin (Phase C)
 - **`test_flocking_vector_returns_zero_without_neighbors`**: Empty neighbor list returns zero steering vector (stable no-neighbor behavior).

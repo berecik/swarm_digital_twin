@@ -17,7 +17,7 @@ from drone_physics import (
     run_simulation, GRAVITY,
     AeroCoefficients, Atmosphere, _compute_quadratic_drag,
     _compute_lift, compute_aoa,
-    FixedWingAero, make_generic_quad, make_holybro_x500, make_fixed_wing,
+    FixedWingAero, MotorModel, make_generic_quad, make_holybro_x500, make_fixed_wing,
     make_valencia_fixed_wing, make_irs4_quadrotor,
     run_swarm_simulation, calculate_flocking_vector, FlockingParams,
 )
@@ -35,6 +35,7 @@ from validation import (
 from drone_scenario import run_benchmark, run_irs4_benchmark, replay_mission
 from flight_log import FlightLog
 from swarm_scenario import run_swarm_benchmark, SWARM_BENCHMARK_PROFILES, get_swarm_benchmark_profile
+from sensor_models import GPSNoise, IMUNoise, BaroNoise
 
 
 # ── Rotation helpers ─────────────────────────────────────────────────────────
@@ -417,6 +418,149 @@ class TestWind:
         # At t=7.5 (interpolated), wind speed = 7.5 m/s
         v75 = wind.get_wind_velocity(7.5, np.zeros(3))
         np.testing.assert_allclose(np.linalg.norm(v75), 7.5, atol=1e-8)
+
+
+# ── Phase S: Sensor noise models ────────────────────────────────────────────
+
+class TestSensorNoise:
+    def test_gps_noise_quantization_and_statistics(self):
+        gps = GPSNoise(rng_seed=42)
+
+        lat0, lon0, alt0 = -0.189, -78.488, 2800.0
+        samples = np.array([gps.apply(lat0, lon0, alt0, dt=0.1) for _ in range(4000)])
+        lat = samples[:, 0]
+        lon = samples[:, 1]
+        alt = samples[:, 2]
+
+        # 1e-7 degree quantization for geodetic coordinates
+        lat_steps = (lat - lat0) / gps.quantization_deg
+        lon_steps = (lon - lon0) / gps.quantization_deg
+        np.testing.assert_allclose(lat_steps, np.round(lat_steps), atol=1e-7)
+        np.testing.assert_allclose(lon_steps, np.round(lon_steps), atol=1e-7)
+
+        meters_per_deg_lat = np.pi * 6378137.0 / 180.0
+        meters_per_deg_lon = meters_per_deg_lat * np.cos(np.deg2rad(lat0))
+        horizontal_err_m = np.sqrt(
+            ((lat - lat0) * meters_per_deg_lat) ** 2
+            + ((lon - lon0) * meters_per_deg_lon) ** 2
+        )
+
+        # CEP(50) target around 2.5m class and altitude spread around ±5m class
+        assert np.percentile(horizontal_err_m, 50) < 3.5
+        assert np.std(alt - alt0) < 6.0
+
+    def test_imu_noise_density_matches_order_of_magnitude(self):
+        imu = IMUNoise(
+            accel_bias_rw_mps2_per_sqrt_s=0.0,
+            gyro_bias_rw_radps_per_sqrt_s=0.0,
+            rng_seed=7,
+        )
+        dt = 0.01
+        true_accel = np.zeros(3)
+        true_gyro = np.zeros(3)
+
+        accel_samples = np.array([imu.apply_accel(true_accel, dt=dt) for _ in range(8000)])
+        gyro_samples = np.array([imu.apply_gyro(true_gyro, dt=dt) for _ in range(8000)])
+
+        accel_sigma = np.mean(np.std(accel_samples, axis=0))
+        gyro_sigma = np.mean(np.std(gyro_samples, axis=0))
+
+        expected_accel_sigma = (imu.accel_noise_density_ug * 1e-6 * 9.80665) / np.sqrt(dt)
+        expected_gyro_sigma = np.deg2rad(imu.gyro_noise_density_dps) / np.sqrt(dt)
+
+        np.testing.assert_allclose(accel_sigma, expected_accel_sigma, rtol=0.2)
+        np.testing.assert_allclose(gyro_sigma, expected_gyro_sigma, rtol=0.2)
+
+    def test_baro_noise_quantization_and_lag(self):
+        baro = BaroNoise(rng_seed=5, white_sigma_hpa=0.0, drift_hpa_per_hour=0.0)
+        dt = 0.02
+
+        out_pre = np.array([baro.apply(1013.25, dt=dt) for _ in range(50)])
+        out_post = np.array([baro.apply(1001.00, dt=dt) for _ in range(50)])
+
+        # Quantization: output steps are multiples of configured hPa increment
+        combined = np.concatenate([out_pre, out_post])
+        q_steps = combined / baro.quantization_hpa
+        np.testing.assert_allclose(q_steps, np.round(q_steps), atol=1e-8)
+
+        # Lag: first sample after step should not instantly match steady-state target
+        steady_target = round(1001.00 / baro.quantization_hpa) * baro.quantization_hpa
+        assert abs(out_post[0] - steady_target) > 0.5
+
+        # Equivalent altitude noise at sea-level pressure stays within ±1m class
+        baro_noise = BaroNoise(rng_seed=11)
+        sea_level = np.array([baro_noise.apply(1013.25, dt=dt) for _ in range(2000)])
+        altitude_equiv_m = (1013.25 - sea_level) * 8.3  # near sea-level linearized conversion
+        assert np.std(altitude_equiv_m) <= 1.0
+
+
+# ── Phase T: Motor dynamics ──────────────────────────────────────────────────
+
+class TestMotorDynamics:
+    def test_motor_step_response_reaches_63pct_near_tau(self):
+        tau = 0.05
+        model = MotorModel(k_T=9.2e-6, k_D=0.0, tau_motor=tau, num_motors=4)
+        params = DroneParams(
+            mass=1.8,
+            max_thrust=35.0,
+            motor_model=model,
+            motor_dynamics_enabled=True,
+            drag_coeff=0.0,
+            ang_drag_coeff=0.0,
+            aero=AeroCoefficients(reference_area=0.05, C_D=1.0, C_L=0.0),
+        )
+        cmd = DroneCommand(thrust=24.0, torque=np.zeros(3))
+        dt = 0.001
+
+        state = DroneState(position=np.array([0.0, 0.0, 10.0]))
+        thrust_samples = []
+        for _ in range(300):
+            state = physics_step(state, cmd, params, dt=dt)
+            thrust_samples.append(float(np.sum(model.thrust_from_omega(state.motor_omega))))
+
+        steady = np.mean(thrust_samples[-50:])
+        target_63 = 0.632 * steady
+        idx = int(np.argmax(np.array(thrust_samples) >= target_63))
+        t63 = idx * dt
+        assert 0.03 <= t63 <= 0.08
+
+    def test_motor_steady_state_matches_kt_omega_squared(self):
+        model = MotorModel(k_T=9.2e-6, k_D=0.0, tau_motor=0.05, num_motors=4)
+        params = DroneParams(
+            mass=1.8,
+            max_thrust=35.0,
+            motor_model=model,
+            motor_dynamics_enabled=True,
+            drag_coeff=0.0,
+            ang_drag_coeff=0.0,
+            aero=AeroCoefficients(reference_area=0.05, C_D=1.0, C_L=0.0),
+        )
+        cmd = DroneCommand(thrust=20.0, torque=np.zeros(3))
+        dt = 0.005
+
+        state = DroneState(position=np.array([0.0, 0.0, 10.0]))
+        for _ in range(500):
+            state = physics_step(state, cmd, params, dt=dt)
+
+        omega = state.motor_omega
+        thrust_from_map = np.sum(model.k_T * omega**2)
+        assert thrust_from_map > 0.0
+        np.testing.assert_allclose(thrust_from_map, cmd.thrust, rtol=0.05)
+
+    def test_default_physics_step_without_motor_model_stays_backward_compatible(self):
+        params = DroneParams(drag_coeff=0.0)
+        state = DroneState(position=np.array([0.0, 0.0, 100.0]))
+        cmd = DroneCommand(thrust=0.0)
+
+        dt = 0.001
+        t_total = 1.0
+        for _ in range(int(t_total / dt)):
+            state = physics_step(state, cmd, params, dt)
+
+        expected_z = 100.0 - 0.5 * GRAVITY * t_total**2
+        expected_vz = -GRAVITY * t_total
+        np.testing.assert_allclose(state.position[2], expected_z, atol=0.05)
+        np.testing.assert_allclose(state.velocity[2], expected_vz, atol=0.05)
 
 
 # ── Phase 1: Inertia & Presets ──────────────────────────────────────────────
@@ -915,6 +1059,67 @@ class TestPitchingMoment:
         aero = AeroCoefficients()
         assert aero.get_CM(0.1) == 0.0
         assert aero.get_CM(0.5) == 0.0
+
+
+class TestFixedWingControlSurfaces:
+    def test_elevator_pitch_response_matches_control_effectiveness(self):
+        params = make_valencia_fixed_wing()
+        aero = params.aero
+        assert isinstance(aero, FixedWingAero)
+
+        state = DroneState(
+            position=np.array([0.0, 0.0, 120.0]),
+            velocity=np.array([14.0, 0.0, 0.0]),
+        )
+
+        delta_e_cmd = 0.10
+        cmd = DroneCommand(thrust=12.0, elevator=delta_e_cmd)
+        next_state = physics_step(state, cmd, params, dt=0.01)
+        assert next_state.control_surface_deflections is not None
+        delta_e = float(next_state.control_surface_deflections[0])
+
+        rho = params.atmo.rho if params.atmo is not None else 1.225
+        q_dyn = 0.5 * rho * np.linalg.norm(state.velocity) ** 2
+        expected_pitch_moment = (
+            q_dyn
+            * aero.reference_area
+            * aero.chord
+            * aero.Cm_delta_e
+            * delta_e
+        )
+        expected_qdot = expected_pitch_moment / params.inertia[1, 1]
+        expected_q = expected_qdot * 0.01
+
+        np.testing.assert_allclose(
+            next_state.angular_velocity[1],
+            expected_q,
+            rtol=0.10,
+            atol=1e-3,
+        )
+
+    def test_control_surface_rate_limit_prevents_instant_step(self):
+        params = make_valencia_fixed_wing()
+        aero = params.aero
+        assert isinstance(aero, FixedWingAero)
+
+        state = DroneState(
+            position=np.array([0.0, 0.0, 50.0]),
+            velocity=np.array([12.0, 0.0, 0.0]),
+        )
+        cmd = DroneCommand(
+            thrust=10.0,
+            elevator=1.0,
+            aileron=1.0,
+            rudder=1.0,
+        )
+        dt = 0.01
+
+        next_state = physics_step(state, cmd, params, dt=dt)
+        assert next_state.control_surface_deflections is not None
+
+        max_step = aero.control_surface_rate_limit * dt
+        for value in next_state.control_surface_deflections:
+            assert abs(value) <= max_step + 1e-12
 
 
 class TestValenciaPreset:
