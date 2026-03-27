@@ -9,7 +9,7 @@ This document tracks the high-level testing status and provides detailed explana
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM + Transport + Timing Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (221) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + Phase V real-log gate) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation |
+| **Drone Physics** (Python) | ✅ Pass (234) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + Phase V real-log gate + Phase W aero-area gate + Phase X battery/energy gate + Phase Y terrain satellite-texture gate + Phase Z wind auto-tuning gate) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation + quadrotor effective aero-area model + battery & energy model + satellite-texture terrain overlay + wind disturbance auto-tuning |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -87,6 +87,70 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
     - **Purpose**: Runs one-command deterministic benchmark validation gates for both single-drone and swarm profile sets.
     - **Input**: Single-drone canonical profiles (`moderate`, `strong_wind`, `crosswind`, `storm`) from `simulation/validation.py` and swarm profiles (`baseline`, `crosswind`, `gusty`) from `simulation/swarm_scenario.py`, all with fixed seeds.
     - **Expected Outcome**: All profiles pass configured envelopes; repeated runs on same commit produce equivalent metrics within configured tolerance.
+
+#### A2. Phase W Quadrotor Effective Aerodynamic Area
+- **`TestQuadrotorAeroArea::test_effective_area_increases_with_tilt`**:
+    - **Purpose**: Verifies effective drag area is attitude-dependent.
+    - **Input**: `QuadrotorAero` at 0° and 35° tilt with fixed thrust ratio.
+    - **Expected Outcome**: Effective area at 35° is greater than at level attitude.
+- **`TestQuadrotorAeroArea::test_effective_area_increases_with_prop_wash`**:
+    - **Purpose**: Verifies prop-wash influence on effective drag area.
+    - **Input**: Same tilt angle, thrust ratio sweep from 0.0 to 0.9.
+    - **Expected Outcome**: Effective area at high thrust is greater than at idle thrust.
+- **`TestQuadrotorAeroArea::test_drag_force_responds_to_tilt_and_prop_wash`**:
+    - **Purpose**: Verifies aerodynamic drag force reflects the new effective-area model.
+    - **Input**: Constant body velocity, varying tilt and thrust-ratio inputs to `_compute_quadratic_drag()`.
+    - **Expected Outcome**: Drag magnitude increases from level/low-thrust → tilted/low-thrust → tilted/high-thrust.
+- **`TestIRS4Preset::test_irs4_hover_stable`**:
+    - **Purpose**: Regression check that IRS-4 hover remains stable after Phase W changes.
+    - **Input**: `make_irs4_quadrotor()` simulation hover run.
+    - **Expected Outcome**: Hover vertical RMSE remains within configured threshold (`< 1.5 m`).
+
+#### A3. Phase Y Satellite Texture Terrain Overlay
+- **`TestTerrainSatelliteTexture::test_satellite_tile_download_has_offline_fallback`**:
+    - **Purpose**: Verifies satellite texture acquisition is available for SRTM region and deterministic offline fallback exists.
+    - **Input**: `download_satellite_tile(-0.508333, -78.141667, cache_dir, tile_size=64)`.
+    - **Expected Outcome**: Returns a valid `.ppm` texture path and creates tile asset in cache directory.
+- **`TestTerrainSatelliteTexture::test_export_obj_with_uv_contains_uv_and_faces`**:
+    - **Purpose**: Verifies UV-mapped mesh export path used for textured Gazebo terrain.
+    - **Input**: Small synthetic terrain grid + `export_obj_with_uv()` with a test texture.
+    - **Expected Outcome**: Exported OBJ contains `vt` UV coordinates and `f` faces; MTL includes diffuse texture binding (`map_Kd`).
+- **`TestTerrainSatelliteTexture::test_export_assets_fallbacks_to_height_material_without_texture`**:
+    - **Purpose**: Verifies fallback behavior when satellite tile is unavailable.
+    - **Input**: `export_gazebo_terrain_assets(..., texture_path=<missing>)`.
+    - **Expected Outcome**: Returned material is `AntisanaTerrain/HeightColored` and mesh assets are still generated.
+- **`TestTerrainSatelliteTexture::test_world_and_material_include_satellite_reference`**:
+    - **Purpose**: Verifies Gazebo world/material wiring for textured terrain rendering.
+    - **Input**: `gazebo/worlds/antisana.world` and `gazebo/media/materials/scripts/antisana_terrain.material`.
+    - **Expected Outcome**: Material defines `AntisanaTerrain/SatelliteTextured` with satellite diffuse texture; world includes the textured material reference.
+
+#### A4. Phase Z Wind Disturbance Auto-Tuning
+- **`TestWindAutoTuning::test_auto_tuning_converges_and_recovers_scale`**:
+    - **Purpose**: Verifies iterative wind-force scaling optimization converges and minimizes altitude RMSE.
+    - **Input**: Synthetic reference trajectory with known wind scale (`1.7`), deterministic simulation callback, convergence tolerance `0.01 m`.
+    - **Expected Outcome**: Auto-tuning converges, `best_rmse_z < 0.01 m`, and recovered scale is within `±0.05` of ground truth.
+- **`TestWindAutoTuning::test_auto_tuning_is_reproducible`**:
+    - **Purpose**: Verifies deterministic, reproducible per-mission calibration constants.
+    - **Input**: Identical reference signal and simulation callback evaluated in two consecutive runs.
+    - **Expected Outcome**: Both runs produce identical `best_scale`, `best_rmse_z`, and full optimization history.
+
+#### A5. Phase X Battery and Energy Model
+- **`TestBatteryModel::test_lipo_voltage_curve_is_soc_dependent`**:
+    - **Purpose**: Verifies Li-Po open-circuit voltage follows SoC (full > mid > empty) and known endpoint voltages.
+    - **Input**: `BatteryModel(cells=6)` evaluated at `SoC={1.0, 0.5, 0.0}`.
+    - **Expected Outcome**: Monotonic voltage decrease with discharge; full pack ≈ `25.2V`, empty pack ≈ `19.8V`.
+- **`TestBatteryModel::test_motor_power_draw_reduces_soc`**:
+    - **Purpose**: Verifies battery discharge is driven by motor mechanical power `P=τ·ω` through the physics loop.
+    - **Input**: IRS-4-like quad config with motor dynamics and battery model under sustained thrust command.
+    - **Expected Outcome**: Positive battery power/current, `SoC` decreases from 1.0, and finite remaining-time estimate is produced.
+- **`TestBatteryModel::test_fixed_wing_autonomy_estimate_matches_table2`**:
+    - **Purpose**: Verifies fixed-wing endurance estimate aligns with paper Table 2 mission autonomy target.
+    - **Input**: `make_valencia_fixed_wing()` battery model with representative cruise power (`152W`).
+    - **Expected Outcome**: Estimated endurance is approximately `85 min` (within configured tolerance).
+- **`TestMAVLink::test_sys_status_encode_decode_battery_fields`**:
+    - **Purpose**: Verifies MAVLink `SYS_STATUS` battery telemetry fields are correctly encoded/decoded.
+    - **Input**: `build_sys_status(voltage_mv=22200, current_ca=1234, battery_pct=76)`.
+    - **Expected Outcome**: Decoded fields preserve voltage/current/remaining battery values.
 
 #### A. Rotation Math
 - **`test_identity`**: `euler_to_rotation(0,0,0)` produces identity matrix.

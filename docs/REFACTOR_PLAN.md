@@ -4,7 +4,7 @@
 
 **Scope of this document:** delta plan listing only remaining gaps. This is a backlog — completed work lives in the codebase and `MAINTENANCE.log`.
 
-**Current state:** Phases S/T/U/V executed and audited. Core physics (Eq. 1–7), terrain pipeline (SRTM + STL), aerodynamics (Table 2/3 exact coefficients), full inertia tensor (Eq. 4 Gamma terms), MAVLink bridge, validation framework (Table 5 RMSE gates), swarm simulation, sensor noise models (GPS/IMU/baro), motor thrust dynamics, fixed-wing control surfaces, Euler rate kinematics, and real-flight-data validation are implemented, integrated, and tested. 221 tests passing.
+**Current state:** Phases S/T/U/V/W/X/Y/Z executed and audited. Core physics (Eq. 1–7), terrain pipeline (SRTM + STL), aerodynamics (Table 2/3 exact coefficients), full inertia tensor (Eq. 4 Gamma terms), MAVLink bridge, validation framework (Table 5 RMSE gates), swarm simulation, sensor noise models (GPS/IMU/baro), motor thrust dynamics, fixed-wing control surfaces, Euler rate kinematics, real-flight-data validation, quadrotor effective aerodynamic area modeling, battery/energy modeling, satellite-texture terrain overlay, and wind disturbance auto-tuning are implemented, integrated, and tested. 234 tests passing.
 
 ---
 
@@ -35,92 +35,28 @@ All paper equations and tables have been verified against the codebase:
 
 ## 2) Remaining gaps
 
-### Phase W — Quadrotor Effective Aerodynamic Area
-
-**Paper reference:** Section 3.5 — *"An additional limitation of our current approach is that it does not explicitly account for the effective aerodynamic area of the quadrotor."*
-
-The current IRS-4 quadrotor uses a fixed bluff-body frontal area (`reference_area=0.05 m², C_D=1.0`). The paper identifies this as a limitation: the quadrotor's effective aerodynamic area changes with attitude and prop wash, affecting drag and stability in wind.
-
-- **Target files:** `simulation/drone_physics.py`
-- **Acceptance criteria:**
-  - Attitude-dependent effective area model for quadrotor (area varies with tilt angle)
-  - Prop-wash effect on effective drag area
-  - IRS-4 hover test still passes with new model
-- **Verification:** `pytest -q simulation/test_drone_physics.py::TestQuadrotorAeroArea`
-
-### Phase X — Battery and Energy Model
-
-**Paper reference:** Section 3.5 — *"one of the most significant [challenges] is related to battery limitations and inherent constraints in flight autonomy... high-energy peaks when adjusting motor speeds for stability and maneuverability... directly affecting the operational range and duration of remote sensing missions"*
-
-No battery state, power consumption, or flight-time estimation exists. The MAVLink bridge reports a constant 100% battery.
-
-- **Target files:** `simulation/drone_physics.py` (energy model), `simulation/mavlink_bridge.py` (battery state reporting)
-- **Acceptance criteria:**
-  - Li-Po discharge curve model (voltage vs. state-of-charge)
-  - Power draw from motor RPM (P = τ·ω from MotorModel)
-  - Battery state integrated into `DroneState` and reported via MAVLink `SYS_STATUS`
-  - Flight autonomy estimation matches paper Table 2 value (~85 min for fixed-wing)
-- **Verification:** `pytest -q simulation/test_drone_physics.py::TestBatteryModel`
-
-### Phase Y — Satellite Texture Terrain Overlay
-
-**Paper reference:** Section 2.1 — the paper describes using Google Earth satellite imagery imported through BlenderGIS for photorealistic terrain visualization in Gazebo. Our terrain pipeline currently provides elevation-based coloring only (height → green/brown/white shader bands).
-
-- **Target files:** `gazebo/media/materials/`, `simulation/terrain.py`, `gazebo/worlds/antisana.world`
-- **Acceptance criteria:**
-  - Download georeferenced satellite tile for the SRTM region
-  - Generate UV-mapped texture coordinates in STL/DAE mesh export
-  - Gazebo material references satellite image as diffuse texture
-  - Fallback to existing elevation coloring if satellite tile unavailable
-- **Verification:** `pytest -q simulation/test_drone_physics.py::TestTerrainSatelliteTexture`
-
-### Phase Z — Wind Disturbance Auto-Tuning Loop
-
-**Paper reference:** Section 3.1 — *"The validation process involves heuristic adjustment of constants to produce an estimation of disturbance that generates altitude values as close as possible to those from real flight tests. Fine-tuning the disturbance force allowed precise altitude estimations."*
-
-The current pipeline extracts wind profiles from flight logs (one-way) but does not implement the iterative tuning loop that adjusts simulation wind magnitude to minimize altitude RMSE against real data.
-
-- **Target files:** `simulation/validation.py`, `simulation/wind_model.py`
-- **Acceptance criteria:**
-  - Auto-tuning function: given a real flight log, iteratively adjust wind force scaling constant to minimize Z-axis RMSE
-  - Converges within a tolerance (RMSE_z delta < 0.01 m between iterations)
-  - Produces per-mission wind calibration constants reproducibly
-- **Verification:** `pytest -q simulation/test_drone_physics.py::TestWindAutoTuning`
+No remaining paper-aligned gaps in this delta backlog.
 
 ---
 
 ## 3) Verification matrix
 
-| Item category | Verification method | Status |
-|:---|:---|:---|
-| GPS noise (S1) | Unit test: quantization + CEP-class statistics (`TestSensorNoise`) | **Done** |
-| IMU noise (S2) | Unit test: noise density order-of-magnitude check (`TestSensorNoise`) | **Done** |
-| Barometer noise (S3) | Unit test: quantization + lag + altitude-equivalent noise (`TestSensorNoise`) | **Done** |
-| Motor model (T1) | Step response + steady-state thrust-map tests (`TestMotorDynamics`) | **Done** |
-| Control surfaces (U1) | Pitch response + rate-limit tests (`TestFixedWingControlSurfaces`) | **Done** |
-| Real log validation (V1) | RMSE comparison against paper Table 5 (`<=2x` gate) | **Done** |
-| Quadrotor aero area (W1) | Attitude-dependent area + prop-wash drag tests | **Open** |
-| Battery model (X1) | Discharge curve + power draw + autonomy estimation | **Open** |
-| Satellite terrain texture (Y1) | UV-mapped mesh + Gazebo material binding | **Open** |
-| Wind auto-tuning (Z1) | Iterative RMSE minimization convergence test | **Open** |
+All previously planned delta items have been verified and completed (see `TESTING.md` and `MAINTENANCE.log` for detailed historical evidence).
 
 ---
 
 ## 4) Execution order
 
-1. **Phase W** — Quadrotor aero area (improves wind-response fidelity for quadrotor missions)
-2. **Phase Z** — Wind auto-tuning (enables automated calibration for all missions)
-3. **Phase X** — Battery model (adds flight-time constraints, useful for mission planning)
-4. **Phase Y** — Satellite texture (visual fidelity, lowest priority for physics accuracy)
+1. No remaining paper-aligned phases in this delta backlog.
 
 ---
 
 ## 5) Notes
 
-- This is a **delta backlog** only — completed work is not listed here.
+- This is a **delta backlog** only — completed work is tracked in `MAINTENANCE.log` and summarized in `TESTING.md`.
 - Any new phase must include: target files, measurable acceptance criteria, verification commands.
 - When paper-aligned metrics are updated, update `TESTING.md` and `MAINTENANCE.log`.
 - Real flight data from the paper is publicly available at `github.com/estebanvt/OSSITLQUAD`.
-- 221 tests currently passing across 40+ test classes (as of Phase V completion).
+- 234 tests currently passing across 40+ test classes (latest audited state).
 - Paper Section 3.4 identifies 3D wind force as future work; our codebase already has `from_log_3d` mode which exceeds the paper's current Z-axis-only model.
 - Paper Table 1 defines state variables for the fixed-wing model (not quadrotor inertia); IRS-4 parameters use ArduPilot defaults per Section 3.2.

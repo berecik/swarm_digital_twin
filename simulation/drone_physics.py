@@ -64,6 +64,26 @@ class AeroCoefficients:
 
 
 @dataclass
+class QuadrotorAero(AeroCoefficients):
+    """Attitude- and prop-wash-aware drag area model for quadrotors."""
+    min_area_scale: float = 0.85
+    max_area_scale: float = 1.55
+    tilt_power: float = 1.0
+    prop_wash_gain: float = 0.30
+
+    def get_effective_area(self, tilt_angle: float, thrust_ratio: float) -> float:
+        """Effective drag area as a function of tilt and prop-wash intensity."""
+        tilt_sin = float(np.clip(np.sin(abs(float(tilt_angle))), 0.0, 1.0))
+        tilt_scale = self.min_area_scale + (self.max_area_scale - self.min_area_scale) * (tilt_sin ** self.tilt_power)
+
+        thrust_ratio_clamped = float(np.clip(thrust_ratio, 0.0, 1.0))
+        prop_wash_scale = 1.0 + self.prop_wash_gain * thrust_ratio_clamped
+
+        area = self.reference_area * tilt_scale * prop_wash_scale
+        return float(max(area, 1e-6))
+
+
+@dataclass
 class FixedWingAero(AeroCoefficients):
     """AoA-dependent aerodynamic model with stall (paper Table 3, Fig. 5).
 
@@ -116,6 +136,7 @@ class MotorModel:
     """First-order rotor dynamics and thrust mapping (paper Eq. 4-inspired)."""
     k_T: float = 9.2e-6              # N / (rad/s)^2
     k_D: float = 0.0                 # N / (rad/s)
+    k_Q: float = 1.5e-7              # N·m / (rad/s)^2
     tau_motor: float = 0.05          # s
     num_motors: int = 4
 
@@ -152,6 +173,50 @@ class MotorModel:
         thrust_total = float(np.clip(thrust_total, 0.0, max_thrust_total))
         return omega_next, thrust_total
 
+    def power_from_omega(self, omega: np.ndarray) -> float:
+        """Mechanical shaft power estimate from rotor torque and speed: P = τ·ω."""
+        omega_safe = np.maximum(np.asarray(omega, dtype=float), 0.0)
+        motor_torque = self.k_Q * omega_safe**2
+        return float(np.sum(motor_torque * omega_safe))
+
+
+@dataclass
+class BatteryModel:
+    """Simple Li-Po battery model (SoC, discharge voltage, and endurance estimate)."""
+    cells: int = 6
+    capacity_mah: float = 10000.0
+    nominal_cell_voltage: float = 3.7
+    internal_resistance_ohm: float = 0.025
+
+    @property
+    def capacity_ah(self) -> float:
+        return float(self.capacity_mah) / 1000.0
+
+    @property
+    def capacity_wh(self) -> float:
+        return self.capacity_ah * float(self.cells) * float(self.nominal_cell_voltage)
+
+    def open_circuit_voltage(self, soc: float) -> float:
+        """Li-Po open-circuit discharge curve (pack voltage) vs state-of-charge."""
+        soc_c = float(np.clip(soc, 0.0, 1.0))
+        soc_points = np.array([0.0, 0.1, 0.2, 0.5, 0.8, 1.0], dtype=float)
+        cell_v_points = np.array([3.30, 3.50, 3.68, 3.78, 3.95, 4.20], dtype=float)
+        cell_voltage = float(np.interp(soc_c, soc_points, cell_v_points))
+        return float(self.cells) * cell_voltage
+
+    def voltage_under_load(self, soc: float, current_a: float) -> float:
+        ocv = self.open_circuit_voltage(soc)
+        loaded = ocv - float(self.internal_resistance_ohm) * max(float(current_a), 0.0)
+        return float(max(loaded, 3.0 * float(self.cells)))
+
+    def estimate_remaining_time_min(self, soc: float, power_w: float) -> float:
+        power_safe = max(float(power_w), 1e-6)
+        remaining_wh = float(np.clip(soc, 0.0, 1.0)) * self.capacity_wh
+        return 60.0 * remaining_wh / power_safe
+
+    def estimate_endurance_min(self, power_w: float) -> float:
+        return self.estimate_remaining_time_min(1.0, power_w)
+
 
 # ── Data classes ─────────────────────────────────────────────────────────────
 
@@ -168,6 +233,7 @@ class DroneParams:
     )
     motor_model: Optional[MotorModel] = None
     motor_dynamics_enabled: bool = False
+    battery_model: Optional[BatteryModel] = None
     aero: Optional[AeroCoefficients] = None
     atmo: Optional[Atmosphere] = None
     _aero_ranges_checked: bool = field(default=False, repr=False, compare=False)
@@ -257,6 +323,7 @@ def make_fixed_wing() -> DroneParams:
             C_La_stall=-1.1459,
             C_Da_stall=2.29183,
         ),
+        battery_model=BatteryModel(cells=6, capacity_mah=10000.0),
         atmo=Atmosphere(),
     )
 
@@ -295,6 +362,7 @@ def make_valencia_fixed_wing() -> DroneParams:
             C_Ma_stall=-0.1313,      # Table 3: Moment slope post-stall
             chord=0.235,             # Table 2: Mean aerodynamic chord [m]
         ),
+        battery_model=BatteryModel(cells=6, capacity_mah=9700.0),
         atmo=Atmosphere(altitude_msl=4500.0),  # Antisana altitude
     )
 
@@ -314,6 +382,7 @@ def make_holybro_x500() -> DroneParams:
             [ 0.0,    0.0,    0.050 ],
         ]),
         aero=AeroCoefficients(reference_area=0.06, C_D=1.1, C_L=0.0),
+        battery_model=BatteryModel(cells=6, capacity_mah=5200.0),
         atmo=Atmosphere(),
     )
 
@@ -347,14 +416,19 @@ def make_irs4_quadrotor(altitude_msl: float = 2800.0) -> DroneParams:
         motor_model=MotorModel(
             k_T=9.2e-6,                 # IRS-4 class propulsive map constant
             k_D=0.0,
+            k_Q=1.5e-7,
             tau_motor=0.05,             # paper-aligned motor spin-up timescale
             num_motors=4,
         ),
         motor_dynamics_enabled=True,    # Phase T: use Eq. 4 motor dynamics
-        aero=AeroCoefficients(
+        battery_model=BatteryModel(cells=6, capacity_mah=6000.0),
+        aero=QuadrotorAero(
             reference_area=0.05,         # frontal area (compact quad frame)
             C_D=1.0,                     # bluff-body drag
             C_L=0.0,                     # no lift for quadrotor
+            min_area_scale=0.85,
+            max_area_scale=1.55,
+            prop_wash_gain=0.30,
         ),
         atmo=Atmosphere(altitude_msl=altitude_msl),  # Quito altitude
     )
@@ -367,6 +441,11 @@ class DroneState:
     rotation: np.ndarray = field(default_factory=lambda: np.eye(3))     # body→world
     angular_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))  # body frame
     motor_omega: Optional[np.ndarray] = None
+    battery_soc: float = 1.0
+    battery_voltage_v: float = 0.0
+    battery_current_a: float = 0.0
+    battery_power_w: float = 0.0
+    battery_remaining_min: float = float("inf")
     control_surface_deflections: Optional[np.ndarray] = None  # [elevator, aileron, rudder] [rad]
 
 
@@ -525,7 +604,9 @@ def compute_aoa(V_body: np.ndarray) -> float:
 
 
 def _compute_quadratic_drag(V_body: np.ndarray, aero: AeroCoefficients,
-                            rho: float) -> np.ndarray:
+                            rho: float,
+                            tilt_angle: float = 0.0,
+                            thrust_ratio: float = 0.0) -> np.ndarray:
     """Quadratic aerodynamic drag in body frame (paper Eq. 5).
 
     F_D = -0.5 * rho * A * C_D(alpha) * |V|^2 * V_hat
@@ -538,7 +619,10 @@ def _compute_quadratic_drag(V_body: np.ndarray, aero: AeroCoefficients,
     V_hat = V_body / V_mag
     alpha = compute_aoa(V_body)
     C_D = aero.get_CD(alpha)
-    return -0.5 * rho * aero.reference_area * C_D * V_mag**2 * V_hat
+    effective_area = aero.reference_area
+    if isinstance(aero, QuadrotorAero):
+        effective_area = aero.get_effective_area(tilt_angle=tilt_angle, thrust_ratio=thrust_ratio)
+    return -0.5 * rho * effective_area * C_D * V_mag**2 * V_hat
 
 
 def _compute_lift(V_body: np.ndarray, aero: AeroCoefficients,
@@ -595,11 +679,13 @@ def physics_step(state: DroneState, cmd: DroneCommand,
     # Clamp commands and optionally apply motor dynamics layer
     thrust_cmd = float(np.clip(cmd.thrust, 0.0, params.max_thrust))
     motor_omega_next = state.motor_omega
+    battery_power_w = 0.0
     if params.motor_dynamics_enabled and params.motor_model is not None:
         n = max(int(params.motor_model.num_motors), 1)
         motor_omega = state.motor_omega if state.motor_omega is not None else np.zeros(n)
         thrust_omega, thrust = params.motor_model.step(motor_omega, thrust_cmd, dt, params.max_thrust)
         motor_omega_next = thrust_omega
+        battery_power_w = params.motor_model.power_from_omega(motor_omega_next)
     else:
         thrust = thrust_cmd
     torque = np.clip(cmd.torque, -params.max_torque, params.max_torque)
@@ -638,7 +724,18 @@ def physics_step(state: DroneState, cmd: DroneCommand,
         # Forces in body frame
         gravity_body = R.T @ np.array([0.0, 0.0, -params.mass * GRAVITY])
         thrust_body = np.array([0.0, 0.0, thrust])
-        drag_body = _compute_quadratic_drag(V_body, aero, rho)
+        body_z_world = R[:, 2]
+        cos_tilt = float(np.clip(np.dot(body_z_world, np.array([0.0, 0.0, 1.0])), -1.0, 1.0))
+        tilt_angle = float(np.arccos(cos_tilt))
+        thrust_ratio = thrust / params.max_thrust if params.max_thrust > 1e-9 else 0.0
+
+        drag_body = _compute_quadratic_drag(
+            V_body,
+            aero,
+            rho,
+            tilt_angle=tilt_angle,
+            thrust_ratio=thrust_ratio,
+        )
         lift_body = _compute_lift(V_body, aero, rho)
 
         # Wind perturbation (body frame)
@@ -721,12 +818,39 @@ def physics_step(state: DroneState, cmd: DroneCommand,
     U, _, Vt = np.linalg.svd(new_R)
     new_R = U @ Vt
 
+    battery_soc = float(np.clip(state.battery_soc, 0.0, 1.0))
+    battery_voltage_v = state.battery_voltage_v
+    battery_current_a = state.battery_current_a
+    battery_remaining_min = state.battery_remaining_min
+    if params.battery_model is not None:
+        if battery_power_w <= 0.0:
+            battery_power_w = max(0.0, thrust * max(float(np.linalg.norm(state.velocity)), 0.0))
+
+        battery_wh_total = params.battery_model.capacity_wh
+        used_wh = battery_power_w * dt / 3600.0
+        if battery_wh_total > 1e-9:
+            battery_soc = float(np.clip(battery_soc - used_wh / battery_wh_total, 0.0, 1.0))
+
+        ocv = params.battery_model.open_circuit_voltage(battery_soc)
+        current_a = battery_power_w / max(ocv, 1e-3)
+        battery_voltage_v = params.battery_model.voltage_under_load(battery_soc, current_a)
+        battery_current_a = battery_power_w / max(battery_voltage_v, 1e-3)
+        battery_remaining_min = params.battery_model.estimate_remaining_time_min(
+            battery_soc,
+            battery_power_w if battery_power_w > 0 else 1e-6,
+        )
+
     return DroneState(
         position=new_pos,
         velocity=new_vel,
         rotation=new_R,
         angular_velocity=new_omega,
         motor_omega=motor_omega_next,
+        battery_soc=battery_soc,
+        battery_voltage_v=battery_voltage_v,
+        battery_current_a=battery_current_a,
+        battery_power_w=battery_power_w,
+        battery_remaining_min=battery_remaining_min,
         control_surface_deflections=control_surface_next,
     )
 

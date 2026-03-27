@@ -10,7 +10,7 @@ Metrics follow Valencia et al. (2025), Table 5, Fig. 13.
 """
 
 import numpy as np
-from typing import Dict
+from typing import Dict, Callable, Tuple
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import urlretrieve
@@ -63,6 +63,16 @@ class RealLogMission:
     paper_rmse_z: float
     paper_rmse_x: float
     paper_rmse_y: float
+
+
+@dataclass(frozen=True)
+class WindAutoTuneResult:
+    """Result of wind-force scale tuning against altitude RMSE."""
+    best_scale: float
+    best_rmse_z: float
+    iterations: int
+    converged: bool
+    history: Tuple[Tuple[float, float], ...]
 
 
 OSSITLQUAD_FLIGHT_LOGS_RAW_BASE = (
@@ -461,6 +471,88 @@ def compare_sim_real(sim_times: np.ndarray, sim_positions: np.ndarray,
         "n_points": result.n_points,
         "rmse_total": result.rmse_total,
     }
+
+
+def auto_tune_wind_force_scale(
+    ref_times: np.ndarray,
+    ref_positions: np.ndarray,
+    simulate_with_scale: Callable[[float], Tuple[np.ndarray, np.ndarray]],
+    initial_scale: float = 1.0,
+    initial_step: float = 0.5,
+    max_iterations: int = 30,
+    convergence_tol: float = 0.01,
+    min_scale: float = 0.0,
+    max_scale: float = 8.0,
+) -> WindAutoTuneResult:
+    """Iteratively tune wind-force scale to minimize altitude RMSE.
+
+    The optimizer uses deterministic coordinate search with adaptive step decay.
+    Convergence criterion follows Phase Z: |ΔRMSE_z| < convergence_tol.
+    """
+    if len(ref_times) < 2 or len(ref_positions) < 2:
+        raise ValueError("Reference trajectory must contain at least 2 samples")
+    if initial_step <= 0.0:
+        raise ValueError("initial_step must be > 0")
+    if max_scale <= min_scale:
+        raise ValueError("max_scale must be > min_scale")
+
+    scale = float(np.clip(initial_scale, min_scale, max_scale))
+    step = float(initial_step)
+    history = []
+
+    def _rmse_z_for(test_scale: float) -> float:
+        sim_times, sim_positions = simulate_with_scale(float(test_scale))
+        metrics = compare_sim_real(sim_times, sim_positions, ref_times, ref_positions)
+        return float(metrics["rmse_z"])
+
+    best_rmse = _rmse_z_for(scale)
+    history.append((scale, best_rmse))
+    converged = False
+
+    for i in range(1, max_iterations + 1):
+        candidates = [
+            float(np.clip(scale - step, min_scale, max_scale)),
+            scale,
+            float(np.clip(scale + step, min_scale, max_scale)),
+        ]
+        candidates = sorted(set(candidates))
+
+        candidate_scores = []
+        for c in candidates:
+            rmse = _rmse_z_for(c)
+            candidate_scores.append((c, rmse))
+
+        candidate_scores.sort(key=lambda item: item[1])
+        new_scale, new_rmse = candidate_scores[0]
+        history.append((new_scale, new_rmse))
+
+        if abs(best_rmse - new_rmse) < convergence_tol:
+            scale = new_scale
+            best_rmse = new_rmse
+            converged = True
+            return WindAutoTuneResult(
+                best_scale=scale,
+                best_rmse_z=best_rmse,
+                iterations=i,
+                converged=converged,
+                history=tuple(history),
+            )
+
+        if new_rmse < best_rmse:
+            scale = new_scale
+            best_rmse = new_rmse
+        else:
+            step *= 0.5
+            if step < 1e-4:
+                break
+
+    return WindAutoTuneResult(
+        best_scale=scale,
+        best_rmse_z=best_rmse,
+        iterations=max_iterations,
+        converged=converged,
+        history=tuple(history),
+    )
 
 
 def compare_signals(sim_times: np.ndarray, sim_signal: np.ndarray,

@@ -9,6 +9,7 @@ Website: https://marysia.app
 import numpy as np
 import pytest
 import warnings
+from pathlib import Path
 from drone_physics import (
     DroneParams, DroneState, DroneCommand,
     PositionController, PIDController,
@@ -17,7 +18,7 @@ from drone_physics import (
     run_simulation, GRAVITY,
     AeroCoefficients, Atmosphere, _compute_quadratic_drag,
     _compute_lift, compute_aoa,
-    FixedWingAero, MotorModel, make_generic_quad, make_holybro_x500, make_fixed_wing,
+    FixedWingAero, QuadrotorAero, MotorModel, BatteryModel, make_generic_quad, make_holybro_x500, make_fixed_wing,
     make_valencia_fixed_wing, make_irs4_quadrotor,
     run_swarm_simulation, calculate_flocking_vector, FlockingParams,
 )
@@ -33,6 +34,7 @@ from validation import (
     assert_real_log_validation_pass,
     compute_rmse,
     compare_sim_real,
+    auto_tune_wind_force_scale,
 )
 from drone_scenario import run_benchmark, run_irs4_benchmark, replay_mission
 from flight_log import FlightLog
@@ -338,6 +340,41 @@ class TestQuadraticDrag:
         recent = speeds[-5:]
         variation = (max(recent) - min(recent)) / np.mean(recent)
         assert variation < 0.05
+
+
+class TestQuadrotorAeroArea:
+    def test_effective_area_increases_with_tilt(self):
+        """Quadrotor effective drag area should increase with tilt angle."""
+        aero = QuadrotorAero(reference_area=0.05, C_D=1.0)
+        area_level = aero.get_effective_area(tilt_angle=0.0, thrust_ratio=0.5)
+        area_tilted = aero.get_effective_area(tilt_angle=np.deg2rad(35.0), thrust_ratio=0.5)
+        assert area_tilted > area_level
+
+    def test_effective_area_increases_with_prop_wash(self):
+        """Prop-wash should increase effective drag area at higher thrust."""
+        aero = QuadrotorAero(reference_area=0.05, C_D=1.0)
+        area_idle = aero.get_effective_area(tilt_angle=np.deg2rad(15.0), thrust_ratio=0.0)
+        area_high_thrust = aero.get_effective_area(tilt_angle=np.deg2rad(15.0), thrust_ratio=0.9)
+        assert area_high_thrust > area_idle
+
+    def test_drag_force_responds_to_tilt_and_prop_wash(self):
+        """Quadratic drag should grow when tilt/prop-wash increase effective area."""
+        aero = QuadrotorAero(reference_area=0.05, C_D=1.0)
+        rho = 1.0
+        V = np.array([8.0, 0.0, 0.0])
+
+        drag_level_low = np.linalg.norm(
+            _compute_quadratic_drag(V, aero, rho, tilt_angle=0.0, thrust_ratio=0.0)
+        )
+        drag_tilted_low = np.linalg.norm(
+            _compute_quadratic_drag(V, aero, rho, tilt_angle=np.deg2rad(35.0), thrust_ratio=0.0)
+        )
+        drag_tilted_high = np.linalg.norm(
+            _compute_quadratic_drag(V, aero, rho, tilt_angle=np.deg2rad(35.0), thrust_ratio=0.9)
+        )
+
+        assert drag_tilted_low > drag_level_low
+        assert drag_tilted_high > drag_tilted_low
 
 
 class TestAtmosphere:
@@ -685,6 +722,47 @@ class TestMotorDynamics:
         expected_vz = -GRAVITY * t_total
         np.testing.assert_allclose(state.position[2], expected_z, atol=0.05)
         np.testing.assert_allclose(state.velocity[2], expected_vz, atol=0.05)
+
+
+class TestBatteryModel:
+    def test_lipo_voltage_curve_is_soc_dependent(self):
+        model = BatteryModel(cells=6, capacity_mah=6000.0)
+        v_full = model.open_circuit_voltage(1.0)
+        v_half = model.open_circuit_voltage(0.5)
+        v_empty = model.open_circuit_voltage(0.0)
+        assert v_full > v_half > v_empty
+        np.testing.assert_allclose(v_full, 25.2, atol=1e-6)
+        np.testing.assert_allclose(v_empty, 19.8, atol=1e-6)
+
+    def test_motor_power_draw_reduces_soc(self):
+        model = MotorModel(k_T=9.2e-6, k_Q=1.5e-7, tau_motor=0.01, num_motors=4)
+        params = DroneParams(
+            mass=1.8,
+            max_thrust=35.0,
+            motor_model=model,
+            motor_dynamics_enabled=True,
+            battery_model=BatteryModel(cells=6, capacity_mah=6000.0),
+            drag_coeff=0.0,
+            ang_drag_coeff=0.0,
+            aero=AeroCoefficients(reference_area=0.05, C_D=1.0, C_L=0.0),
+        )
+        state = DroneState(position=np.array([0.0, 0.0, 5.0]), battery_soc=1.0)
+        cmd = DroneCommand(thrust=20.0, torque=np.zeros(3))
+
+        for _ in range(2000):
+            state = physics_step(state, cmd, params, dt=0.01)
+
+        assert state.battery_power_w > 0.0
+        assert state.battery_current_a > 0.0
+        assert 0.0 < state.battery_soc < 1.0
+        assert state.battery_voltage_v > 0.0
+        assert state.battery_remaining_min < float("inf")
+
+    def test_fixed_wing_autonomy_estimate_matches_table2(self):
+        params = make_valencia_fixed_wing()
+        assert params.battery_model is not None
+        endurance_min = params.battery_model.estimate_endurance_min(power_w=152.0)
+        assert endurance_min == pytest.approx(85.0, abs=6.0)
 
 
 # ── Phase 1: Inertia & Presets ──────────────────────────────────────────────
@@ -1423,6 +1501,22 @@ class TestMAVLink:
         fields = struct.unpack_from('<ffhHff', payload)
         np.testing.assert_allclose(fields[0], 15.5, atol=1e-4)
         np.testing.assert_allclose(fields[1], 14.2, atol=1e-4)
+
+    def test_sys_status_encode_decode_battery_fields(self):
+        """SYS_STATUS should carry battery voltage/current/remaining fields."""
+        from mavlink_bridge import (build_sys_status, decode_mavlink_v2,
+                                     MAVLINK_MSG_ID_SYS_STATUS)
+        import struct
+
+        msg = build_sys_status(voltage_mv=22200, current_ca=1234, battery_pct=76)
+        result = decode_mavlink_v2(msg)
+        assert result is not None
+        msg_id, payload = result
+        assert msg_id == MAVLINK_MSG_ID_SYS_STATUS
+        fields = struct.unpack_from('<IIIHHhb', payload)
+        assert fields[4] == 22200
+        assert fields[5] == 1234
+        assert fields[6] == 76
 
     def test_command_long_parse(self):
         """COMMAND_LONG parsing should extract command ID and params."""
@@ -2645,6 +2739,50 @@ class TestPaperValidation:
             assert_real_log_validation_pass(metrics, mission, multiplier=2.0)
 
 
+class TestWindAutoTuning:
+    def test_auto_tuning_converges_and_recovers_scale(self):
+        t = np.linspace(0.0, 60.0, 601)
+        base = np.sin(t * 0.15) + 0.25 * np.sin(t * 0.03)
+        true_scale = 1.7
+        ref_z = true_scale * base
+        ref_positions = np.column_stack([np.zeros_like(t), np.zeros_like(t), ref_z])
+
+        def simulate(scale: float):
+            sim_z = scale * base
+            sim_positions = np.column_stack([np.zeros_like(t), np.zeros_like(t), sim_z])
+            return t, sim_positions
+
+        result = auto_tune_wind_force_scale(
+            ref_times=t,
+            ref_positions=ref_positions,
+            simulate_with_scale=simulate,
+            initial_scale=0.3,
+            initial_step=0.7,
+            max_iterations=30,
+            convergence_tol=0.01,
+        )
+
+        assert result.converged
+        assert result.best_rmse_z < 0.01
+        assert abs(result.best_scale - true_scale) < 0.05
+
+    def test_auto_tuning_is_reproducible(self):
+        t = np.linspace(0.0, 20.0, 401)
+        base = np.cos(t * 0.2)
+        ref_positions = np.column_stack([np.zeros_like(t), np.zeros_like(t), 1.25 * base])
+
+        def simulate(scale: float):
+            sim_positions = np.column_stack([np.zeros_like(t), np.zeros_like(t), scale * base])
+            return t, sim_positions
+
+        result_a = auto_tune_wind_force_scale(t, ref_positions, simulate)
+        result_b = auto_tune_wind_force_scale(t, ref_positions, simulate)
+
+        assert result_a.best_scale == pytest.approx(result_b.best_scale, abs=1e-12)
+        assert result_a.best_rmse_z == pytest.approx(result_b.best_rmse_z, abs=1e-12)
+        assert result_a.history == result_b.history
+
+
 # ── Phase R: Simulation Bridge Tests ─────────────────────────────────────
 
 class TestSimBridge:
@@ -2966,6 +3104,56 @@ class TestTerrainColoring:
         content = open(path).read()
         assert 'AntisanaTerrain/HeightColored' in content
         assert 'antisana_terrain.material' in content
+
+
+class TestTerrainSatelliteTexture:
+    """Tests for Phase Y satellite-texture terrain pipeline."""
+
+    def test_satellite_tile_download_has_offline_fallback(self, tmp_path):
+        from terrain import download_satellite_tile
+
+        tile = download_satellite_tile(-0.508333, -78.141667, str(tmp_path), tile_size=64)
+        assert tile is not None
+        assert tile.endswith('.ppm')
+        assert (tmp_path / Path(tile).name).exists()
+
+    def test_export_obj_with_uv_contains_uv_and_faces(self, tmp_path):
+        terrain = TerrainMap.from_array(
+            np.array([[4400.0, 4450.0, 4500.0],
+                      [4420.0, 4470.0, 4520.0],
+                      [4440.0, 4490.0, 4540.0]]),
+            resolution=10.0,
+        )
+        tex = tmp_path / 'sat.ppm'
+        tex.write_bytes(b'P6\n1 1\n255\n\x00\x00\x00')
+        out_obj = tmp_path / 'terrain.obj'
+
+        terrain.export_obj_with_uv(str(out_obj), texture_path=str(tex))
+        content = out_obj.read_text()
+        assert 'vt ' in content
+        assert 'f ' in content
+
+        mtl = out_obj.with_suffix('.mtl').read_text()
+        assert 'map_Kd sat.ppm' in mtl
+
+    def test_export_assets_fallbacks_to_height_material_without_texture(self, tmp_path):
+        terrain = TerrainMap.flat(elevation=4500.0, size=20.0, resolution=10.0)
+        assets = terrain.export_gazebo_terrain_assets(str(tmp_path), texture_path=str(tmp_path / 'missing.ppm'))
+        assert assets['material_name'] == 'AntisanaTerrain/HeightColored'
+        assert Path(assets['obj_path']).exists()
+
+    def test_world_and_material_include_satellite_reference(self):
+        import os
+        material_path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                                     'media', 'materials', 'scripts',
+                                     'antisana_terrain.material')
+        world_path = os.path.join(os.path.dirname(__file__), '..', 'gazebo',
+                                  'worlds', 'antisana.world')
+        material = open(material_path).read()
+        world = open(world_path).read()
+        assert 'AntisanaTerrain/SatelliteTextured' in material
+        assert 'antisana_satellite.ppm' in material
+        assert 'AntisanaTerrain/SatelliteTextured' in world
 
 
 # ── Phase M1: Position-Aware Wind ────────────────────────────────────────────

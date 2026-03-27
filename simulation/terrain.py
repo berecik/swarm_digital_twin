@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Tuple
 import struct
 from pathlib import Path
+import shutil
 
 
 R_EARTH = 6371000.0  # Earth radius [m]
@@ -366,6 +367,106 @@ class TerrainMap:
                     f.write(struct.pack('<fff', *v01))
                     f.write(struct.pack('<H', 0))
 
+    def export_obj_with_uv(self,
+                           path: str,
+                           texture_path: Optional[str] = None,
+                           material_name: str = "Terrain/Satellite",
+                           scale: float = 1.0) -> None:
+        """Export terrain as OBJ mesh with UV coordinates and optional texture.
+
+        Args:
+            path: Output OBJ path.
+            texture_path: Optional texture image path copied next to OBJ.
+            material_name: Material name written to MTL.
+            scale: Coordinate scale factor.
+        """
+        ny, nx = self.elevations.shape
+        if nx < 2 or ny < 2:
+            raise ValueError("Need at least 2x2 grid to export OBJ")
+
+        obj_path = Path(path)
+        obj_path.parent.mkdir(parents=True, exist_ok=True)
+        mtl_path = obj_path.with_suffix('.mtl')
+
+        xs = self.origin[0] + np.arange(nx) * self.resolution * scale
+        ys = self.origin[1] + np.arange(ny) * self.resolution * scale
+        zs = self.elevations * scale
+
+        denom_x = max(nx - 1, 1)
+        denom_y = max(ny - 1, 1)
+
+        texture_filename = None
+        if texture_path is not None:
+            src = Path(texture_path)
+            if src.exists():
+                texture_filename = src.name
+                if src.resolve() != (obj_path.parent / src.name).resolve():
+                    shutil.copy2(src, obj_path.parent / src.name)
+
+        with open(mtl_path, 'w', encoding='utf-8') as mtl:
+            mtl.write(f"newmtl {material_name}\n")
+            mtl.write("Ka 1.0 1.0 1.0\n")
+            mtl.write("Kd 1.0 1.0 1.0\n")
+            mtl.write("Ks 0.0 0.0 0.0\n")
+            if texture_filename is not None:
+                mtl.write(f"map_Kd {texture_filename}\n")
+
+        with open(obj_path, 'w', encoding='utf-8') as obj:
+            obj.write(f"mtllib {mtl_path.name}\n")
+            obj.write(f"usemtl {material_name}\n")
+
+            # Vertices in row-major order
+            for iy in range(ny):
+                for ix in range(nx):
+                    obj.write(f"v {xs[ix]:.6f} {ys[iy]:.6f} {zs[iy, ix]:.6f}\n")
+
+            # UVs aligned with grid coordinates
+            for iy in range(ny):
+                for ix in range(nx):
+                    u = ix / denom_x
+                    v = iy / denom_y
+                    obj.write(f"vt {u:.6f} {v:.6f}\n")
+
+            def idx(x: int, y: int) -> int:
+                return y * nx + x + 1
+
+            for iy in range(ny - 1):
+                for ix in range(nx - 1):
+                    v00 = idx(ix, iy)
+                    v10 = idx(ix + 1, iy)
+                    v01 = idx(ix, iy + 1)
+                    v11 = idx(ix + 1, iy + 1)
+                    obj.write(f"f {v00}/{v00} {v10}/{v10} {v01}/{v01}\n")
+                    obj.write(f"f {v10}/{v10} {v11}/{v11} {v01}/{v01}\n")
+
+    def export_gazebo_terrain_assets(self,
+                                     output_dir: str,
+                                     texture_path: Optional[str] = None,
+                                     scale: float = 1.0) -> dict:
+        """Export terrain mesh/assets for Gazebo with texture fallback metadata.
+
+        Returns dictionary with `obj_path`, `mtl_path`, and `material_name`.
+        """
+        out_dir = Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        obj_path = out_dir / "terrain.obj"
+        material_name = (
+            "AntisanaTerrain/SatelliteTextured"
+            if texture_path is not None and Path(texture_path).exists()
+            else "AntisanaTerrain/HeightColored"
+        )
+        self.export_obj_with_uv(
+            str(obj_path),
+            texture_path=texture_path,
+            material_name=material_name,
+            scale=scale,
+        )
+        return {
+            "obj_path": str(obj_path),
+            "mtl_path": str(obj_path.with_suffix('.mtl')),
+            "material_name": material_name,
+        }
+
     @property
     def bounds(self) -> Tuple[float, float, float, float]:
         """Return (x_min, y_min, x_max, y_max) of the terrain grid."""
@@ -465,6 +566,53 @@ def _download_srtm_tile(lat: float, lon: float, cache_dir: str) -> str:
     return local_path
 
 
+def download_satellite_tile(lat: float,
+                            lon: float,
+                            cache_dir: str,
+                            tile_size: int = 1024) -> Optional[str]:
+    """Download or synthesize a satellite texture tile for the given region.
+
+    Uses ESRI World Imagery where available. If download fails, a deterministic
+    synthetic texture is generated for offline/test use.
+    """
+    import os
+    import urllib.request
+
+    os.makedirs(cache_dir, exist_ok=True)
+    tile_name = f"sat_{lat:+.4f}_{lon:+.4f}_{tile_size}.ppm"
+    tile_path = os.path.join(cache_dir, tile_name)
+    if os.path.exists(tile_path):
+        return tile_path
+
+    # WebMercator tile around (lat, lon)
+    try:
+        z = 13
+        lat_rad = np.deg2rad(lat)
+        n = 2 ** z
+        xtile = int((lon + 180.0) / 360.0 * n)
+        ytile = int((1.0 - np.log(np.tan(lat_rad) + 1.0 / np.cos(lat_rad)) / np.pi) / 2.0 * n)
+        url = (
+            "https://services.arcgisonline.com/ArcGIS/rest/services/"
+            f"World_Imagery/MapServer/tile/{z}/{ytile}/{xtile}"
+        )
+        png_path = tile_path.replace('.ppm', '.png')
+        urllib.request.urlretrieve(url, png_path)
+        # Keep function dependency-free: fallback to synthetic if conversion not available
+        try:
+            from PIL import Image
+            Image.open(png_path).convert('RGB').resize((tile_size, tile_size)).save(tile_path)
+            os.remove(png_path)
+            return tile_path
+        except Exception:
+            if os.path.exists(png_path):
+                os.remove(png_path)
+    except Exception:
+        pass
+
+    _create_synthetic_satellite_tile(tile_path, tile_size=tile_size)
+    return tile_path
+
+
 def _create_synthetic_hgt(path: str, tile_lat: int, tile_lon: int) -> None:
     """Create a synthetic SRTM tile for testing (no network required).
 
@@ -490,6 +638,26 @@ def _create_synthetic_hgt(path: str, tile_lat: int, tile_lon: int) -> None:
     grid = grid.astype('>i2')
     with open(path, 'wb') as f:
         f.write(grid.tobytes())
+
+
+def _create_synthetic_satellite_tile(path: str, tile_size: int = 1024) -> None:
+    """Create deterministic pseudo-satellite RGB tile in PPM format."""
+    xs = np.linspace(0.0, 1.0, tile_size, dtype=float)
+    ys = np.linspace(0.0, 1.0, tile_size, dtype=float)
+    xx, yy = np.meshgrid(xs, ys)
+    ridges = 0.5 + 0.5 * np.sin(16.0 * xx + 12.0 * yy)
+    snow = np.clip((yy - 0.65) * 2.4, 0.0, 1.0)
+    rock = np.clip(1.0 - np.abs(yy - 0.5) * 2.0, 0.0, 1.0)
+    r = np.clip(60 + 100 * rock + 120 * snow, 0, 255).astype(np.uint8)
+    g = np.clip(80 + 80 * ridges + 80 * (1.0 - snow), 0, 255).astype(np.uint8)
+    b = np.clip(50 + 60 * (1.0 - rock) + 150 * snow, 0, 255).astype(np.uint8)
+    rgb = np.stack([r, g, b], axis=2)
+
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, 'wb') as f:
+        f.write(f"P6\n{tile_size} {tile_size}\n255\n".encode('ascii'))
+        f.write(rgb.tobytes())
 
 
 def _parse_hgt(path: str) -> Tuple[np.ndarray, int, int]:

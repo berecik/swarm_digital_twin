@@ -33,6 +33,7 @@ class WindField:
     turbulence_type: str = "none"
     altitude_profile: Optional[np.ndarray] = None  # Nx2 array: [time, wind_speed]
     wind_profile_3d: Optional[np.ndarray] = None  # Nx4 array: [time, wx, wy, wz]
+    force_scale: float = 1.0
     _dryden_state: np.ndarray = field(
         default_factory=lambda: np.zeros(3), repr=False
     )
@@ -100,8 +101,8 @@ class WindField:
                 L_hat = L_hat / L_norm
                 F_lift = q * C_L * L_hat
 
-        # Eq. 7: total wind force
-        return F_drag + F_lift
+        # Eq. 7: total wind force with mission-level tuning scale
+        return float(self.force_scale) * (F_drag + F_lift)
 
     def _dryden_wind(self, t: float, position: np.ndarray) -> np.ndarray:
         """Simplified Dryden turbulence (MIL-F-8785C).

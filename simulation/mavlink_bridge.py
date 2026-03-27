@@ -321,6 +321,9 @@ class SimState:
     pitchspeed: float = 0.0 # rad/s
     yawspeed: float = 0.0   # rad/s
     thrust_pct: float = 0.0 # 0-100
+    battery_voltage_v: float = 12.6
+    battery_current_a: float = 0.0
+    battery_remaining_pct: float = 100.0
     armed: bool = True
 
     # Reference point for GPS conversion (default: Zurich)
@@ -343,6 +346,9 @@ def sim_state_from_record(record, angular_velocity: Optional[np.ndarray] = None,
         roll=roll, pitch=pitch, yaw=yaw,
         rollspeed=omega[0], pitchspeed=omega[1], yawspeed=omega[2],
         thrust_pct=min(100.0, 100.0 * record.thrust / max_thrust),
+        battery_voltage_v=float(getattr(record, "battery_voltage_v", 12.6)),
+        battery_current_a=float(getattr(record, "battery_current_a", 0.0)),
+        battery_remaining_pct=float(np.clip(100.0 * getattr(record, "battery_soc", 1.0), 0.0, 100.0)),
         ref_lat=ref_lat, ref_lon=ref_lon, ref_alt_msl=ref_alt_msl,
     )
 
@@ -515,6 +521,9 @@ class MAVLinkBridge:
 
         # SYS_STATUS (periodic, simplified)
         msg = build_sys_status(
+            voltage_mv=int(np.clip(state.battery_voltage_v * 1000.0, 0.0, 65535.0)),
+            current_ca=int(np.clip(state.battery_current_a * 100.0, -32768.0, 32767.0)),
+            battery_pct=int(np.clip(round(state.battery_remaining_pct), 0.0, 100.0)),
             system_id=self.system_id, component_id=self.component_id,
             seq=self._next_seq(),
         )

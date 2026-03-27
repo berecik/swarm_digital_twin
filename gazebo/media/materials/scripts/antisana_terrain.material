@@ -44,3 +44,35 @@ material AntisanaTerrain/HeightColored
     }
   }
 }
+
+material AntisanaTerrain/SatelliteTextured
+{
+  technique
+  {
+    pass
+    {
+      ambient  1.0 1.0 1.0 1.0
+      diffuse  1.0 1.0 1.0 1.0
+      specular 0.05 0.05 0.05 1.0 4
+      texture_unit
+      {
+        texture antisana_satellite.ppm
+        filtering trilinear
+      }
+    }
+  }
+
+  // Fallback when texture is unavailable: reuse elevation coloring
+  technique
+  {
+    pass
+    {
+      ambient  0.5 0.5 0.5 1.0
+      diffuse  0.8 0.8 0.8 1.0
+      specular 0.1 0.1 0.1 1.0 10
+
+      vertex_program_ref AntisanaTerrain/HeightColorVP {}
+      fragment_program_ref AntisanaTerrain/HeightColorFP {}
+    }
+  }
+}
