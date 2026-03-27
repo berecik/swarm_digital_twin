@@ -118,10 +118,13 @@ Standard ROS 2 publishers/subscribers for local sensing and control.
 
 ### Inter-Drone (Zenoh Mesh)
 - **Mesh Connectivity:** Low-latency, decentralised communication.
+- **Namespaces:** Per-drone namespace contract `/swarm/drone_n/*` (`n ∈ [1..6]`) to isolate state/control channels.
 - **Topics:**
-    - `/swarm/telemetry`: Position and status of each drone.
-    - `/swarm/detections`: Shared human discovery events.
-    - `/swarm/consensus`: Raft-based task allocation (planned).
+    - `/swarm/drone_n/state`: Position and mission status publication.
+    - `/swarm/drone_n/consensus/raft_tx`: serialized Raft protobuf messages.
+    - `/swarm/drone_n/consensus/propose`: leader proposal stream for mission command updates.
+    - `/swarm/drone_n/consensus/raft_rx`: inbound Raft replication stream.
+- **Discovery Storm Guardrail:** `docker/zenoh/drone_{1..6}.json5` now uses strict `allow` + `deny` lists to filter out high-bandwidth/unneeded discovery topics (`/tf*`, image/lidar, rosout).
 
 ---
 

@@ -8,12 +8,14 @@ pub struct ZenohManager {
     session: Session,
     pub neighbors: Arc<Mutex<HashMap<String, Boid>>>,
     drone_id: String,
+    namespace: String,
 }
 
 impl ZenohManager {
     pub async fn new(drone_id: String) -> Self {
         let session = zenoh::open(config::default()).res().await.unwrap();
         let neighbors = Arc::new(Mutex::new(HashMap::new()));
+        let namespace = format!("swarm/{}/", drone_id);
 
         let neighbors_clone = Arc::clone(&neighbors);
         let my_id = drone_id.clone();
@@ -34,6 +36,7 @@ impl ZenohManager {
             session,
             neighbors,
             drone_id,
+            namespace,
         }
     }
 
@@ -55,7 +58,7 @@ impl ZenohManager {
     }
 
     pub async fn publish_state(&self, boid: &Boid) {
-        let key = format!("swarm/{}/state", self.drone_id);
+        let key = format!("{}state", self.namespace);
         if let Ok(payload) = bincode::serialize(boid) {
             self.session.put(key, payload).res().await.unwrap();
         }

@@ -64,6 +64,20 @@ Core mathematical and utility functions are separated into `src/utils.rs` and `s
 - **`test_handshake_logic`**:
     - **Purpose**: Verifies the internal state machine for the PX4 Offboard handshake (Heartbeat -> Mode Switch -> Arming).
     - **Verification**: Simulates 20 cycles and confirms that the mode switch and arming commands are triggered exactly at cycle 10.
+- **`consensus::tests::mission_command_round_trip`**:
+    - **Purpose**: Verifies deterministic Serde serialization for mission-state commands used by consensus proposals.
+    - **Input**: `MissionCommand { epoch, state }` encoded with `bincode`.
+    - **Expected Outcome**: Decode reproduces the exact command payload.
+- **`consensus::tests::raft_message_round_trip`**:
+    - **Purpose**: Verifies Protobuf serialization of Raft wire messages (`eraftpb::Message`) for Zenoh transport.
+    - **Input**: synthetic Raft message (`from`, `to`, `term`).
+    - **Expected Outcome**: Protobuf decode preserves all fields.
+- **`consensus::tests::rejects_cluster_smaller_than_six`**:
+    - **Purpose**: Enforces the 6-agent minimum for mission-state agreement.
+    - **Expected Outcome**: Constructor rejects cluster sizes `< 6`.
+- **`px4_safety::tests::*`**:
+    - **Purpose**: Verifies high-rate PX4 wrappers reject non-finite setpoints and preserve ENU->NED conversion and command constants.
+    - **Expected Outcome**: Invalid setpoints are dropped safely; valid messages are built without panic paths.
 
 ### Running Unit Tests:
 Since the project depends on `rclrs`, a sourced ROS 2 environment (Humble) is required even for `cargo test`.

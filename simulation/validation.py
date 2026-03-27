@@ -13,6 +13,7 @@ import numpy as np
 from typing import Dict, Callable, Tuple
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.request import urlretrieve
 
 
@@ -79,13 +80,25 @@ OSSITLQUAD_FLIGHT_LOGS_RAW_BASE = (
     "https://raw.githubusercontent.com/estebanvt/OSSITLQUAD/master/Flight_logs"
 )
 
+OSSITLQUAD_FLIGHT_LOGS_RAW_BASE_CANDIDATES: Tuple[str, ...] = (
+    # Current upstream layout (verified via GitHub API):
+    # Flight_logs/Quadrotor_logs/<file>.bin on main.
+    "https://raw.githubusercontent.com/estebanvt/OSSITLQUAD/main/Flight_logs/Quadrotor_logs",
+    # Legacy branch path used in older docs/scripts.
+    OSSITLQUAD_FLIGHT_LOGS_RAW_BASE,
+    # Default branch path for repositories migrated to `main`.
+    "https://raw.githubusercontent.com/estebanvt/OSSITLQUAD/main/Flight_logs",
+)
+
 REAL_LOG_MISSIONS: Dict[str, RealLogMission] = {
-    # Carolina 40m + 20m mission split into two validation windows
+    # Carolina 40m + 20m log: two distinct flight phases separated by landing.
+    # Phase 1 (40m): takeoff at ~t=10s, steady at 38-42m, descent at ~t=155s.
+    # Phase 2 (20m): takeoff at ~t=340s, steady at 18-20m, descent at ~t=480s.
     "quad_carolina_40": RealLogMission(
         name="quad_carolina_40",
         source_filename="Carolina_quad_40m_plus_20m.bin",
-        segment_start_s=0.0,
-        segment_end_s=175.0,
+        segment_start_s=15.0,
+        segment_end_s=155.0,
         paper_rmse_z=0.07,
         paper_rmse_x=0.043,
         paper_rmse_y=0.039,
@@ -93,18 +106,20 @@ REAL_LOG_MISSIONS: Dict[str, RealLogMission] = {
     "quad_carolina_20": RealLogMission(
         name="quad_carolina_20",
         source_filename="Carolina_quad_40m_plus_20m.bin",
-        segment_start_s=175.0,
-        segment_end_s=300.0,
+        segment_start_s=340.0,
+        segment_end_s=478.0,
         paper_rmse_z=0.054,
         paper_rmse_x=0.037,
         paper_rmse_y=0.027,
     ),
-    # EPN 30m + 20m mission split into two validation windows
+    # EPN 30m + 20m log: multiple flights after ~t=276s gap.
+    # Phase at 20m altitude: ~t=340-440s (EPN campus, 20m AGL).
+    # Phase at 30m altitude: ~t=620-725s (EPN campus, 30m AGL).
     "quad_epn_30": RealLogMission(
         name="quad_epn_30",
         source_filename="EPN_quad_30m_plus_20m.bin",
-        segment_start_s=0.0,
-        segment_end_s=150.0,
+        segment_start_s=620.0,
+        segment_end_s=725.0,
         paper_rmse_z=0.07,
         paper_rmse_x=0.062,
         paper_rmse_y=0.055,
@@ -112,8 +127,8 @@ REAL_LOG_MISSIONS: Dict[str, RealLogMission] = {
     "quad_epn_20": RealLogMission(
         name="quad_epn_20",
         source_filename="EPN_quad_30m_plus_20m.bin",
-        segment_start_s=150.0,
-        segment_end_s=260.0,
+        segment_start_s=340.0,
+        segment_end_s=440.0,
         paper_rmse_z=0.10,
         paper_rmse_x=0.071,
         paper_rmse_y=0.036,
@@ -243,8 +258,22 @@ def ensure_real_log_logs(data_dir: str = "data/flight_logs") -> Dict[str, str]:
     for filename in needed:
         local = dest / filename
         if not local.exists():
-            remote_url = f"{OSSITLQUAD_FLIGHT_LOGS_RAW_BASE}/{filename}"
-            urlretrieve(remote_url, str(local))
+            errors = []
+            for raw_base in OSSITLQUAD_FLIGHT_LOGS_RAW_BASE_CANDIDATES:
+                remote_url = f"{raw_base}/{filename}"
+                try:
+                    urlretrieve(remote_url, str(local))
+                except (HTTPError, URLError) as exc:
+                    errors.append(f"{remote_url} -> {exc}")
+                    continue
+                break
+            else:
+                attempted = "\n  - ".join(errors) if errors else "(no URL attempts)"
+                raise RuntimeError(
+                    f"Failed to download required real-log file '{filename}'.\n"
+                    f"Tried URLs:\n  - {attempted}\n"
+                    f"Place the file manually in '{dest}' and retry."
+                )
         local_paths[filename] = str(local)
     return local_paths
 

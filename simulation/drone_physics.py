@@ -1031,6 +1031,75 @@ def run_simulation(waypoints: List[np.ndarray],
     return records
 
 
+def run_trajectory_tracking(ref_times: np.ndarray,
+                            ref_positions: np.ndarray,
+                            params: Optional[DroneParams] = None,
+                            dt: float = 0.005,
+                            wind=None,
+                            terrain=None) -> List[SimRecord]:
+    """Track a reference trajectory point-by-point (Phase V validation mode).
+
+    At each simulation timestep, the controller targets the reference position
+    interpolated at the current time.  This matches the paper's validation
+    methodology where the same mission path is followed by both real and
+    simulated aircraft, and RMSE measures how well the physics + wind model
+    reproduces trajectory deviations.
+
+    Args:
+        ref_times:     1-D array of reference timestamps (seconds, starting at 0).
+        ref_positions: Nx3 reference positions (local NED frame).
+        params:        DroneParams preset.
+        dt:            Simulation timestep.
+        wind:          Optional WindField.
+        terrain:       Optional TerrainMap.
+
+    Returns:
+        List of SimRecord for every timestep.
+    """
+    if params is None:
+        params = DroneParams()
+    if len(ref_times) < 2:
+        raise ValueError("Reference trajectory must have >= 2 points")
+
+    state = DroneState(position=ref_positions[0].copy())
+    controller = PositionController(params)
+    records: List[SimRecord] = []
+
+    max_time = float(ref_times[-1])
+    t = 0.0
+
+    while t <= max_time:
+        # Interpolate reference position at current time
+        target = np.array([
+            float(np.interp(t, ref_times, ref_positions[:, i]))
+            for i in range(3)
+        ])
+
+        cmd = controller.compute(state, target, target_yaw=0.0, dt=dt)
+        state = physics_step(state, cmd, params, dt, wind=wind, t=t,
+                             terrain=terrain)
+
+        roll, pitch, yaw = rotation_to_euler(state.rotation)
+        p, q, r = state.angular_velocity
+        try:
+            e_rates = euler_rates_from_body_rates(roll, pitch, p, q, r)
+        except ValueError:
+            e_rates = np.zeros(3)
+        records.append(SimRecord(
+            t=t,
+            position=state.position.copy(),
+            velocity=state.velocity.copy(),
+            euler=(roll, pitch, yaw),
+            thrust=cmd.thrust,
+            angular_velocity=state.angular_velocity.copy(),
+            euler_rates=e_rates,
+        ))
+
+        t += dt
+
+    return records
+
+
 def run_swarm_simulation(drone_waypoints: Dict[str, List[np.ndarray]],
                          params: Optional[DroneParams] = None,
                          dt: float = 0.01,

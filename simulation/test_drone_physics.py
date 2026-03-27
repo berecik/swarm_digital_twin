@@ -9,13 +9,14 @@ Website: https://marysia.app
 import numpy as np
 import pytest
 import warnings
+from urllib.error import HTTPError
 from pathlib import Path
 from drone_physics import (
     DroneParams, DroneState, DroneCommand,
     PositionController, PIDController,
     physics_step, euler_to_rotation, rotation_to_euler,
     euler_rates_from_body_rates,
-    run_simulation, GRAVITY,
+    run_simulation, run_trajectory_tracking, GRAVITY,
     AeroCoefficients, Atmosphere, _compute_quadratic_drag,
     _compute_lift, compute_aoa,
     FixedWingAero, QuadrotorAero, MotorModel, BatteryModel, make_generic_quad, make_holybro_x500, make_fixed_wing,
@@ -35,6 +36,7 @@ from validation import (
     compute_rmse,
     compare_sim_real,
     auto_tune_wind_force_scale,
+    ensure_real_log_logs,
 )
 from drone_scenario import run_benchmark, run_irs4_benchmark, replay_mission
 from flight_log import FlightLog
@@ -2739,6 +2741,79 @@ class TestPaperValidation:
             assert_real_log_validation_pass(metrics, mission, multiplier=2.0)
 
 
+class TestTrajectoryTracking:
+    """Tests for run_trajectory_tracking and Phase V replay pipeline fixes."""
+
+    def test_trajectory_tracking_follows_reference(self):
+        """Sim should closely track a simple reference trajectory."""
+        ref_times = np.linspace(0, 10.0, 200)
+        # Gentle helical path: circle in XY, climb in Z
+        ref_positions = np.column_stack([
+            5.0 * np.sin(ref_times * 0.5),
+            5.0 * np.cos(ref_times * 0.5),
+            ref_times * 1.0,  # 1 m/s climb
+        ])
+
+        records = run_trajectory_tracking(
+            ref_times=ref_times,
+            ref_positions=ref_positions,
+            params=make_irs4_quadrotor(),
+            dt=0.01,
+        )
+        sim_times = np.array([r.t for r in records])
+        sim_positions = np.array([r.position for r in records])
+
+        # Only measure accuracy in the second half (after controller settles)
+        metrics = compare_sim_real(sim_times, sim_positions, ref_times, ref_positions)
+        # Should track within 1m RMSE on each axis for this gentle path
+        assert metrics["rmse_z"] < 1.0, f"Z tracking too loose: {metrics['rmse_z']:.3f}"
+        assert metrics["rmse_x"] < 1.5, f"X tracking too loose: {metrics['rmse_x']:.3f}"
+        assert metrics["rmse_y"] < 1.5, f"Y tracking too loose: {metrics['rmse_y']:.3f}"
+
+    def test_trajectory_tracking_starts_at_ref_origin(self):
+        """Sim initial position should match reference trajectory start."""
+        ref_times = np.array([0.0, 1.0, 2.0])
+        ref_positions = np.array([
+            [10.0, 20.0, 5.0],
+            [11.0, 20.0, 5.0],
+            [12.0, 20.0, 5.0],
+        ])
+        records = run_trajectory_tracking(
+            ref_times=ref_times,
+            ref_positions=ref_positions,
+            dt=0.01,
+        )
+        assert len(records) > 0
+        np.testing.assert_allclose(records[0].position, [10.0, 20.0, 5.0], atol=0.01)
+
+    def test_trajectory_tracking_rejects_short_ref(self):
+        """Must have at least 2 reference points."""
+        with pytest.raises(ValueError, match=">=.*2"):
+            run_trajectory_tracking(
+                ref_times=np.array([0.0]),
+                ref_positions=np.array([[0.0, 0.0, 0.0]]),
+            )
+
+    def test_real_log_segments_have_data(self):
+        """All mission segments must yield >= 10 GPS points after masking."""
+        from flight_log import FlightLog
+        from validation import ensure_real_log_logs, REAL_LOG_MISSIONS
+        try:
+            logs = ensure_real_log_logs("data/flight_logs")
+        except (RuntimeError, FileNotFoundError):
+            pytest.skip("Flight logs not available")
+
+        for name, mission in REAL_LOG_MISSIONS.items():
+            log = FlightLog.from_bin(logs[mission.source_filename])
+            rel_t = log.timestamps - log.timestamps[0]
+            mask = (rel_t >= mission.segment_start_s) & (rel_t <= mission.segment_end_s)
+            n = int(np.sum(mask))
+            assert n >= 10, (
+                f"{name}: segment [{mission.segment_start_s}, {mission.segment_end_s}] "
+                f"has only {n} GPS points (need >= 10)"
+            )
+
+
 class TestWindAutoTuning:
     def test_auto_tuning_converges_and_recovers_scale(self):
         t = np.linspace(0.0, 60.0, 601)
@@ -2765,6 +2840,38 @@ class TestWindAutoTuning:
         assert result.converged
         assert result.best_rmse_z < 0.01
         assert abs(result.best_scale - true_scale) < 0.05
+
+
+class TestRealLogDownload:
+    def test_ensure_real_log_logs_uses_existing_local_files(self, tmp_path):
+        existing = {
+            "Carolina_quad_40m_plus_20m.bin",
+            "EPN_quad_30m_plus_20m.bin",
+        }
+        for filename in existing:
+            (tmp_path / filename).write_bytes(b"binlog")
+
+        result = ensure_real_log_logs(str(tmp_path))
+        assert set(result.keys()) == existing
+        for filename, local_path in result.items():
+            assert Path(local_path).exists()
+            assert Path(local_path).name == filename
+
+    def test_ensure_real_log_logs_reports_clear_error_on_all_download_failures(self, tmp_path, monkeypatch):
+        def always_404(url: str, filename: str):
+            raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+
+        monkeypatch.setattr("validation.urlretrieve", always_404)
+
+        with pytest.raises(RuntimeError) as exc:
+            ensure_real_log_logs(str(tmp_path))
+
+        message = str(exc.value)
+        assert "Failed to download required real-log file" in message
+        assert "Carolina_quad_40m_plus_20m.bin" in message or "EPN_quad_30m_plus_20m.bin" in message
+        assert "raw.githubusercontent.com/estebanvt/OSSITLQUAD/master/Flight_logs" in message
+        assert "raw.githubusercontent.com/estebanvt/OSSITLQUAD/main/Flight_logs" in message
+        assert "Place the file manually" in message
 
     def test_auto_tuning_is_reproducible(self):
         t = np.linspace(0.0, 20.0, 401)

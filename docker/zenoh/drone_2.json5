@@ -11,7 +11,22 @@
   },
   "namespace": "/swarm/drone_2",
   "allow": {
-    "publications": ["/fmu/out/vehicle_status"],
-    "subscriptions": ["/fmu/in/offboard_control_mode", "/fmu/in/trajectory_setpoint"]
+    "publications": [
+      "/swarm/drone_2/state",
+      "/swarm/drone_2/consensus/propose",
+      "/swarm/drone_2/consensus/raft_tx"
+    ],
+    "subscriptions": [
+      "/swarm/*/state",
+      "/swarm/*/consensus/raft_tx",
+      "/swarm/drone_2/consensus/raft_rx",
+      "/fmu/in/offboard_control_mode",
+      "/fmu/in/trajectory_setpoint",
+      "/fmu/in/vehicle_command"
+    ]
+  },
+  "deny": {
+    "publications": ["/**"],
+    "subscriptions": ["/rosout", "/parameter_events", "/tf", "/tf_static", "/camera/**", "/lidar/**", "/image/**"]
   }
 }

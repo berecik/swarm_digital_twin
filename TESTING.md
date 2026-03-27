@@ -2,17 +2,23 @@
 
 This document tracks the high-level testing status and provides detailed explanations of the verification suite across the Swarm Digital Twin project.
 
-## Current Status (2026-03-27)
+## Current Status (2026-03-28)
 
 | Module | Unit Tests | Integration Tests | SITL / Hardware | Status |
 | :--- | :---: | :---: | :---: | :--- |
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM + Transport + Timing Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (234) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + Phase V real-log gate + Phase W aero-area gate + Phase X battery/energy gate + Phase Y terrain satellite-texture gate + Phase Z wind auto-tuning gate) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation + quadrotor effective aero-area model + battery & energy model + satellite-texture terrain overlay + wind disturbance auto-tuning |
+| **Drone Physics** (Python) | ✅ Pass (241) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + Phase V real-log gate + Phase W aero-area gate + Phase X battery/energy gate + Phase Y terrain satellite-texture gate + Phase Z wind auto-tuning gate + trajectory-tracking validation) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation + trajectory tracking + quadrotor effective aero-area model + battery & energy model + satellite-texture terrain overlay + wind disturbance auto-tuning |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
+
+Additional consensus/safety validation introduced:
+- `consensus::tests::mission_command_round_trip`
+- `consensus::tests::raft_message_round_trip`
+- `consensus::tests::rejects_cluster_smaller_than_six`
+- `px4_safety::tests::rejects_non_finite_setpoint`
 
 ## 📂 Detailed Test Catalog
 
@@ -134,7 +140,25 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
     - **Input**: Identical reference signal and simulation callback evaluated in two consecutive runs.
     - **Expected Outcome**: Both runs produce identical `best_scale`, `best_rmse_z`, and full optimization history.
 
-#### A5. Phase X Battery and Energy Model
+#### A5. Phase V Trajectory Tracking and Real-Log Validation Fix
+- **`TestTrajectoryTracking::test_trajectory_tracking_follows_reference`**:
+    - **Purpose**: Verifies `run_trajectory_tracking` follows a reference trajectory with sub-meter RMSE.
+    - **Input**: Gentle helical path, IRS-4 quadrotor, no wind.
+    - **Expected Outcome**: RMSE_z < 1.0m, RMSE_x < 1.5m, RMSE_y < 1.5m.
+- **`TestTrajectoryTracking::test_trajectory_tracking_starts_at_ref_origin`**:
+    - **Purpose**: Simulation initial position matches the reference trajectory start point.
+    - **Input**: Reference starting at (10, 20, 5).
+    - **Expected Outcome**: First sim record position matches within 0.01m.
+- **`TestTrajectoryTracking::test_trajectory_tracking_rejects_short_ref`**:
+    - **Purpose**: Validates input guard for minimum reference length.
+    - **Input**: Single-point reference.
+    - **Expected Outcome**: `ValueError` raised.
+- **`TestTrajectoryTracking::test_real_log_segments_have_data`**:
+    - **Purpose**: All 4 mission segment boundaries yield sufficient GPS data points.
+    - **Input**: `REAL_LOG_MISSIONS` segment masks applied to downloaded flight logs.
+    - **Expected Outcome**: Each segment has >= 10 GPS points (catches gap/boundary misalignment).
+
+#### A6. Phase X Battery and Energy Model
 - **`TestBatteryModel::test_lipo_voltage_curve_is_soc_dependent`**:
     - **Purpose**: Verifies Li-Po open-circuit voltage follows SoC (full > mid > empty) and known endpoint voltages.
     - **Input**: `BatteryModel(cells=6)` evaluated at `SoC={1.0, 0.5, 0.0}`.

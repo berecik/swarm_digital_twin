@@ -7,9 +7,9 @@ use nalgebra::Vector3;
 use tokio;
 
 use swarm_control_core::driver_core::{DriverAction, DriverCore, DriverStatus};
+use swarm_control_core::px4_safety::{Px4CommandKind, Px4SafetyBuilder};
 
 mod utils;
-use utils::{enu_to_ned, get_clock_microseconds};
 
 pub struct OffboardController {
     core: DriverCore,
@@ -50,38 +50,29 @@ impl OffboardController {
     }
 
     pub fn publish_heartbeat(&self) -> Result<(), rclrs::RclrsError> {
-        let mut msg = OffboardControlMode::default();
-        msg.timestamp = get_clock_microseconds();
-        msg.position = true;
-        msg.velocity = false;
-        msg.acceleration = false;
-        msg.attitude = false;
-        msg.body_rate = false;
+        let msg = Px4SafetyBuilder::heartbeat_mode();
         self.offboard_control_mode_publisher.publish(&msg)
     }
 
     pub fn publish_trajectory_setpoint(&self, enu_pos: Vector3<f32>) -> Result<(), rclrs::RclrsError> {
-        let mut msg = TrajectorySetpoint::default();
-        msg.timestamp = get_clock_microseconds();
-        let ned_pos = enu_to_ned(enu_pos.x, enu_pos.y, enu_pos.z);
-        msg.position = ned_pos;
-        msg.yaw = 0.0; // North in NED
-        msg.velocity = [f32::NAN; 3];
-        msg.acceleration = [f32::NAN; 3];
+        let Ok(msg) = Px4SafetyBuilder::trajectory_setpoint(enu_pos) else {
+            return Ok(());
+        };
         self.trajectory_setpoint_publisher.publish(&msg)
     }
 
     pub fn send_command(&self, command: u32, param1: f32, param2: f32) -> Result<(), rclrs::RclrsError> {
-        let mut msg = VehicleCommand::default();
-        msg.timestamp = get_clock_microseconds();
-        msg.command = command;
-        msg.param1 = param1;
-        msg.param2 = param2;
-        msg.target_system = 1;
-        msg.target_component = 1;
-        msg.source_system = 1;
-        msg.source_component = 1;
-        msg.from_external = true;
+        let msg = match command {
+            176 => Px4SafetyBuilder::command(Px4CommandKind::SetOffboard),
+            400 => Px4SafetyBuilder::command(Px4CommandKind::Arm),
+            _ => {
+                let mut cmd = Px4SafetyBuilder::command(Px4CommandKind::SetOffboard);
+                cmd.command = command;
+                cmd.param1 = param1;
+                cmd.param2 = param2;
+                cmd
+            }
+        };
         self.vehicle_command_publisher.publish(&msg)
     }
 

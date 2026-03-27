@@ -74,6 +74,22 @@ To develop with the full stack (ROS 2, Zenoh, PX4 Messages):
 - **Style:** Run `cargo fmt` and `cargo clippy`.
 - **ROS 2:** Use `Arc<Mutex<T>>` for shared node state.
 - **Conversion:** Always perform NED (PX4) to ENU (ROS 2) conversions at the interface boundary.
+- **PX4 Flight-Loop Safety Wrapper:** Use `swarm_control::px4_safety::Px4SafetyBuilder` for 400Hz command construction to guarantee finite setpoints and zero-panic message construction.
+
+### Swarm Network Emulation (packet loss + latency)
+
+To emulate unstable mesh conditions during local validation:
+
+```bash
+./scripts/swarm_netem.sh lo0 apply
+```
+
+This applies UDP shaping for `100ms` latency and `5%` packet loss (macOS `dummynet`/`pf`).
+Clear it with:
+
+```bash
+./scripts/swarm_netem.sh lo0 clear
+```
 
 ### Python (`perception`, `simulation`)
 - **Style:** PEP 8 compliance.

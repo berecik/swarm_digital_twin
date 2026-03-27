@@ -1,0 +1,32 @@
+{
+  "mode": "peer",
+  "metadata": {
+    "author": "beret@hipisi.org.pl",
+    "company": "Marysia Software Limited",
+    "domain": "app.marysia.drone",
+    "website": "https://marysia.app"
+  },
+  "connect": {
+    "endpoints": ["tcp/10.10.1.11:7447"]
+  },
+  "namespace": "/swarm/drone_5",
+  "allow": {
+    "publications": [
+      "/swarm/drone_5/state",
+      "/swarm/drone_5/consensus/propose",
+      "/swarm/drone_5/consensus/raft_tx"
+    ],
+    "subscriptions": [
+      "/swarm/*/state",
+      "/swarm/*/consensus/raft_tx",
+      "/swarm/drone_5/consensus/raft_rx",
+      "/fmu/in/offboard_control_mode",
+      "/fmu/in/trajectory_setpoint",
+      "/fmu/in/vehicle_command"
+    ]
+  },
+  "deny": {
+    "publications": ["/**"],
+    "subscriptions": ["/rosout", "/parameter_events", "/tf", "/tf_static", "/camera/**", "/lidar/**", "/image/**"]
+  }
+}
