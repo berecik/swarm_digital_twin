@@ -6,10 +6,11 @@
 # Website: https://marysia.app
 #
 # Usage:
-#   ./run_scenario.sh              # run swarm scenario then open 3D visualization
+#   ./run_scenario.sh              # run single-drone scenario then open 3D visualization
 #   ./run_scenario.sh --single     # run single-drone scenario then open 3D visualization
-#   ./run_scenario.sh --sim-only   # run swarm scenario only (no GUI)
-#   ./run_scenario.sh --viz-only   # open visualization (using existing swarm data)
+#   ./run_scenario.sh --swarm [N]  # run swarm scenario for N drones (default: 6) + visualization
+#   ./run_scenario.sh --sim-only   # run single-drone scenario only (no GUI)
+#   ./run_scenario.sh --viz-only   # open visualization (using existing single-drone data)
 #   ./run_scenario.sh --test       # run physics tests
 #   ./run_scenario.sh --benchmark  # run deterministic benchmark validation gates
 #   ./run_scenario.sh --all        # run tests, benchmark, scenario, and visualization
@@ -78,8 +79,9 @@ run_tests() {
 }
 
 run_scenario() {
+    local drone_count="${1:-6}"
     info "Running swarm flight scenario..."
-    python "$SIM_DIR/swarm_scenario.py"
+    python "$SIM_DIR/swarm_scenario.py" --drones "$drone_count"
     ok "Swarm scenario complete — data saved"
 }
 
@@ -108,27 +110,27 @@ run_benchmark() {
 }
 
 run_viz() {
-    local data_file="$SIM_DIR/swarm_data.npz"
+    local data_file="${1:-$SIM_DIR/scenario_data.npz}"
     if [ ! -f "$data_file" ]; then
-        warn "No swarm data found. Running swarm scenario first..."
-        run_scenario
+        if [ "$data_file" = "$SIM_DIR/swarm_data.npz" ]; then
+            warn "No swarm data found. Running swarm scenario first..."
+            run_scenario
+        else
+            warn "No single-drone data found. Running single-drone scenario first..."
+            run_single_scenario
+        fi
     fi
     info "Launching 3D visualization..."
     python "$SIM_DIR/visualize_drone_3d.py" "$data_file"
 }
 
 run_single_viz() {
-    local data_file="$SIM_DIR/scenario_data.npz"
-    if [ ! -f "$data_file" ]; then
-        warn "No single-drone data found. Running single-drone scenario first..."
-        run_single_scenario
-    fi
-    info "Launching 3D visualization..."
-    python "$SIM_DIR/visualize_drone_3d.py" "$data_file"
+    run_viz "$SIM_DIR/scenario_data.npz"
 }
 
 # ── Parse args ───────────────────────────────────────────────────────────────
 MODE="${1:---default}"
+SWARM_DRONES="${2:-6}"
 
 case "$MODE" in
     --single)
@@ -138,11 +140,19 @@ case "$MODE" in
         ;;
     --sim-only)
         ensure_venv
-        run_scenario
+        run_single_scenario
+        ;;
+    --swarm)
+        ensure_venv
+        if ! [[ "$SWARM_DRONES" =~ ^[1-9][0-9]*$ ]]; then
+            fail "Invalid drone count: $SWARM_DRONES (must be a positive integer)"
+        fi
+        run_scenario "$SWARM_DRONES"
+        run_viz "$SIM_DIR/swarm_data.npz"
         ;;
     --viz-only)
         ensure_venv
-        run_viz
+        run_single_viz
         ;;
     --test)
         RUN_TESTS=1 ensure_venv
@@ -152,20 +162,21 @@ case "$MODE" in
         RUN_TESTS=1 ensure_venv
         run_tests
         run_benchmark
-        run_scenario
-        run_viz
+        run_single_scenario
+        run_single_viz
         ;;
     --benchmark)
         ensure_venv
         run_benchmark
         ;;
     --help|-h)
-        echo "Usage: $0 [--single|--sim-only|--viz-only|--test|--benchmark|--all|--help]"
+        echo "Usage: $0 [--single|--swarm [N]|--sim-only|--viz-only|--test|--benchmark|--all|--help]"
         echo ""
-        echo "  (default)    Run swarm scenario then open 3D visualization"
+        echo "  (default)    Run single-drone scenario then open 3D visualization"
         echo "  --single     Run single-drone scenario then open 3D visualization"
-        echo "  --sim-only   Run swarm scenario only (no GUI)"
-        echo "  --viz-only   Open visualization (uses existing swarm data)"
+        echo "  --swarm [N]  Run swarm scenario for N drones (default: 6) then visualize"
+        echo "  --sim-only   Run single-drone scenario only (no GUI)"
+        echo "  --viz-only   Open visualization (uses existing single-drone data)"
         echo "  --test       Run physics tests"
         echo "  --benchmark  Run deterministic benchmark validation gates"
         echo "  --all        Run tests, benchmark, then swarm scenario and visualization"
@@ -173,8 +184,8 @@ case "$MODE" in
         ;;
     --default)
         ensure_venv
-        run_scenario
-        run_viz
+        run_single_scenario
+        run_single_viz
         ;;
     *)
         fail "Unknown option: $MODE (use --help)"
