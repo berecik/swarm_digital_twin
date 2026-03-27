@@ -364,7 +364,12 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_gimbal_lock_raises`**: ValueError at theta=π/2 (cos(theta)≈0).
 - **`test_symmetric_roll`**: Negating phi changes coupling sign on theta_dot.
 
-#### AO. Sensor Noise Models (Phase S)
+#### AO. Motor Dynamics (Phase T)
+- **`test_motor_step_response_reaches_63pct_near_tau`**: Motor speed reaches ~63% of commanded value after one time-constant (τ=0.05s), validating first-order spin-up dynamics.
+- **`test_motor_steady_state_matches_kt_omega_squared`**: At steady state, motor thrust matches `k_T·ω²` relationship from paper Eq. 4.
+- **`test_default_physics_step_without_motor_model_stays_backward_compatible`**: With `motor_dynamics_enabled=False`, physics_step produces identical results to legacy behavior.
+
+#### AP. Sensor Noise Models (Phase S)
 - **`test_gps_noise_quantization_and_statistics`**: GPS output quantized to 1e-7 deg; horizontal CEP < 3.5m; altitude σ < 6m.
 - **`test_gps_noise_drift_growth_and_zero_dt_bias_behavior`**: GPS random-walk drift magnitude grows over long horizon (`~sqrt(t)` trend via early/late windows), and `dt=0.0` keeps internal bias unchanged.
 - **`test_imu_noise_density_matches_order_of_magnitude`**: Accelerometer/gyro white noise σ matches configured density within 20%.

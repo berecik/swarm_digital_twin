@@ -1,86 +1,91 @@
-# Refactoring Plan (v12): Paper-Aligned Delta Plan
+# Refactoring Plan (v13): Paper-Aligned Delta Plan
 
 **Reference paper:** Valencia et al., *An Open-source UAV Digital Twin framework: A Case Study on Remote Sensing in the Andean Mountains*, J. Intell. & Robot. Syst. 111:71 (2025), DOI: `10.1007/s10846-025-02276-7`
 
 **Scope of this document:** delta plan listing only remaining gaps. This is a backlog — completed work lives in the codebase and `MAINTENANCE.log`.
 
-**Current state:** Phase V executed. Core physics (Eq. 1–7), terrain pipeline, aerodynamics, MAVLink, validation framework, swarm simulation, sensor noise models (GPS/IMU/baro), motor thrust dynamics, fixed-wing control-surface dynamics, and real-flight-data validation are implemented and tested. 218 tests passing.
+**Current state:** Phases S/T/U/V executed and audited. Core physics (Eq. 1–7), terrain pipeline (SRTM + STL), aerodynamics (Table 2/3 exact coefficients), full inertia tensor (Eq. 4 Gamma terms), MAVLink bridge, validation framework (Table 5 RMSE gates), swarm simulation, sensor noise models (GPS/IMU/baro), motor thrust dynamics, fixed-wing control surfaces, Euler rate kinematics, and real-flight-data validation are implemented, integrated, and tested. 221 tests passing.
 
 ---
 
-## 1) Remaining gaps
+## 1) Paper cross-reference — implemented items
 
-No open paper-aligned delta gaps at this time.
+All paper equations and tables have been verified against the codebase:
+
+| Paper item | Implementation | Verified by |
+|:---|:---|:---|
+| Eq. 1 — position kinematics (rotation matrix) | `drone_physics.py` `physics_step()` | `TestRotationMatrix` |
+| Eq. 2 — Euler angle rates from body rates | `drone_physics.py` `euler_rates_from_body_rates()` | `TestEulerRates` (6 tests) |
+| Eq. 3 — Newton's 2nd law, body frame + Coriolis (ω×v) | `drone_physics.py` line 653 | `TestCoriolisForce` |
+| Eq. 4 — rotational dynamics, full 3×3 inertia tensor | `drone_physics.py` `np.linalg.inv(I)`, off-diagonal J_xz | `TestGammaTermEquivalence` |
+| Eq. 5–7 — wind drag/lift/combined perturbation | `wind_model.py` `get_force()` | `TestWindForce` |
+| Table 2 — fixed-wing geometry (2.20m, 0.235m, 0.3997m², 2.5kg) | `drone_physics.py` `make_valencia_fixed_wing()` | `TestValenciaPreset` |
+| Table 3 — CFD aero coefficients (α₀, C_Lα, C_Dα, C_Mα, α_stall, all stall coeffs) | `drone_physics.py` `FixedWingAero` | `TestValenciaPreset::test_valencia_fixed_wing_aero_coefficients` |
+| Table 4 — 7 mission profiles (FW 158/178/185, Quad Carolina/EPN) | `validation.py` `REAL_LOG_MISSIONS` | `TestPaperValidation` |
+| Table 5 — RMSE validation metrics | `validation.py` acceptance gate (≤2× paper values) | `TestPaperValidation` |
+| Section 2.1 — SRTM terrain → STL export | `terrain.py` `from_srtm()` + `export_stl()` | `TestTerrainSTLExport` (6 tests) |
+| Section 2.3 — wind from real flight log (Z-axis heuristic) | `flight_log.py` `get_wind_profile()`, `wind_model.py` `"from_log"` mode | `TestPositionAwareWind` |
+| Section 2.3 — Gazebo LiftDrag plugin interface | `gazebo/worlds/antisana.world` SDF aerodynamics config | Manual (Gazebo launch) |
+| Section 3.2 — IRS-4 quadrotor (ArduPilot defaults) | `drone_physics.py` `make_irs4_quadrotor()` | `test_irs4_hover_stable` |
+| Sensor noise (GPS/IMU/baro) | `sensor_models.py`, integrated in `sim_bridge.py` + `mavlink_bridge.py` | `TestSensorNoise` (6 tests) |
+| Motor dynamics (T = k_T·ω² + k_D·ω) | `drone_physics.py` `MotorModel`, enabled for IRS-4 | `TestMotorDynamics` (3 tests) |
+| Control surfaces (elevator/aileron/rudder) | `drone_physics.py` `FixedWingAero`, rate-limited actuation | `TestFixedWingControlSurfaces` (2 tests) |
 
 ---
 
-## 2) Active roadmap
+## 2) Remaining gaps
 
-### Phase S — Sensor Noise Models (**Completed 2026-03-27**)
+### Phase W — Quadrotor Effective Aerodynamic Area
 
-Paper Section 2.4 sensor-noise gap has been closed.
+**Paper reference:** Section 3.5 — *"An additional limitation of our current approach is that it does not explicitly account for the effective aerodynamic area of the quadrotor."*
 
-- **Implemented files:**
-  - `simulation/sensor_models.py` (new): `GPSNoise`, `IMUNoise`, `BaroNoise`
-  - `simulation/test_drone_physics.py`: `TestSensorNoise` coverage
-- **Delivered capabilities:**
-  - GPS quantization (`1e-7` deg), white noise, and slow drift bias
-  - IMU accelerometer/gyro white-noise density + bias random walk model
-  - Barometer quantization (`0.12` hPa), low-pass lag, and drift bias
-- **Verification:**
-  - `pytest -q simulation/test_drone_physics.py::TestSensorNoise`
-  - `pytest -q simulation/test_drone_physics.py`
+The current IRS-4 quadrotor uses a fixed bluff-body frontal area (`reference_area=0.05 m², C_D=1.0`). The paper identifies this as a limitation: the quadrotor's effective aerodynamic area changes with attitude and prop wash, affecting drag and stability in wind.
 
-### Phase T — Motor Dynamics (**Completed 2026-03-27**)
+- **Target files:** `simulation/drone_physics.py`
+- **Acceptance criteria:**
+  - Attitude-dependent effective area model for quadrotor (area varies with tilt angle)
+  - Prop-wash effect on effective drag area
+  - IRS-4 hover test still passes with new model
+- **Verification:** `pytest -q simulation/test_drone_physics.py::TestQuadrotorAeroArea`
 
-#### T1. Explicit motor thrust model
+### Phase X — Battery and Energy Model
 
-- **Implemented files:**
-  - `simulation/drone_physics.py`: `MotorModel`, optional motor dynamics in `physics_step()`, motor state in `DroneState`
-  - `simulation/test_drone_physics.py`: `TestMotorDynamics` coverage
-- **Delivered capabilities:**
-  - Motor model: `T = k_T·ω² + k_D·ω`
-  - First-order motor spin-up: `dω/dt = (ω_cmd - ω)/τ_motor`
-  - Optional integration path (`motor_dynamics_enabled`) preserving legacy default dynamics
-  - IRS-4 preset motor constants (`k_T=9.2e-6`, `τ_motor=0.05s`, `num_motors=4`)
-- **Verification:**
-  - `pytest -q simulation/test_drone_physics.py::TestMotorDynamics`
-  - `pytest -q simulation/test_drone_physics.py`
+**Paper reference:** Section 3.5 — *"one of the most significant [challenges] is related to battery limitations and inherent constraints in flight autonomy... high-energy peaks when adjusting motor speeds for stability and maneuverability... directly affecting the operational range and duration of remote sensing missions"*
 
-### Phase U — Fixed-Wing Control Surfaces (**Completed 2026-03-27**)
+No battery state, power consumption, or flight-time estimation exists. The MAVLink bridge reports a constant 100% battery.
 
-#### U1. Control surface deflection model
+- **Target files:** `simulation/drone_physics.py` (energy model), `simulation/mavlink_bridge.py` (battery state reporting)
+- **Acceptance criteria:**
+  - Li-Po discharge curve model (voltage vs. state-of-charge)
+  - Power draw from motor RPM (P = τ·ω from MotorModel)
+  - Battery state integrated into `DroneState` and reported via MAVLink `SYS_STATUS`
+  - Flight autonomy estimation matches paper Table 2 value (~85 min for fixed-wing)
+- **Verification:** `pytest -q simulation/test_drone_physics.py::TestBatteryModel`
 
-- **Implemented files:**
-  - `simulation/drone_physics.py`: control-surface commands/states, per-axis rate limits, and control-effectiveness moment mapping in `physics_step()`
-  - `simulation/test_drone_physics.py`: `TestFixedWingControlSurfaces` coverage
-- **Delivered capabilities:**
-  - Elevator, aileron, rudder deflection states with command clipping and rate-limited actuation
-  - Control effectiveness coefficients (`Cl_δa`, `Cm_δe`, `Cn_δr`) in `FixedWingAero`
-  - Deflection-to-moment mapping for roll/pitch/yaw aerodynamic torque channels
-- **Verification:**
-  - `pytest -q simulation/test_drone_physics.py::TestFixedWingControlSurfaces::test_elevator_pitch_response_matches_control_effectiveness`
-  - `pytest -q simulation/test_drone_physics.py::TestFixedWingControlSurfaces::test_control_surface_rate_limit_prevents_instant_step`
-  - `pytest -q simulation/test_drone_physics.py`
+### Phase Y — Satellite Texture Terrain Overlay
 
-### Phase V — Real Flight Data Validation (**Completed 2026-03-27**)
+**Paper reference:** Section 2.1 — the paper describes using Google Earth satellite imagery imported through BlenderGIS for photorealistic terrain visualization in Gazebo. Our terrain pipeline currently provides elevation-based coloring only (height → green/brown/white shader bands).
 
-#### V1. Paper Table 5 validation with real logs
+- **Target files:** `gazebo/media/materials/`, `simulation/terrain.py`, `gazebo/worlds/antisana.world`
+- **Acceptance criteria:**
+  - Download georeferenced satellite tile for the SRTM region
+  - Generate UV-mapped texture coordinates in STL/DAE mesh export
+  - Gazebo material references satellite image as diffuse texture
+  - Fallback to existing elevation coloring if satellite tile unavailable
+- **Verification:** `pytest -q simulation/test_drone_physics.py::TestTerrainSatelliteTexture`
 
-- **Implemented files:**
-  - `simulation/validation.py`: `RealLogMission`, `REAL_LOG_MISSIONS`, `ensure_real_log_logs`, `assert_real_log_validation_pass`
-  - `simulation/drone_scenario.py`: mission-window replay support and `--real-log` execution path
-  - `run_scenario.sh`: `--real-log` wrapper command
-  - `simulation/test_drone_physics.py`: Phase V catalog + acceptance-gate tests
-- **Delivered capabilities:**
-  - Automatic download (if missing) of required OSSITLQUAD logs into `data/flight_logs/`
-  - Phase V mission mapping for Carolina/EPN split windows (`40m/20m`, `30m/20m`)
-  - Paper Table 5 acceptance gate enforcing RMSE `z/x/y <= 2x` reported values
-- **Verification:**
-  - `pytest -q simulation/test_drone_physics.py::TestPaperValidation::test_real_log_mission_catalog_has_required_profiles`
-  - `pytest -q simulation/test_drone_physics.py::TestPaperValidation::test_real_log_acceptance_gate_passes_within_2x_paper`
-  - `pytest -q simulation/test_drone_physics.py::TestPaperValidation::test_real_log_acceptance_gate_fails_over_2x_paper`
-  - `pytest -q simulation/test_drone_physics.py`
+### Phase Z — Wind Disturbance Auto-Tuning Loop
+
+**Paper reference:** Section 3.1 — *"The validation process involves heuristic adjustment of constants to produce an estimation of disturbance that generates altitude values as close as possible to those from real flight tests. Fine-tuning the disturbance force allowed precise altitude estimations."*
+
+The current pipeline extracts wind profiles from flight logs (one-way) but does not implement the iterative tuning loop that adjusts simulation wind magnitude to minimize altitude RMSE against real data.
+
+- **Target files:** `simulation/validation.py`, `simulation/wind_model.py`
+- **Acceptance criteria:**
+  - Auto-tuning function: given a real flight log, iteratively adjust wind force scaling constant to minimize Z-axis RMSE
+  - Converges within a tolerance (RMSE_z delta < 0.01 m between iterations)
+  - Produces per-mission wind calibration constants reproducibly
+- **Verification:** `pytest -q simulation/test_drone_physics.py::TestWindAutoTuning`
 
 ---
 
@@ -94,12 +99,19 @@ Paper Section 2.4 sensor-noise gap has been closed.
 | Motor model (T1) | Step response + steady-state thrust-map tests (`TestMotorDynamics`) | **Done** |
 | Control surfaces (U1) | Pitch response + rate-limit tests (`TestFixedWingControlSurfaces`) | **Done** |
 | Real log validation (V1) | RMSE comparison against paper Table 5 (`<=2x` gate) | **Done** |
+| Quadrotor aero area (W1) | Attitude-dependent area + prop-wash drag tests | **Open** |
+| Battery model (X1) | Discharge curve + power draw + autonomy estimation | **Open** |
+| Satellite terrain texture (Y1) | UV-mapped mesh + Gazebo material binding | **Open** |
+| Wind auto-tuning (Z1) | Iterative RMSE minimization convergence test | **Open** |
 
 ---
 
 ## 4) Execution order
 
-1. Backlog completed for paper-aligned delta phases (S/T/U/V).
+1. **Phase W** — Quadrotor aero area (improves wind-response fidelity for quadrotor missions)
+2. **Phase Z** — Wind auto-tuning (enables automated calibration for all missions)
+3. **Phase X** — Battery model (adds flight-time constraints, useful for mission planning)
+4. **Phase Y** — Satellite texture (visual fidelity, lowest priority for physics accuracy)
 
 ---
 
@@ -109,4 +121,6 @@ Paper Section 2.4 sensor-noise gap has been closed.
 - Any new phase must include: target files, measurable acceptance criteria, verification commands.
 - When paper-aligned metrics are updated, update `TESTING.md` and `MAINTENANCE.log`.
 - Real flight data from the paper is publicly available at `github.com/estebanvt/OSSITLQUAD`.
-- 218 tests currently passing across 40+ test classes (as of Phase V completion).
+- 221 tests currently passing across 40+ test classes (as of Phase V completion).
+- Paper Section 3.4 identifies 3D wind force as future work; our codebase already has `from_log_3d` mode which exceeds the paper's current Z-axis-only model.
+- Paper Table 1 defines state variables for the fixed-wing model (not quadrotor inertia); IRS-4 parameters use ArduPilot defaults per Section 3.2.

@@ -350,7 +350,7 @@ def make_irs4_quadrotor(altitude_msl: float = 2800.0) -> DroneParams:
             tau_motor=0.05,             # paper-aligned motor spin-up timescale
             num_motors=4,
         ),
-        motor_dynamics_enabled=False,   # keep legacy hover behavior unless explicitly enabled
+        motor_dynamics_enabled=True,    # Phase T: use Eq. 4 motor dynamics
         aero=AeroCoefficients(
             reference_area=0.05,         # frontal area (compact quad frame)
             C_D=1.0,                     # bluff-body drag

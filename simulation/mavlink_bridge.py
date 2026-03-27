@@ -493,13 +493,21 @@ class MAVLinkBridge:
         )
         self._sock.sendto(msg, target)
 
-        # VFR_HUD
+        # VFR_HUD (optionally noisy barometer altitude)
+        hud_alt = alt_msl
+        hud_climb = state.velocity[2]
+        if self._baro_noise is not None:
+            from drone_physics import Atmosphere
+            true_pressure = Atmosphere(altitude_msl=alt_msl).pressure_pa / 100.0  # hPa
+            noisy_pressure = self._baro_noise.apply(true_pressure, dt=0.02)
+            # Convert noisy pressure back to altitude via barometric formula
+            hud_alt = 44330.0 * (1.0 - (noisy_pressure / 1013.25) ** 0.190284)
         msg = build_vfr_hud(
             airspeed=speed, groundspeed=speed,
             heading_deg=heading_deg,
             throttle_pct=int(state.thrust_pct),
-            alt_msl=alt_msl,
-            climb_rate=state.velocity[2],
+            alt_msl=hud_alt,
+            climb_rate=hud_climb,
             system_id=self.system_id, component_id=self.component_id,
             seq=self._next_seq(),
         )

@@ -34,7 +34,7 @@ from drone_physics import (
     make_holybro_x500,
 )
 from wind_model import WindField
-from sensor_models import GPSNoise, IMUNoise
+from sensor_models import GPSNoise
 
 
 class SimBridge:
@@ -58,7 +58,6 @@ class SimBridge:
 
         # Sensor noise (Phase S)
         self.gps_noise = GPSNoise() if sensor_noise else None
-        self.imu_noise = IMUNoise() if sensor_noise else None
 
         # Vehicle status FSM (mirrors PX4 nav/arming states)
         self.nav_state = 0
