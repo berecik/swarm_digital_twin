@@ -94,6 +94,7 @@ No Docker, no ROS 2 — just Python 3 and a terminal:
 ./run_scenario.sh --sim-only   # run scenario (no GUI)
 ./run_scenario.sh --viz-only   # open visualization with existing data
 ./run_scenario.sh --all        # tests → scenario → visualization
+./run_scenario.sh --ci-local   # run local CI/CD-equivalent pipeline (tests + all CI benchmarks)
 ./run_scenario.sh --phase-a    # tests + deterministic benchmark validation gates
 ```
 
@@ -138,6 +139,9 @@ The scenario flies a drone through 7 waypoints over rolling-hill terrain with qu
 
 # Reproducible validation baseline (tests + benchmark gates)
 ./run_scenario.sh --all
+
+# Local CI/CD-equivalent gate (same sequence as .github/workflows/ci.yml)
+./run_scenario.sh --ci-local
 
 # Rust swarm control (requires ROS 2 environment)
 cd swarm_control

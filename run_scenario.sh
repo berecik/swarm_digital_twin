@@ -9,6 +9,7 @@
 #   ./run_scenario.sh              # run single-drone scenario then open 3D visualization
 #   ./run_scenario.sh --single     # run single-drone scenario then open 3D visualization
 #   ./run_scenario.sh --swarm [N]  # run swarm scenario for N drones (default: 6) + visualization
+#   ./run_scenario.sh --ci-local   # run local CI/CD-equivalent pipeline (tests + all benchmarks)
 #   ./run_scenario.sh --sim-only   # run single-drone scenario only (no GUI)
 #   ./run_scenario.sh --viz-only   # open visualization (using existing single-drone data)
 #   ./run_scenario.sh --test       # run physics tests
@@ -109,6 +110,30 @@ run_benchmark() {
     ok "Deterministic benchmark validation passed"
 }
 
+run_ci_local() {
+    info "Running local CI/CD pipeline equivalent (.github/workflows/ci.yml)..."
+
+    info "[CI local] Physics test suite"
+    python -m pytest "$SIM_DIR/test_drone_physics.py" -v --tb=short
+
+    info "[CI local] Fixed-wing benchmarks"
+    python "$SIM_DIR/drone_scenario.py" --benchmark moderate
+    python "$SIM_DIR/drone_scenario.py" --benchmark strong_wind
+    python "$SIM_DIR/drone_scenario.py" --benchmark crosswind
+    python "$SIM_DIR/drone_scenario.py" --benchmark storm
+
+    info "[CI local] IRS-4 quadrotor benchmarks"
+    python "$SIM_DIR/drone_scenario.py" --benchmark irs4_carolina
+    python "$SIM_DIR/drone_scenario.py" --benchmark irs4_epn
+
+    info "[CI local] Swarm benchmarks"
+    python "$SIM_DIR/swarm_scenario.py" --benchmark baseline
+    python "$SIM_DIR/swarm_scenario.py" --benchmark crosswind
+    python "$SIM_DIR/swarm_scenario.py" --benchmark gusty
+
+    ok "Local CI/CD pipeline equivalent passed"
+}
+
 run_viz() {
     local data_file="${1:-$SIM_DIR/scenario_data.npz}"
     if [ ! -f "$data_file" ]; then
@@ -158,6 +183,10 @@ case "$MODE" in
         RUN_TESTS=1 ensure_venv
         run_tests
         ;;
+    --ci-local)
+        RUN_TESTS=1 ensure_venv
+        run_ci_local
+        ;;
     --all)
         RUN_TESTS=1 ensure_venv
         run_tests
@@ -170,7 +199,7 @@ case "$MODE" in
         run_benchmark
         ;;
     --help|-h)
-        echo "Usage: $0 [--single|--swarm [N]|--sim-only|--viz-only|--test|--benchmark|--all|--help]"
+        echo "Usage: $0 [--single|--swarm [N]|--sim-only|--viz-only|--test|--benchmark|--ci-local|--all|--help]"
         echo ""
         echo "  (default)    Run single-drone scenario then open 3D visualization"
         echo "  --single     Run single-drone scenario then open 3D visualization"
@@ -179,6 +208,7 @@ case "$MODE" in
         echo "  --viz-only   Open visualization (uses existing single-drone data)"
         echo "  --test       Run physics tests"
         echo "  --benchmark  Run deterministic benchmark validation gates"
+        echo "  --ci-local   Run local CI/CD-equivalent pipeline (tests + all CI benchmarks)"
         echo "  --all        Run tests, benchmark, then swarm scenario and visualization"
         echo "  --help       Show this help"
         ;;
