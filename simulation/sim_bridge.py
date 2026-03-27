@@ -34,12 +34,14 @@ from drone_physics import (
     make_holybro_x500,
 )
 from wind_model import WindField
+from sensor_models import GPSNoise, IMUNoise
 
 
 class SimBridge:
     """UDP server that bridges Rust driver actions to Python physics."""
 
-    def __init__(self, port: int = 9100, dt: float = 0.02, params: DroneParams = None):
+    def __init__(self, port: int = 9100, dt: float = 0.02, params: DroneParams = None,
+                 sensor_noise: bool = True):
         self.port = port
         self.dt = dt
         self.params = params or make_holybro_x500()
@@ -53,6 +55,10 @@ class SimBridge:
         )
         self.controller = PositionController(self.params)
         self.wind = WindField(wind_speed=0.0, wind_direction=np.array([1.0, 0.0, 0.0]))
+
+        # Sensor noise (Phase S)
+        self.gps_noise = GPSNoise() if sensor_noise else None
+        self.imu_noise = IMUNoise() if sensor_noise else None
 
         # Vehicle status FSM (mirrors PX4 nav/arming states)
         self.nav_state = 0
@@ -92,11 +98,21 @@ class SimBridge:
         self.state = physics_step(self.state, cmd, self.params, self.dt, wind=self.wind)
 
     def make_status_message(self) -> dict:
-        """Build the status JSON to send back to Rust."""
+        """Build the status JSON to send back to Rust.
+
+        If sensor noise is enabled, the reported position includes GPS-class
+        perturbation so the Rust controller sees realistic noisy feedback.
+        """
+        pos = self.state.position.copy()
+        if self.gps_noise is not None:
+            # Apply noise in local frame (meters) directly
+            pos[0] += np.random.normal(0.0, self.gps_noise.horizontal_sigma_m)
+            pos[1] += np.random.normal(0.0, self.gps_noise.horizontal_sigma_m)
+            pos[2] += np.random.normal(0.0, self.gps_noise.vertical_sigma_m)
         return {
             "nav_state": self.nav_state,
             "arming_state": self.arming_state,
-            "position": self.state.position.tolist(),
+            "position": pos.tolist(),
         }
 
     def run(self, max_steps: int = 0):

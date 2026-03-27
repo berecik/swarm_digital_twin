@@ -378,7 +378,8 @@ class MAVLinkBridge:
     def __init__(self, target_ip: str = "127.0.0.1", target_port: int = 14550,
                  listen_port: int = 14551, system_id: int = 1,
                  component_id: int = 1, mav_type: int = MAV_TYPE_QUADROTOR,
-                 heartbeat_rate_hz: float = 1.0):
+                 heartbeat_rate_hz: float = 1.0,
+                 sensor_noise: bool = False):
         self.target_ip = target_ip
         self.target_port = target_port
         self.listen_port = listen_port
@@ -396,6 +397,16 @@ class MAVLinkBridge:
         self._position_targets: List[PositionTarget] = []
         self._lock = threading.Lock()
         self._last_state: Optional[SimState] = None
+
+        # Sensor noise injection (Phase S)
+        self._gps_noise = None
+        self._imu_noise = None
+        self._baro_noise = None
+        if sensor_noise:
+            from sensor_models import GPSNoise, IMUNoise, BaroNoise
+            self._gps_noise = GPSNoise()
+            self._imu_noise = IMUNoise()
+            self._baro_noise = BaroNoise()
 
     def _next_seq(self) -> int:
         s = self._seq
@@ -430,7 +441,11 @@ class MAVLinkBridge:
             self._sock = None
 
     def send_state(self, state: SimState):
-        """Send full telemetry for current simulation state."""
+        """Send full telemetry for current simulation state.
+
+        When sensor_noise is enabled, GPS position and attitude rates
+        are perturbed before encoding into MAVLink messages.
+        """
         if self._sock is None:
             return
 
@@ -438,20 +453,31 @@ class MAVLinkBridge:
         time_boot_ms = int(state.time_s * 1000)
         target = (self.target_ip, self.target_port)
 
+        # Attitude rates (optionally noisy)
+        rollspeed = state.rollspeed
+        pitchspeed = state.pitchspeed
+        yawspeed = state.yawspeed
+        if self._imu_noise is not None:
+            noisy_gyro = self._imu_noise.apply_gyro(
+                np.array([rollspeed, pitchspeed, yawspeed]), dt=0.02)
+            rollspeed, pitchspeed, yawspeed = noisy_gyro
+
         # ATTITUDE
         msg = build_attitude(
             roll=state.roll, pitch=state.pitch, yaw=state.yaw,
-            rollspeed=state.rollspeed, pitchspeed=state.pitchspeed,
-            yawspeed=state.yawspeed, time_boot_ms=time_boot_ms,
+            rollspeed=rollspeed, pitchspeed=pitchspeed,
+            yawspeed=yawspeed, time_boot_ms=time_boot_ms,
             system_id=self.system_id, component_id=self.component_id,
             seq=self._next_seq(),
         )
         self._sock.sendto(msg, target)
 
-        # GLOBAL_POSITION_INT
+        # GLOBAL_POSITION_INT (optionally noisy GPS)
         lat, lon, alt_msl = _enu_to_gps(state.position,
                                          state.ref_lat, state.ref_lon,
                                          state.ref_alt_msl)
+        if self._gps_noise is not None:
+            lat, lon, alt_msl = self._gps_noise.apply(lat, lon, alt_msl)
         speed = np.linalg.norm(state.velocity)
         heading_deg = int(math.degrees(state.yaw)) % 360
         msg = build_global_position_int(

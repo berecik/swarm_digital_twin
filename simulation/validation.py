@@ -10,8 +10,10 @@ Metrics follow Valencia et al. (2025), Table 5, Fig. 13.
 """
 
 import numpy as np
-from typing import Dict, Optional
+from typing import Dict
 from dataclasses import dataclass
+from pathlib import Path
+from urllib.request import urlretrieve
 
 
 @dataclass
@@ -49,6 +51,64 @@ class BenchmarkProfile:
     wind_direction: np.ndarray
     tolerance: float
     envelope: ValidationEnvelope
+
+
+@dataclass(frozen=True)
+class RealLogMission:
+    """Phase V mission profile mapped to paper Table 5 RMSE values."""
+    name: str
+    source_filename: str
+    segment_start_s: float
+    segment_end_s: float
+    paper_rmse_z: float
+    paper_rmse_x: float
+    paper_rmse_y: float
+
+
+OSSITLQUAD_FLIGHT_LOGS_RAW_BASE = (
+    "https://raw.githubusercontent.com/estebanvt/OSSITLQUAD/master/Flight_logs"
+)
+
+REAL_LOG_MISSIONS: Dict[str, RealLogMission] = {
+    # Carolina 40m + 20m mission split into two validation windows
+    "quad_carolina_40": RealLogMission(
+        name="quad_carolina_40",
+        source_filename="Carolina_quad_40m_plus_20m.bin",
+        segment_start_s=0.0,
+        segment_end_s=175.0,
+        paper_rmse_z=0.07,
+        paper_rmse_x=0.043,
+        paper_rmse_y=0.039,
+    ),
+    "quad_carolina_20": RealLogMission(
+        name="quad_carolina_20",
+        source_filename="Carolina_quad_40m_plus_20m.bin",
+        segment_start_s=175.0,
+        segment_end_s=300.0,
+        paper_rmse_z=0.054,
+        paper_rmse_x=0.037,
+        paper_rmse_y=0.027,
+    ),
+    # EPN 30m + 20m mission split into two validation windows
+    "quad_epn_30": RealLogMission(
+        name="quad_epn_30",
+        source_filename="EPN_quad_30m_plus_20m.bin",
+        segment_start_s=0.0,
+        segment_end_s=150.0,
+        paper_rmse_z=0.07,
+        paper_rmse_x=0.062,
+        paper_rmse_y=0.055,
+    ),
+    "quad_epn_20": RealLogMission(
+        name="quad_epn_20",
+        source_filename="EPN_quad_30m_plus_20m.bin",
+        segment_start_s=150.0,
+        segment_end_s=260.0,
+        paper_rmse_z=0.10,
+        paper_rmse_x=0.071,
+        paper_rmse_y=0.036,
+    ),
+}
 
 
 # Envelopes are cross-platform bounds (ARM macOS + x86 Linux).
@@ -153,6 +213,52 @@ BENCHMARK_PROFILES: Dict[str, BenchmarkProfile] = {
         ),
     ),
 }
+
+
+def get_real_log_mission(name: str) -> RealLogMission:
+    """Return Phase V real-log mission profile by name."""
+    if name not in REAL_LOG_MISSIONS:
+        available = ", ".join(sorted(REAL_LOG_MISSIONS.keys()))
+        raise KeyError(f"Unknown real-log mission '{name}'. Available: {available}")
+    return REAL_LOG_MISSIONS[name]
+
+
+def ensure_real_log_logs(data_dir: str = "data/flight_logs") -> Dict[str, str]:
+    """Ensure required OSSITLQUAD `.bin` logs are present, downloading when missing."""
+    dest = Path(data_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+
+    local_paths: Dict[str, str] = {}
+    needed = sorted({mission.source_filename for mission in REAL_LOG_MISSIONS.values()})
+    for filename in needed:
+        local = dest / filename
+        if not local.exists():
+            remote_url = f"{OSSITLQUAD_FLIGHT_LOGS_RAW_BASE}/{filename}"
+            urlretrieve(remote_url, str(local))
+        local_paths[filename] = str(local)
+    return local_paths
+
+
+def assert_real_log_validation_pass(result: ValidationResult | Dict[str, float],
+                                    mission: RealLogMission,
+                                    multiplier: float = 2.0) -> None:
+    """Gate real-log RMSE against paper Table 5 values with configurable multiplier."""
+    rmse_z = result.rmse_z if isinstance(result, ValidationResult) else float(result["rmse_z"])
+    rmse_x = result.rmse_x if isinstance(result, ValidationResult) else float(result["rmse_x"])
+    rmse_y = result.rmse_y if isinstance(result, ValidationResult) else float(result["rmse_y"])
+    checks = {
+        "rmse_z": (rmse_z, mission.paper_rmse_z * multiplier),
+        "rmse_x": (rmse_x, mission.paper_rmse_x * multiplier),
+        "rmse_y": (rmse_y, mission.paper_rmse_y * multiplier),
+    }
+    failures = []
+    for metric, (actual, allowed) in checks.items():
+        if actual > allowed:
+            failures.append(f"{metric}={actual:.4f} > {allowed:.4f}")
+    if failures:
+        raise AssertionError(
+            f"[{mission.name}] Real-log validation failed: " + "; ".join(failures)
+        )
 
 
 def compute_rmse(sim_trajectory: np.ndarray,

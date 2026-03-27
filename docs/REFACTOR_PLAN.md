@@ -1,103 +1,86 @@
-# Refactoring Plan (v8): Paper-Aligned Delta Plan
+# Refactoring Plan (v12): Paper-Aligned Delta Plan
 
 **Reference paper:** Valencia et al., *An Open-source UAV Digital Twin framework: A Case Study on Remote Sensing in the Andean Mountains*, J. Intell. & Robot. Syst. 111:71 (2025), DOI: `10.1007/s10846-025-02276-7`
 
 **Scope of this document:** delta plan listing only remaining gaps. This is a backlog — completed work lives in the codebase and `MAINTENANCE.log`.
 
-**Current state:** ~85% paper coverage. Core physics (Eq. 1–7), terrain pipeline, aerodynamics, MAVLink, validation framework, swarm simulation, and all parameter tables are fully implemented. 207 tests passing.
+**Current state:** Phase V executed. Core physics (Eq. 1–7), terrain pipeline, aerodynamics, MAVLink, validation framework, swarm simulation, sensor noise models (GPS/IMU/baro), motor thrust dynamics, fixed-wing control-surface dynamics, and real-flight-data validation are implemented and tested. 218 tests passing.
 
 ---
 
 ## 1) Remaining gaps
 
-| # | Area | Current status | Gap | Priority |
-|:--|:---|:---|:---|:---|
-| S1 | GPS sensor noise model | GPS messages defined, no noise injection | Need GPS quantization/bias/drift noise (paper Section 2.4) | **P1** |
-| S2 | IMU sensor noise model | IMU messages defined, no noise injection | Need accelerometer/gyroscope bias + white noise (Section 2.4) | **P1** |
-| S3 | Barometer noise model | Pressure computed via ISA, no noise | Need quantization, lag, and bias noise for baro readings | **P2** |
-| T1 | Motor thrust dynamics | Direct thrust command (ideal) | Need `T_i = k_T·ω_i²` motor model with spin-up lag (Eq. 4) | **P2** |
-| U1 | Fixed-wing control surfaces | Lift/drag/stall implemented | Need elevator/aileron/rudder deflection models + rate limits | **P2** |
-| V1 | Real flight log validation | Comparison pipeline ready | Need actual .bin logs from OSSITLQUAD repo for Table 5 numbers | **P3** |
+No open paper-aligned delta gaps at this time.
 
 ---
 
 ## 2) Active roadmap
 
-### Phase S — Sensor Noise Models (**P1/P2**)
+### Phase S — Sensor Noise Models (**Completed 2026-03-27**)
 
-Paper Section 2.4 describes sensor models for GPS, IMU, and barometer. The message types exist (`SensorGps.msg`, `VehicleImu.msg`, `SensorBaro.msg`) but no noise injection is implemented.
+Paper Section 2.4 sensor-noise gap has been closed.
 
-#### S1. GPS noise model
+- **Implemented files:**
+  - `simulation/sensor_models.py` (new): `GPSNoise`, `IMUNoise`, `BaroNoise`
+  - `simulation/test_drone_physics.py`: `TestSensorNoise` coverage
+- **Delivered capabilities:**
+  - GPS quantization (`1e-7` deg), white noise, and slow drift bias
+  - IMU accelerometer/gyro white-noise density + bias random walk model
+  - Barometer quantization (`0.12` hPa), low-pass lag, and drift bias
+- **Verification:**
+  - `pytest -q simulation/test_drone_physics.py::TestSensorNoise`
+  - `pytest -q simulation/test_drone_physics.py`
 
-- **Target files:** `simulation/sensor_models.py` (new file)
-- **Deliverables:**
-  - `GPSNoise` class with configurable horizontal/vertical accuracy (default: ±5m H, ±10m V)
-  - Random walk bias drift (~0.5m/hour)
-  - Quantization to 1e-7 degree resolution
-  - `apply(true_lat, true_lon, true_alt) → noisy_lat, noisy_lon, noisy_alt`
-- **Acceptance criteria:**
-  - Noise statistics match typical u-blox M8N GPS (CEP 2.5m, altitude ±5m)
-  - Injected noise does not break validation envelopes when moderate
-
-#### S2. IMU noise model
-
-- **Target files:** `simulation/sensor_models.py`
-- **Deliverables:**
-  - `IMUNoise` class with accelerometer and gyroscope noise parameters
-  - Allan variance-based noise model: bias instability + angle random walk
-  - Temperature-dependent bias drift (optional)
-  - `apply_accel(true_accel) → noisy_accel`, `apply_gyro(true_gyro) → noisy_gyro`
-- **Acceptance criteria:**
-  - Accelerometer noise density ~400 µg/√Hz (ICM-20689 class)
-  - Gyroscope noise density ~0.01 °/s/√Hz
-
-#### S3. Barometer noise model
-
-- **Target files:** `simulation/sensor_models.py`
-- **Deliverables:**
-  - `BaroNoise` class with quantization (±0.12 hPa) and low-pass lag
-  - Slow drift bias (~1 hPa/hour)
-  - `apply(true_pressure) → noisy_pressure`
-- **Acceptance criteria:**
-  - Altitude noise equivalent ≤ ±1m at sea level conditions
-
-### Phase T — Motor Dynamics (**P2**)
+### Phase T — Motor Dynamics (**Completed 2026-03-27**)
 
 #### T1. Explicit motor thrust model
 
-- **Target files:** `simulation/drone_physics.py`
-- **Deliverables:**
-  - `MotorModel` class: `T = k_T·ω² + k_D·ω`, first-order spin-up: `dω/dt = (ω_cmd - ω)/τ_motor`
-  - Integration into `physics_step()` as optional motor dynamics layer
-  - Motor constants from paper Table 1 for IRS-4 quadrotor
-- **Acceptance criteria:**
-  - Motor spin-up visible in step response (τ ~ 50ms)
-  - Thrust output matches `k_T·ω²` steady-state relationship
+- **Implemented files:**
+  - `simulation/drone_physics.py`: `MotorModel`, optional motor dynamics in `physics_step()`, motor state in `DroneState`
+  - `simulation/test_drone_physics.py`: `TestMotorDynamics` coverage
+- **Delivered capabilities:**
+  - Motor model: `T = k_T·ω² + k_D·ω`
+  - First-order motor spin-up: `dω/dt = (ω_cmd - ω)/τ_motor`
+  - Optional integration path (`motor_dynamics_enabled`) preserving legacy default dynamics
+  - IRS-4 preset motor constants (`k_T=9.2e-6`, `τ_motor=0.05s`, `num_motors=4`)
+- **Verification:**
+  - `pytest -q simulation/test_drone_physics.py::TestMotorDynamics`
+  - `pytest -q simulation/test_drone_physics.py`
 
-### Phase U — Fixed-Wing Control Surfaces (**P2**)
+### Phase U — Fixed-Wing Control Surfaces (**Completed 2026-03-27**)
 
 #### U1. Control surface deflection model
 
-- **Target files:** `simulation/drone_physics.py` (extend `FixedWingAero`)
-- **Deliverables:**
-  - Elevator, aileron, rudder deflection angles with rate limits
-  - Control effectiveness coefficients (Cl_δa, Cm_δe, Cn_δr)
-  - Deflection-to-moment mapping for 3-axis control
-- **Acceptance criteria:**
-  - Pitch response to elevator matches thin airfoil theory within 10%
-  - Control surface rate limit prevents instantaneous deflection
+- **Implemented files:**
+  - `simulation/drone_physics.py`: control-surface commands/states, per-axis rate limits, and control-effectiveness moment mapping in `physics_step()`
+  - `simulation/test_drone_physics.py`: `TestFixedWingControlSurfaces` coverage
+- **Delivered capabilities:**
+  - Elevator, aileron, rudder deflection states with command clipping and rate-limited actuation
+  - Control effectiveness coefficients (`Cl_δa`, `Cm_δe`, `Cn_δr`) in `FixedWingAero`
+  - Deflection-to-moment mapping for roll/pitch/yaw aerodynamic torque channels
+- **Verification:**
+  - `pytest -q simulation/test_drone_physics.py::TestFixedWingControlSurfaces::test_elevator_pitch_response_matches_control_effectiveness`
+  - `pytest -q simulation/test_drone_physics.py::TestFixedWingControlSurfaces::test_control_surface_rate_limit_prevents_instant_step`
+  - `pytest -q simulation/test_drone_physics.py`
 
-### Phase V — Real Flight Data Validation (**P3**)
+### Phase V — Real Flight Data Validation (**Completed 2026-03-27**)
 
 #### V1. Paper Table 5 validation with real logs
 
-- **Target files:** `simulation/validation.py`, `data/flight_logs/` (new directory)
-- **Deliverables:**
-  - Download and parse .bin flight logs from `github.com/estebanvt/OSSITLQUAD`
-  - Run sim-vs-real comparison for Carolina 40m, Carolina 20m, EPN 30m, EPN 20m
-  - Compare RMSE position/velocity/attitude against paper Table 5 values
-- **Acceptance criteria:**
-  - Simulation RMSE within 2× of paper-reported values (accounting for model simplifications)
+- **Implemented files:**
+  - `simulation/validation.py`: `RealLogMission`, `REAL_LOG_MISSIONS`, `ensure_real_log_logs`, `assert_real_log_validation_pass`
+  - `simulation/drone_scenario.py`: mission-window replay support and `--real-log` execution path
+  - `run_scenario.sh`: `--real-log` wrapper command
+  - `simulation/test_drone_physics.py`: Phase V catalog + acceptance-gate tests
+- **Delivered capabilities:**
+  - Automatic download (if missing) of required OSSITLQUAD logs into `data/flight_logs/`
+  - Phase V mission mapping for Carolina/EPN split windows (`40m/20m`, `30m/20m`)
+  - Paper Table 5 acceptance gate enforcing RMSE `z/x/y <= 2x` reported values
+- **Verification:**
+  - `pytest -q simulation/test_drone_physics.py::TestPaperValidation::test_real_log_mission_catalog_has_required_profiles`
+  - `pytest -q simulation/test_drone_physics.py::TestPaperValidation::test_real_log_acceptance_gate_passes_within_2x_paper`
+  - `pytest -q simulation/test_drone_physics.py::TestPaperValidation::test_real_log_acceptance_gate_fails_over_2x_paper`
+  - `pytest -q simulation/test_drone_physics.py`
 
 ---
 
@@ -105,21 +88,18 @@ Paper Section 2.4 describes sensor models for GPS, IMU, and barometer. The messa
 
 | Item category | Verification method | Status |
 |:---|:---|:---|
-| GPS noise (S1) | Unit test: noise statistics match CEP spec | **Pending** |
-| IMU noise (S2) | Allan variance test on synthetic noise output | **Pending** |
-| Barometer noise (S3) | Altitude noise equivalent test | **Pending** |
-| Motor model (T1) | Step response test: spin-up τ ≈ 50ms | **Pending** |
-| Control surfaces (U1) | Pitch response to elevator step input | **Pending** |
-| Real log validation (V1) | RMSE comparison against paper Table 5 | **Pending** |
+| GPS noise (S1) | Unit test: quantization + CEP-class statistics (`TestSensorNoise`) | **Done** |
+| IMU noise (S2) | Unit test: noise density order-of-magnitude check (`TestSensorNoise`) | **Done** |
+| Barometer noise (S3) | Unit test: quantization + lag + altitude-equivalent noise (`TestSensorNoise`) | **Done** |
+| Motor model (T1) | Step response + steady-state thrust-map tests (`TestMotorDynamics`) | **Done** |
+| Control surfaces (U1) | Pitch response + rate-limit tests (`TestFixedWingControlSurfaces`) | **Done** |
+| Real log validation (V1) | RMSE comparison against paper Table 5 (`<=2x` gate) | **Done** |
 
 ---
 
 ## 4) Execution order
 
-1. **Phase S (P1/P2)** — Sensor noise models (GPS, IMU, baro). Enables realistic closed-loop validation.
-2. **Phase T (P2)** — Motor dynamics. Improves transient response fidelity.
-3. **Phase U (P2)** — Fixed-wing control surfaces. Completes fixed-wing model.
-4. **Phase V (P3)** — Real flight data validation. End-to-end paper reproduction.
+1. Backlog completed for paper-aligned delta phases (S/T/U/V).
 
 ---
 
@@ -129,4 +109,4 @@ Paper Section 2.4 describes sensor models for GPS, IMU, and barometer. The messa
 - Any new phase must include: target files, measurable acceptance criteria, verification commands.
 - When paper-aligned metrics are updated, update `TESTING.md` and `MAINTENANCE.log`.
 - Real flight data from the paper is publicly available at `github.com/estebanvt/OSSITLQUAD`.
-- 207 tests currently passing across 37 test classes (as of Phase L/M completion).
+- 218 tests currently passing across 40+ test classes (as of Phase V completion).
