@@ -451,6 +451,33 @@ class TestSensorNoise:
         assert np.percentile(horizontal_err_m, 50) < 3.5
         assert np.std(alt - alt0) < 6.0
 
+    def test_gps_noise_drift_growth_and_zero_dt_bias_behavior(self):
+        gps = GPSNoise(
+            rng_seed=7,
+            horizontal_sigma_m=0.0,
+            vertical_sigma_m=0.0,
+            drift_m_per_hour=10.0,
+        )
+
+        lat0, lon0, alt0 = -0.189, -78.488, 2800.0
+        dt = 1.0
+        n_steps = 3600
+
+        samples = np.array([gps.apply(lat0, lon0, alt0, dt=dt) for _ in range(n_steps)])
+        alt_err = samples[:, 2] - alt0
+
+        # Random-walk signature: typical magnitude scales ~sqrt(t)
+        early_window = alt_err[:600]
+        late_window = alt_err[-600:]
+        early_abs_mean = float(np.mean(np.abs(early_window)))
+        late_abs_mean = float(np.mean(np.abs(late_window)))
+        assert late_abs_mean > 2.0 * early_abs_mean
+
+        # dt = 0.0 should not update bias state
+        bias_before = np.array(gps._bias_m, copy=True)
+        _ = gps.apply(lat0, lon0, alt0, dt=0.0)
+        np.testing.assert_allclose(gps._bias_m, bias_before, atol=1e-12)
+
     def test_imu_noise_density_matches_order_of_magnitude(self):
         imu = IMUNoise(
             accel_bias_rw_mps2_per_sqrt_s=0.0,
@@ -473,6 +500,38 @@ class TestSensorNoise:
         np.testing.assert_allclose(accel_sigma, expected_accel_sigma, rtol=0.2)
         np.testing.assert_allclose(gyro_sigma, expected_gyro_sigma, rtol=0.2)
 
+    def test_imu_noise_bias_random_walk_develops_slow_offset(self):
+        imu = IMUNoise(
+            accel_noise_density_ug=0.0,
+            gyro_noise_density_dps=0.0,
+            accel_bias_rw_mps2_per_sqrt_s=5e-4,
+            gyro_bias_rw_radps_per_sqrt_s=1e-4,
+            rng_seed=11,
+        )
+
+        dt = 0.01
+        n_steps = 5000
+        true_accel = np.zeros(3)
+        true_gyro = np.zeros(3)
+
+        accel_samples = np.array([imu.apply_accel(true_accel, dt=dt) for _ in range(n_steps)])
+        gyro_samples = np.array([imu.apply_gyro(true_gyro, dt=dt) for _ in range(n_steps)])
+
+        accel_mean = np.mean(accel_samples, axis=0)
+        gyro_mean = np.mean(gyro_samples, axis=0)
+        assert np.linalg.norm(accel_mean) > 8e-4
+        assert np.linalg.norm(gyro_mean) > 8e-4
+
+        window = 500
+        accel_mean_1 = np.mean(accel_samples[:window], axis=0)
+        accel_mean_2 = np.mean(accel_samples[-window:], axis=0)
+        gyro_mean_1 = np.mean(gyro_samples[:window], axis=0)
+        gyro_mean_2 = np.mean(gyro_samples[-window:], axis=0)
+
+        # Offset should evolve over time but remain smooth (not abrupt/jittery)
+        assert np.linalg.norm(accel_mean_2 - accel_mean_1) > 1e-3
+        assert np.linalg.norm(gyro_mean_2 - gyro_mean_1) > 1e-3
+
     def test_baro_noise_quantization_and_lag(self):
         baro = BaroNoise(rng_seed=5, white_sigma_hpa=0.0, drift_hpa_per_hour=0.0)
         dt = 0.02
@@ -494,6 +553,69 @@ class TestSensorNoise:
         sea_level = np.array([baro_noise.apply(1013.25, dt=dt) for _ in range(2000)])
         altitude_equiv_m = (1013.25 - sea_level) * 8.3  # near sea-level linearized conversion
         assert np.std(altitude_equiv_m) <= 1.0
+
+    def test_baro_noise_drift_and_multi_dt_lag_consistency(self):
+        baro = BaroNoise(
+            rng_seed=23,
+            drift_hpa_per_hour=0.5,
+            white_sigma_hpa=0.0,
+            quantization_hpa=0.01,
+        )
+
+        p_true = 900.0
+        dt = 1.0
+        n_steps = 3600
+        pressures = np.array([baro.apply(p_true, dt=dt) for _ in range(n_steps)])
+
+        early_std = float(np.std(pressures[:600]))
+        late_std = float(np.std(pressures[-600:]))
+        assert late_std > 2.0 * early_std
+
+        # dt-regime consistency for first-order lag under equal physical time horizon
+        tau = 0.35
+        baro_fast = BaroNoise(
+            rng_seed=99,
+            drift_hpa_per_hour=0.0,
+            white_sigma_hpa=0.0,
+            quantization_hpa=1e-6,
+            lag_time_constant_s=tau,
+        )
+        baro_slow = BaroNoise(
+            rng_seed=99,
+            drift_hpa_per_hour=0.0,
+            white_sigma_hpa=0.0,
+            quantization_hpa=1e-6,
+            lag_time_constant_s=tau,
+        )
+
+        p_low = 1000.0
+        p_high = 950.0
+
+        # Step at t=5s, compare responses at matched physical times after the step
+        dt_fast = 0.1
+        dt_slow = 1.0
+        fast_trace = []
+        for i in range(100):
+            t = i * dt_fast
+            p = p_low if t < 5.0 else p_high
+            fast_trace.append(baro_fast.apply(p, dt=dt_fast))
+
+        slow_trace = []
+        for i in range(10):
+            t = i * dt_slow
+            p = p_low if t < 5.0 else p_high
+            slow_trace.append(baro_slow.apply(p, dt=dt_slow))
+
+        fast_trace = np.asarray(fast_trace)
+        slow_trace = np.asarray(slow_trace)
+
+        # Response should move toward the new pressure with first-order lag
+        fast_after_1s = float(fast_trace[60])  # t = 6.0 s
+        slow_after_1s = float(slow_trace[6])   # t = 6.0 s
+        expected_after_1s = p_high + (p_low - p_high) * np.exp(-1.0 / tau)
+        np.testing.assert_allclose(fast_after_1s, expected_after_1s, atol=1.0)
+        np.testing.assert_allclose(slow_after_1s, expected_after_1s, atol=6.0)
+        np.testing.assert_allclose(fast_after_1s, slow_after_1s, atol=6.0)
 
 
 # ── Phase T: Motor dynamics ──────────────────────────────────────────────────

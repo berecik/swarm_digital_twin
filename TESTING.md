@@ -9,7 +9,7 @@ This document tracks the high-level testing status and provides detailed explana
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM + Transport + Timing Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (218) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + Phase V real-log gate) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation |
+| **Drone Physics** (Python) | ✅ Pass (221) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + Phase V real-log gate) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -366,8 +366,11 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 
 #### AO. Sensor Noise Models (Phase S)
 - **`test_gps_noise_quantization_and_statistics`**: GPS output quantized to 1e-7 deg; horizontal CEP < 3.5m; altitude σ < 6m.
+- **`test_gps_noise_drift_growth_and_zero_dt_bias_behavior`**: GPS random-walk drift magnitude grows over long horizon (`~sqrt(t)` trend via early/late windows), and `dt=0.0` keeps internal bias unchanged.
 - **`test_imu_noise_density_matches_order_of_magnitude`**: Accelerometer/gyro white noise σ matches configured density within 20%.
+- **`test_imu_noise_bias_random_walk_develops_slow_offset`**: With nonzero bias RW and zero true signals, IMU outputs develop nonzero mean and slowly varying offset across windows.
 - **`test_baro_noise_quantization_and_lag`**: Barometer output quantized to 0.12 hPa; first-order lag visible on step input; sea-level altitude noise σ ≤ 1m.
+- **`test_baro_noise_drift_and_multi_dt_lag_consistency`**: Baro bias random walk broadens long-horizon spread, and responses at matched physical time remain consistent across `dt=0.1` vs `dt=1.0` lag regimes.
 
 #### R. Swarm Standalone Twin (Phase C)
 - **`test_flocking_vector_returns_zero_without_neighbors`**: Empty neighbor list returns zero steering vector (stable no-neighbor behavior).
