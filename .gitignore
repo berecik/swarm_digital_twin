@@ -238,6 +238,8 @@ ipch/
 *.opendb
 *.opensdf
 *.sdf
+!gazebo/models/valencia_fixed_wing/model.sdf
+!gazebo/models/irs4_quadrotor/model.sdf
 *.cachefile
 *.VC.db
 *.VC.VC.opendb

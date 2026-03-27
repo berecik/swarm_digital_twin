@@ -420,6 +420,7 @@ def main():
         euler=np.array([r.euler for r in records]),
         thrust=np.array([r.thrust for r in records]),
         ang_vel=np.array([r.angular_velocity for r in records]),
+        euler_rates=np.array([r.euler_rates for r in records]),  # Phase M2: Eq. 2
         waypoints=np.array(waypoints),
         # Phase 2 additions
         terrain_x=tx,
@@ -434,9 +435,148 @@ def main():
     )
     print(f"\n  Data saved to {output_path}")
 
+    # Export terrain as STL for Gazebo (Phase L1)
+    stl_path = os.path.join(script_dir, 'terrain_mesh.stl')
+    terrain.export_stl(stl_path)
+    print(f"  Terrain STL saved to {stl_path}")
+
+
+def run_swarm(n_drones: int = 6):
+    """Run N-drone swarm flight scenario with boids flocking."""
+    from drone_physics import make_holybro_x500, run_swarm_simulation, FlockingParams
+
+    np.random.seed(42)
+    params = make_holybro_x500()
+    terrain = make_terrain()
+    wind = WindField(
+        wind_speed=2.0,
+        wind_direction=np.array([0.8, 0.6, 0.0]),
+        turbulence_type="constant",
+    )
+
+    # Build ring formation waypoints for N drones
+    drone_waypoints = {}
+    radius = 10.0
+    altitude = 8.0
+    for i in range(n_drones):
+        angle = i * 2.0 * np.pi / n_drones
+        drone_waypoints[f"drone_{i + 1}"] = [
+            np.array([radius * np.cos(angle), radius * np.sin(angle), altitude]),
+            np.array([
+                radius * np.cos(angle + np.pi / n_drones),
+                radius * np.sin(angle + np.pi / n_drones),
+                altitude,
+            ]),
+            np.array([
+                radius * np.cos(angle + 2.0 * np.pi / n_drones),
+                radius * np.sin(angle + 2.0 * np.pi / n_drones),
+                altitude,
+            ]),
+        ]
+
+    drone_ids = sorted(drone_waypoints.keys())
+
+    print(f"Running {n_drones}-drone swarm scenario (boids flocking)...")
+    print(f"  Airframe:   Holybro X500 ({params.mass} kg)")
+    print(f"  Wind:       {wind.wind_speed} m/s, type={wind.turbulence_type}")
+    print(f"  Formation:  ring, radius={radius}m, alt={altitude}m AGL")
+    print(f"  Terrain:    {terrain.elevations.shape[1]}x{terrain.elevations.shape[0]} grid")
+    print()
+
+    records = run_swarm_simulation(
+        drone_waypoints,
+        params=params,
+        dt=0.02,
+        hover_time=0.5,
+        max_time=30.0,
+        wind=wind,
+        terrain=terrain,
+        min_separation=1.5,
+    )
+
+    # Compute metrics
+    min_dist = float("inf")
+    for rec in records:
+        for i in range(len(rec.positions)):
+            for j in range(i + 1, len(rec.positions)):
+                d = np.linalg.norm(rec.positions[i] - rec.positions[j])
+                min_dist = min(min_dist, d)
+
+    final_pos = records[-1].positions
+    print(f"Simulation complete: {len(records)} steps, {records[-1].t:.1f}s total")
+    print(f"  Min pairwise separation: {min_dist:.3f} m")
+    for idx, drone_id in enumerate(drone_ids):
+        target = drone_waypoints[drone_id][-1]
+        err = np.linalg.norm(final_pos[idx] - target)
+        print(f"  {drone_id}: final=[{final_pos[idx][0]:6.2f}, {final_pos[idx][1]:6.2f}, {final_pos[idx][2]:6.2f}]  err={err:.2f}m")
+
+    # Save data
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_path = os.path.join(script_dir, 'swarm_data.npz')
+    np.savez(
+        output_path,
+        t=np.array([r.t for r in records]),
+        positions=np.array([r.positions for r in records]),
+        velocities=np.array([r.velocities for r in records]),
+        drone_ids=np.array(drone_ids, dtype=object),
+        waypoints=np.array([drone_waypoints[d] for d in drone_ids]),
+    )
+    print(f"\n  Data saved to {output_path}")
+
+    # Export terrain STL
+    stl_path = os.path.join(script_dir, 'terrain_mesh.stl')
+    terrain.export_stl(stl_path)
+    print(f"  Terrain STL saved to {stl_path}")
+
+
+def export_antisana_terrain(output_dir: str = None):
+    """Export SRTM terrain mesh for Antisana as STL (paper Section 2.1 pipeline).
+
+    Generates the Gazebo-ready terrain mesh from SRTM elevation data.
+    """
+    if output_dir is None:
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   '..', 'gazebo', 'models', 'antisana_terrain')
+    os.makedirs(output_dir, exist_ok=True)
+
+    print("Generating Antisana terrain mesh from SRTM data...")
+    terrain = TerrainMap.from_srtm(-0.508333, -78.141667, size_km=5.0, resolution=30.0)
+    stl_path = os.path.join(output_dir, 'mesh.stl')
+    terrain.export_stl(stl_path)
+    print(f"  Terrain STL saved to {stl_path}")
+    print(f"  Grid shape: {terrain.elevations.shape}")
+    print(f"  Elevation range: [{terrain.elevations.min():.0f}, {terrain.elevations.max():.0f}] m")
+    print(f"  Resolution: {terrain.resolution} m/cell")
+    return stl_path
+
+
+def print_usage():
+    print("Usage: python drone_scenario.py [MODE]")
+    print()
+    print("Modes:")
+    print("  --single              Run single-drone flight scenario (default)")
+    print("  --swarm [N]           Run N-drone swarm scenario (default: 6)")
+    print("  --benchmark <name>    Run validation benchmark profile")
+    print("  --swarm-benchmark <name>  Run swarm validation benchmark")
+    print("  --replay <log> [airframe] [plot]  Replay flight log")
+    print("  --export-terrain [dir]  Export Antisana SRTM terrain as STL")
+    print()
+    print("Examples:")
+    print("  python drone_scenario.py")
+    print("  python drone_scenario.py --single")
+    print("  python drone_scenario.py --swarm")
+    print("  python drone_scenario.py --swarm 10")
+    print("  python drone_scenario.py --benchmark moderate")
+    print("  python drone_scenario.py --benchmark irs4_carolina")
+    print("  python drone_scenario.py --swarm-benchmark baseline")
+    print("  python drone_scenario.py --replay flight.bin quad")
+    print("  python drone_scenario.py --export-terrain gazebo/models/antisana_terrain")
+
 
 if __name__ == '__main__':
-    if len(sys.argv) >= 3 and sys.argv[1] == "--benchmark":
+    if len(sys.argv) >= 2 and sys.argv[1] in ("--help", "-h"):
+        print_usage()
+    elif len(sys.argv) >= 3 and sys.argv[1] == "--benchmark":
         profile_name = sys.argv[2]
         if profile_name.startswith("irs4_"):
             run_irs4_benchmark(profile_name)
@@ -453,5 +593,15 @@ if __name__ == '__main__':
         print(f"Mission replay results for {bin_path}:")
         for k, v in metrics.items():
             print(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
+    elif len(sys.argv) >= 2 and sys.argv[1] == "--swarm":
+        n = int(sys.argv[2]) if len(sys.argv) > 2 else 6
+        run_swarm(n)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "--swarm-benchmark":
+        from swarm_scenario import run_swarm_benchmark
+        run_swarm_benchmark(sys.argv[2])
+    elif len(sys.argv) >= 2 and sys.argv[1] == "--export-terrain":
+        output = sys.argv[2] if len(sys.argv) > 2 else None
+        export_antisana_terrain(output)
     else:
+        # --single is the default mode (also triggered with no args)
         main()

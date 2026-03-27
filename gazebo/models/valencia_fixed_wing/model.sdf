@@ -1,0 +1,140 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="valencia_fixed_wing">
+    <static>false</static>
+
+    <!-- Fuselage -->
+    <link name="fuselage">
+      <pose>0 0 0 0 0 0</pose>
+
+      <inertial>
+        <mass>2.5</mass>  <!-- Table 2: 2.5 kg -->
+        <inertia>
+          <!-- Estimated from wingspan=2.20m, chord=0.235m, mass=2.5kg -->
+          <ixx>0.08</ixx>
+          <ixy>0</ixy>
+          <ixz>0.004</ixz>
+          <iyy>0.12</iyy>
+          <iyz>0</iyz>
+          <izz>0.16</izz>
+        </inertia>
+      </inertial>
+
+      <!-- Visual: simplified fuselage -->
+      <visual name="fuselage_visual">
+        <geometry>
+          <box><size>0.8 0.1 0.1</size></box>
+        </geometry>
+        <material>
+          <ambient>0.8 0.8 0.8 1</ambient>
+        </material>
+      </visual>
+
+      <!-- Visual: wings -->
+      <visual name="wing_visual">
+        <pose>-0.05 0 0.02 0 0 0</pose>
+        <geometry>
+          <box><size>0.235 2.20 0.02</size></box>  <!-- chord x wingspan x thickness -->
+        </geometry>
+        <material>
+          <ambient>0.7 0.7 0.9 1</ambient>
+        </material>
+      </visual>
+
+      <!-- Visual: vertical stabilizer -->
+      <visual name="vtail_visual">
+        <pose>-0.35 0 0.1 0 0 0</pose>
+        <geometry>
+          <box><size>0.12 0.02 0.15</size></box>
+        </geometry>
+        <material>
+          <ambient>0.7 0.7 0.9 1</ambient>
+        </material>
+      </visual>
+
+      <!-- Visual: horizontal stabilizer -->
+      <visual name="htail_visual">
+        <pose>-0.35 0 0.02 0 0 0</pose>
+        <geometry>
+          <box><size>0.12 0.5 0.015</size></box>
+        </geometry>
+        <material>
+          <ambient>0.7 0.7 0.9 1</ambient>
+        </material>
+      </visual>
+
+      <!-- Collision: simplified bounding box -->
+      <collision name="fuselage_collision">
+        <geometry>
+          <box><size>0.8 2.20 0.15</size></box>
+        </geometry>
+      </collision>
+    </link>
+
+    <!-- Propeller link (for thrust) -->
+    <link name="propeller">
+      <pose>0.42 0 0 0 0 0</pose>
+      <inertial>
+        <mass>0.05</mass>
+        <inertia>
+          <ixx>0.0001</ixx><iyy>0.0001</iyy><izz>0.0001</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="prop_visual">
+        <geometry>
+          <cylinder><radius>0.15</radius><length>0.01</length></cylinder>
+        </geometry>
+      </visual>
+    </link>
+
+    <joint name="propeller_joint" type="revolute">
+      <parent>fuselage</parent>
+      <child>propeller</child>
+      <axis><xyz>1 0 0</xyz></axis>
+    </joint>
+
+    <!--
+      LiftDrag Plugin: Wing aerodynamics
+      Coefficients from Valencia et al. (2025) Table 3 (CFD/OpenFOAM).
+    -->
+    <plugin name="wing_liftdrag" filename="libLiftDragPlugin.so">
+      <a0>0.05236</a0>              <!-- alpha_0: zero-lift AoA [rad] -->
+      <cla>3.50141</cla>            <!-- C_La: lift curve slope pre-stall [1/rad] -->
+      <cda>0.63662</cda>            <!-- C_Da: drag curve slope pre-stall [1/rad^2] -->
+      <cma>-0.2040</cma>            <!-- C_Ma: moment curve slope pre-stall [1/rad] -->
+      <alpha_stall>0.26180</alpha_stall>  <!-- stall angle [rad] (~15 deg) -->
+      <cla_stall>-1.1459</cla_stall>     <!-- C_La_stall: post-stall lift slope -->
+      <cda_stall>2.29183</cda_stall>     <!-- C_Da_stall: post-stall drag slope -->
+      <cma_stall>-0.1313</cma_stall>     <!-- C_Ma_stall: post-stall moment slope -->
+      <cp>-0.05 0 0.02</cp>              <!-- center of pressure (on wing) -->
+      <area>0.3997</area>                <!-- Table 2: wing reference area [m^2] -->
+      <air_density>0.83</air_density>    <!-- Antisana altitude ~4500m -->
+      <forward>1 0 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>fuselage</link_name>
+    </plugin>
+
+    <!--
+      ArduPilot plugin for SITL integration.
+      Connects Gazebo to ArduPilot via shared memory or UDP.
+    -->
+    <plugin name="ardupilot_plugin" filename="libArduPilotPlugin.so">
+      <fdm_addr>127.0.0.1</fdm_addr>
+      <fdm_port_in>9002</fdm_port_in>
+      <fdm_port_out>9003</fdm_port_out>
+      <modelXYZToAirplaneXForwardZDown>0 0 0 3.141593 0 0</modelXYZToAirplaneXForwardZDown>
+      <gazeboXYZToNED>0 0 0 3.141593 0 1.5707963</gazeboXYZToNED>
+      <imuName>fuselage::imu_sensor</imuName>
+
+      <!-- Control channels -->
+      <control channel="0">
+        <jointName>propeller_joint</jointName>
+        <type>VELOCITY</type>
+        <multiplier>838</multiplier>
+        <offset>0</offset>
+      </control>
+    </plugin>
+
+  </model>
+</sdf>

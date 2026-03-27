@@ -1,0 +1,218 @@
+<?xml version="1.0" ?>
+<!--
+  Swarm Digital Twin - IRS-4 Quadrotor Model
+  Based on Valencia et al. (2025), Section 3.2, Fig. 7b.
+  Platform: IRS-4, used at Carolina Park and EPN campus (Quito, ~2800m MSL).
+  Mass: 1.8 kg, arm length: 0.22 m, symmetric X-frame.
+  Matches make_irs4_quadrotor() preset in drone_physics.py.
+  Compatible with ArduPilot SITL + Gazebo plugin pipeline.
+-->
+<sdf version="1.6">
+  <model name="irs4_quadrotor">
+    <pose>0 0 0.12 0 0 0</pose>
+
+    <!-- Base link (fuselage) -->
+    <link name="base_link">
+      <inertial>
+        <mass>1.8</mass>
+        <inertia>
+          <!-- Matches make_irs4_quadrotor() inertia tensor -->
+          <ixx>0.025</ixx>
+          <ixy>0.0</ixy>
+          <ixz>0.0</ixz>
+          <iyy>0.025</iyy>
+          <iyz>0.0</iyz>
+          <izz>0.042</izz>
+        </inertia>
+      </inertial>
+
+      <collision name="body_collision">
+        <geometry>
+          <box><size>0.35 0.35 0.08</size></box>
+        </geometry>
+      </collision>
+
+      <visual name="body_visual">
+        <geometry>
+          <box><size>0.35 0.35 0.08</size></box>
+        </geometry>
+        <material>
+          <ambient>0.15 0.15 0.15 1</ambient>
+          <diffuse>0.2 0.2 0.25 1</diffuse>
+        </material>
+      </visual>
+    </link>
+
+    <!-- Rotor 0 (front-right, CW) -->
+    <link name="rotor_0">
+      <pose>0.155 -0.155 0.04 0 0 0</pose>
+      <inertial>
+        <mass>0.015</mass>
+        <inertia>
+          <ixx>8e-6</ixx><iyy>8e-6</iyy><izz>1.5e-5</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="rotor_0_visual">
+        <geometry><cylinder><radius>0.10</radius><length>0.004</length></cylinder></geometry>
+        <material><diffuse>0.8 0.1 0.1 0.8</diffuse></material>
+      </visual>
+    </link>
+    <joint name="rotor_0_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>rotor_0</child>
+      <axis><xyz>0 0 1</xyz></axis>
+    </joint>
+
+    <!-- Rotor 1 (rear-left, CW) -->
+    <link name="rotor_1">
+      <pose>-0.155 0.155 0.04 0 0 0</pose>
+      <inertial>
+        <mass>0.015</mass>
+        <inertia>
+          <ixx>8e-6</ixx><iyy>8e-6</iyy><izz>1.5e-5</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="rotor_1_visual">
+        <geometry><cylinder><radius>0.10</radius><length>0.004</length></cylinder></geometry>
+        <material><diffuse>0.1 0.1 0.8 0.8</diffuse></material>
+      </visual>
+    </link>
+    <joint name="rotor_1_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>rotor_1</child>
+      <axis><xyz>0 0 1</xyz></axis>
+    </joint>
+
+    <!-- Rotor 2 (front-left, CCW) -->
+    <link name="rotor_2">
+      <pose>0.155 0.155 0.04 0 0 0</pose>
+      <inertial>
+        <mass>0.015</mass>
+        <inertia>
+          <ixx>8e-6</ixx><iyy>8e-6</iyy><izz>1.5e-5</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="rotor_2_visual">
+        <geometry><cylinder><radius>0.10</radius><length>0.004</length></cylinder></geometry>
+        <material><diffuse>0.1 0.8 0.1 0.8</diffuse></material>
+      </visual>
+    </link>
+    <joint name="rotor_2_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>rotor_2</child>
+      <axis><xyz>0 0 1</xyz></axis>
+    </joint>
+
+    <!-- Rotor 3 (rear-right, CCW) -->
+    <link name="rotor_3">
+      <pose>-0.155 -0.155 0.04 0 0 0</pose>
+      <inertial>
+        <mass>0.015</mass>
+        <inertia>
+          <ixx>8e-6</ixx><iyy>8e-6</iyy><izz>1.5e-5</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="rotor_3_visual">
+        <geometry><cylinder><radius>0.10</radius><length>0.004</length></cylinder></geometry>
+        <material><diffuse>0.8 0.8 0.1 0.8</diffuse></material>
+      </visual>
+    </link>
+    <joint name="rotor_3_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>rotor_3</child>
+      <axis><xyz>0 0 1</xyz></axis>
+    </joint>
+
+    <!-- Quadratic aerodynamic drag (paper Eq. 5, bluff-body C_D=1.0) -->
+    <plugin name="quadrotor_aero" filename="libLiftDragPlugin.so">
+      <a0>0.0</a0>
+      <cla>0.0</cla>
+      <cda>1.0</cda>
+      <cma>0.0</cma>
+      <alpha_stall>1.57</alpha_stall>
+      <cla_stall>0.0</cla_stall>
+      <cda_stall>1.0</cda_stall>
+      <cma_stall>0.0</cma_stall>
+      <area>0.05</area>
+      <!-- ISA at 2800m MSL: rho ~ 0.962 kg/m^3 -->
+      <air_density>0.962</air_density>
+      <cp>0 0 0</cp>
+      <forward>1 0 0</forward>
+      <upward>0 0 1</upward>
+      <link_name>base_link</link_name>
+    </plugin>
+
+    <!-- ArduPilot SITL plugin (copter frame) -->
+    <plugin name="ardupilot_sitl" filename="libArduPilotPlugin.so">
+      <fdm_addr>127.0.0.1</fdm_addr>
+      <fdm_port_in>9002</fdm_port_in>
+      <fdm_port_out>9003</fdm_port_out>
+      <modelXYZToAirplaneXForwardZDown>0 0 0 3.14159 0 0</modelXYZToAirplaneXForwardZDown>
+      <gazeboXYZToNED>0 0 0 3.14159 0 1.5708</gazeboXYZToNED>
+      <imuName>base_link::imu_sensor</imuName>
+      <connectionTimeoutMaxCount>5</connectionTimeoutMaxCount>
+
+      <!-- Motor 0: front-right CW -->
+      <control channel="0">
+        <type>VELOCITY</type>
+        <offset>0</offset>
+        <p_gain>0.20</p_gain>
+        <i_gain>0</i_gain>
+        <d_gain>0</d_gain>
+        <i_max>0</i_max>
+        <i_min>0</i_min>
+        <cmd_max>2500.0</cmd_max>
+        <cmd_min>0</cmd_min>
+        <jointName>rotor_0_joint</jointName>
+        <multiplier>750</multiplier>
+      </control>
+      <!-- Motor 1: rear-left CW -->
+      <control channel="1">
+        <type>VELOCITY</type>
+        <offset>0</offset>
+        <p_gain>0.20</p_gain>
+        <i_gain>0</i_gain>
+        <d_gain>0</d_gain>
+        <i_max>0</i_max>
+        <i_min>0</i_min>
+        <cmd_max>2500.0</cmd_max>
+        <cmd_min>0</cmd_min>
+        <jointName>rotor_1_joint</jointName>
+        <multiplier>750</multiplier>
+      </control>
+      <!-- Motor 2: front-left CCW -->
+      <control channel="2">
+        <type>VELOCITY</type>
+        <offset>0</offset>
+        <p_gain>0.20</p_gain>
+        <i_gain>0</i_gain>
+        <d_gain>0</d_gain>
+        <i_max>0</i_max>
+        <i_min>0</i_min>
+        <cmd_max>2500.0</cmd_max>
+        <cmd_min>0</cmd_min>
+        <jointName>rotor_2_joint</jointName>
+        <multiplier>-750</multiplier>
+      </control>
+      <!-- Motor 3: rear-right CCW -->
+      <control channel="3">
+        <type>VELOCITY</type>
+        <offset>0</offset>
+        <p_gain>0.20</p_gain>
+        <i_gain>0</i_gain>
+        <d_gain>0</d_gain>
+        <i_max>0</i_max>
+        <i_min>0</i_min>
+        <cmd_max>2500.0</cmd_max>
+        <cmd_min>0</cmd_min>
+        <jointName>rotor_3_joint</jointName>
+        <multiplier>-750</multiplier>
+      </control>
+    </plugin>
+
+  </model>
+</sdf>

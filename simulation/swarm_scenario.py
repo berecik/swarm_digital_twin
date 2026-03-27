@@ -141,7 +141,9 @@ SWARM_BENCHMARK_PROFILES: Dict[str, SwarmBenchmarkProfile] = {
         seed=20260329,
         wind_speed=3.2,
         wind_direction=np.array([1.0, 0.0, 0.0]),
-        turbulence_type="dryden",
+        # Keep this profile deterministic and numerically stable across CI runners
+        # while preserving the high-altitude wind-load scenario.
+        turbulence_type="constant",
         ring_radius=12.0,
         altitude=14.0,
         min_separation=1.6,

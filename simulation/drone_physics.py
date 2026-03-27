@@ -738,6 +738,7 @@ class SimRecord:
     euler: Tuple[float, float, float]
     thrust: float
     angular_velocity: np.ndarray
+    euler_rates: Optional[np.ndarray] = None  # [phi_dot, theta_dot, psi_dot] from Eq. 2
 
 
 def run_simulation(waypoints: List[np.ndarray],
@@ -774,6 +775,11 @@ def run_simulation(waypoints: List[np.ndarray],
                              terrain=terrain)
 
         roll, pitch, yaw = rotation_to_euler(state.rotation)
+        p, q, r = state.angular_velocity
+        try:
+            e_rates = euler_rates_from_body_rates(roll, pitch, p, q, r)
+        except ValueError:
+            e_rates = np.zeros(3)  # gimbal lock fallback
         records.append(SimRecord(
             t=t,
             position=state.position.copy(),
@@ -781,6 +787,7 @@ def run_simulation(waypoints: List[np.ndarray],
             euler=(roll, pitch, yaw),
             thrust=cmd.thrust,
             angular_velocity=state.angular_velocity.copy(),
+            euler_rates=e_rates,
         ))
 
         # Check waypoint reached

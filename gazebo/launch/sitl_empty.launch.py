@@ -93,7 +93,7 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # Wind perturbation node
+        # Wind perturbation node (altitude-dependent ISA density, Phase M1)
         Node(
             package='gazebo',
             executable='wind_node.py',
@@ -103,6 +103,7 @@ def generate_launch_description():
                 'wind_direction_x': wind_dir_x,
                 'wind_direction_y': wind_dir_y,
                 'turbulence_type': 'constant',
+                'base_altitude_msl': 0.0,  # override for altitude-specific sites
             }],
             output='screen',
         ),

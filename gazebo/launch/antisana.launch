@@ -35,13 +35,14 @@
               -x 0 -y 0 -z 4510"
         output="screen"/>
 
-  <!-- Wind perturbation node (paper Section 2.3.1) -->
+  <!-- Wind perturbation node (paper Section 2.3.1, Phase M1: altitude-dependent) -->
   <node name="wind_perturbation" pkg="swarm_digital_twin" type="wind_node.py"
         output="screen">
-    <param name="wind_speed_min" value="4.0"/>
-    <param name="wind_speed_max" value="14.0"/>
-    <param name="altitude_msl" value="4500.0"/>
-    <param name="air_density" value="0.83"/>
+    <param name="wind_speed" value="8.0"/>
+    <param name="wind_direction_x" value="0.8"/>
+    <param name="wind_direction_y" value="0.6"/>
+    <param name="turbulence_type" value="constant"/>
+    <param name="base_altitude_msl" value="4500.0"/>
   </node>
 
   <!-- MAV Proxy for QGC connection -->
