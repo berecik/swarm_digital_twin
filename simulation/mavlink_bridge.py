@@ -404,7 +404,7 @@ class MAVLinkBridge:
         self._lock = threading.Lock()
         self._last_state: Optional[SimState] = None
 
-        # Sensor noise injection (Phase S)
+        # Sensor noise injection (GPS / IMU / barometer models)
         self._gps_noise = None
         self._imu_noise = None
         self._baro_noise = None

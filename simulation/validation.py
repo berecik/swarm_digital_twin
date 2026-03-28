@@ -56,7 +56,7 @@ class BenchmarkProfile:
 
 @dataclass(frozen=True)
 class RealLogMission:
-    """Phase V mission profile mapped to paper Table 5 RMSE values."""
+    """Real-flight-data mission profile mapped to paper Table 5 RMSE values."""
     name: str
     source_filename: str
     segment_start_s: float
@@ -241,7 +241,7 @@ BENCHMARK_PROFILES: Dict[str, BenchmarkProfile] = {
 
 
 def get_real_log_mission(name: str) -> RealLogMission:
-    """Return Phase V real-log mission profile by name."""
+    """Return real-log mission profile by name (paper Table 5)."""
     if name not in REAL_LOG_MISSIONS:
         available = ", ".join(sorted(REAL_LOG_MISSIONS.keys()))
         raise KeyError(f"Unknown real-log mission '{name}'. Available: {available}")
@@ -516,7 +516,7 @@ def auto_tune_wind_force_scale(
     """Iteratively tune wind-force scale to minimize altitude RMSE.
 
     The optimizer uses deterministic coordinate search with adaptive step decay.
-    Convergence criterion follows Phase Z: |ΔRMSE_z| < convergence_tol.
+    Convergence criterion: |ΔRMSE_z| < convergence_tol (wind auto-tuning).
     """
     if len(ref_times) < 2 or len(ref_positions) < 2:
         raise ValueError("Reference trajectory must contain at least 2 samples")

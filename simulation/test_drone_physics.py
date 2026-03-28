@@ -290,7 +290,7 @@ class TestEnergy:
         np.testing.assert_allclose(e0, e1, rtol=0.005)
 
 
-# ── Phase 1: Quadratic Drag & Atmosphere ────────────────────────────────────
+# ── Quadratic Drag & Atmosphere ──────────────────────────────────────────────
 
 class TestQuadraticDrag:
     def test_quadratic_drag_scales_with_v_squared(self):
@@ -393,7 +393,7 @@ class TestAtmosphere:
         np.testing.assert_allclose(atmo.rho, 0.7695, rtol=0.02)
 
 
-# ── Phase 1: Wind Model ────────────────────────────────────────────────────
+# ── Wind Model ──────────────────────────────────────────────────────────────
 
 class TestWind:
     def test_no_wind_unchanged(self):
@@ -461,7 +461,7 @@ class TestWind:
         np.testing.assert_allclose(np.linalg.norm(v75), 7.5, atol=1e-8)
 
 
-# ── Phase S: Sensor noise models ────────────────────────────────────────────
+# ── Sensor Noise Models (GPS / IMU / Barometer) ─────────────────────────────
 
 class TestSensorNoise:
     def test_gps_noise_quantization_and_statistics(self):
@@ -657,7 +657,7 @@ class TestSensorNoise:
         np.testing.assert_allclose(fast_after_1s, slow_after_1s, atol=6.0)
 
 
-# ── Phase T: Motor dynamics ──────────────────────────────────────────────────
+# ── Motor Dynamics (Eq. 4 Rotor Model) ───────────────────────────────────────
 
 class TestMotorDynamics:
     def test_motor_step_response_reaches_63pct_near_tau(self):
@@ -767,7 +767,7 @@ class TestBatteryModel:
         assert endurance_min == pytest.approx(85.0, abs=6.0)
 
 
-# ── Phase 1: Inertia & Presets ──────────────────────────────────────────────
+# ── Inertia & Airframe Presets ───────────────────────────────────────────────
 
 class TestInertiaPresets:
     def test_off_diagonal_inertia_coupling(self):
@@ -809,7 +809,7 @@ class TestInertiaPresets:
         assert x500.atmo is not None
 
 
-# ── Phase 1: Body-Frame Dynamics ────────────────────────────────────────────
+# ── Body-Frame Dynamics (Eq. 3) ────────────────────────────────────────────────
 
 class TestBodyFrame:
     def test_body_frame_hover_equivalent(self):
@@ -863,7 +863,7 @@ class TestBodyFrame:
         np.testing.assert_allclose(state.velocity[2], expected_vz, atol=0.1)
 
 
-# ── Phase 1: Validation Module ──────────────────────────────────────────────
+# ── Validation Module (RMSE / compare_sim_real) ─────────────────────────────────
 
 class TestValidation:
     def test_rmse_identical(self):
@@ -1016,7 +1016,7 @@ class TestValidation:
         assert tight_ring["mean_tracking_error"] < baseline["mean_tracking_error"]
 
 
-# ── Phase 2: Terrain ────────────────────────────────────────────────────────
+# ── Terrain Model ──────────────────────────────────────────────────────────────
 
 class TestTerrain:
     def test_flat_terrain_elevation(self):
@@ -1087,7 +1087,7 @@ class TestTerrain:
             TerrainMap.from_stl("/nonexistent/terrain.stl")
 
 
-# ── Phase 3: Fixed-Wing Aerodynamics ──────────────────────────────────────
+# ── Fixed-Wing Aerodynamics (AoA / Stall) ────────────────────────────────────
 
 class TestFixedWingAero:
     def test_aoa_computation_level_flight(self):
@@ -1221,7 +1221,7 @@ class TestFixedWingAero:
         assert len(record) == 0
 
 
-# ── Phase D: Paper-exact aerodynamics ──────────────────────────────────────
+# ── Paper-Exact Aerodynamics (Table 3 Coefficients) ─────────────────────────
 
 class TestPitchingMoment:
     def test_pitching_moment_pre_stall(self):
@@ -1418,7 +1418,7 @@ class TestGammaTermEquivalence:
         )
 
 
-# ── Phase 3: MAVLink Bridge ───────────────────────────────────────────────
+# ── MAVLink Bridge ───────────────────────────────────────────────────────────
 
 class TestMAVLink:
     def test_crc_computation(self):
@@ -1580,7 +1580,7 @@ class TestMAVLink:
         assert decode_mavlink_v2(b'\xFD' + b'\x00' * 20) is None
 
 
-# ── Phase C: Swarm-ready standalone twin ───────────────────────────────────
+# ── Swarm-Ready Standalone Twin ──────────────────────────────────────────────
 
 class TestSwarmStandaloneTwin:
     def test_flocking_vector_returns_zero_without_neighbors(self):
@@ -1680,7 +1680,7 @@ class TestSwarmStandaloneTwin:
         assert min_dist >= 1.0
 
 
-# ── Phase E: Flight Log & Validation Pipeline ──────────────────────────────
+# ── Flight Log & Validation Pipeline ─────────────────────────────────────────
 
 class TestFlightLogBin:
     def _create_minimal_dataflash(self, tmpdir):
@@ -1829,7 +1829,7 @@ class TestSimVsRealComparison:
         assert result["cross_correlation"] < -0.9
 
 
-# ── Phase F: Terrain Pipeline ──────────────────────────────────────────────
+# ── Terrain Pipeline (Elevation Data) ────────────────────────────────────────
 
 class TestTerrainSRTM:
     def test_from_hgt_synthetic(self, tmp_path):
@@ -1875,7 +1875,7 @@ class TestTerrainSRTM:
             TerrainMap.from_hgt("/nonexistent/S01W079.hgt", lat=-0.5, lon=-78.5)
 
 
-# ── Phase G: Gazebo Model Validation ───────────────────────────────────────
+# ── Gazebo Model Validation ──────────────────────────────────────────────────
 
 class TestGazeboModels:
     def test_sdf_model_exists(self):
@@ -1953,10 +1953,10 @@ class TestGazeboModels:
         assert os.path.exists(parm_path)
 
 
-# ── Phase K: IRS-4 Gazebo Model & Docker SITL ────────────────────────────
+# ── IRS-4 Gazebo Model & Docker SITL ─────────────────────────────────────
 
 class TestIRS4GazeboModel:
-    """Verify IRS-4 quadrotor Gazebo model (Phase K2)."""
+    """Verify IRS-4 quadrotor Gazebo model (SDF, sensors, plugins)."""
 
     def _project_root(self):
         import os
@@ -2042,7 +2042,7 @@ class TestIRS4GazeboModel:
 
 
 class TestDockerSITL:
-    """Verify Docker SITL configuration (Phase K1)."""
+    """Verify Docker SITL configuration (Dockerfile, compose, entrypoint)."""
 
     def _project_root(self):
         import os
@@ -2107,10 +2107,10 @@ class TestDockerSITL:
         assert mode & stat.S_IXUSR
 
 
-# ── Phase N: Mission Waypoint Files ──────────────────────────────────────
+# ── Mission Waypoint Files ───────────────────────────────────────────────
 
 class TestMissionFiles:
-    """Verify paper mission waypoint files (Phase N1)."""
+    """Verify paper mission waypoint files (.waypoints format)."""
 
     def _project_root(self):
         import os
@@ -2216,7 +2216,7 @@ class TestMissionFiles:
             sys.path.remove(missions_dir)
 
 
-# ── Phase H: SITL Lifecycle Script ─────────────────────────────────────────
+# ── SITL Lifecycle Script ─────────────────────────────────────────────────
 
 class TestSITLLifecycle:
     def test_sitl_script_exists(self):
@@ -2247,7 +2247,7 @@ class TestSITLLifecycle:
         assert "[6/6]" in content  # Validate
 
 
-# ── Phase H2: 3D Wind Estimation ─────────────────────────────────────────
+# ── 3D Wind Estimation ───────────────────────────────────────────────────
 
 class TestWindEstimation3D:
     def test_still_trajectory_gives_zero_wind(self):
@@ -2336,7 +2336,7 @@ class TestWindEstimation3D:
         np.testing.assert_allclose(v25, [1.25, 2.25, -0.4], atol=1e-10)
 
 
-# ── Phase I1: CI Pipeline ────────────────────────────────────────────────
+# ── CI Pipeline ──────────────────────────────────────────────────────────
 
 class TestCIPipeline:
     def test_ci_workflow_exists(self):
@@ -2374,7 +2374,7 @@ class TestCIPipeline:
         assert "master" in content or "main" in content
 
 
-# ── Phase J1: IRS-4 Quadrotor Preset ────────────────────────────────────
+# ── IRS-4 Quadrotor Preset ───────────────────────────────────────────────
 
 class TestIRS4Preset:
     """Verify IRS-4 quadrotor preset matches paper Section 3.2."""
@@ -2412,7 +2412,7 @@ class TestIRS4Preset:
     def test_irs4_hover_stable(self):
         """IRS-4 should maintain stable hover within paper RMSE targets.
 
-        With motor dynamics enabled (Phase T), motor spin-up lag causes
+        With motor dynamics enabled (Eq. 4 rotor model), motor spin-up lag causes
         longer settling — use a wider window and generous envelope matching
         real-flight RMSE scale (paper Table 5 reports ~0.10m under ideal).
         """
@@ -2457,7 +2457,7 @@ class TestIRS4Preset:
         assert dist_to_home < 2.0, f"Did not return home: dist={dist_to_home:.2f}m"
 
 
-# ── Phase J2: Mission Replay Pipeline ───────────────────────────────────
+# ── Mission Replay Pipeline ─────────────────────────────────────────────
 
 class TestMissionReplay:
     """Verify replay_mission() pipeline operates correctly."""
@@ -2543,7 +2543,7 @@ class TestMissionReplay:
             replay_mission(log, make_irs4_quadrotor(), wind_source="none")
 
 
-# ── Phase J3: Paper Table 5 Acceptance Tests ────────────────────────────
+# ── Paper Table 5 Acceptance Tests ───────────────────────────────────────
 
 class TestPaperValidation:
     """Parametrized tests verifying sim accuracy against paper Table 5 thresholds.
@@ -2560,7 +2560,7 @@ class TestPaperValidation:
 
     # Our generic PID reaches ~0.5-1.6m steady-state accuracy depending on
     # altitude (higher = slower convergence). Paper's 0.1m target requires
-    # ArduPilot's tuned controller via SITL integration (Phase K).
+    # ArduPilot's tuned controller via SITL integration.
     # These tests verify the engine converges and tracks within reasonable bounds.
     QUAD_HOVER_Z_THRESHOLD = 2.0   # generic PID steady-state (paper: 0.10m w/ ArduPilot)
     FW_TRACK_Z_THRESHOLD = 3.0     # generic PID tracking (paper: 2.0m)
@@ -2742,7 +2742,7 @@ class TestPaperValidation:
 
 
 class TestTrajectoryTracking:
-    """Tests for run_trajectory_tracking and Phase V replay pipeline fixes."""
+    """Tests for run_trajectory_tracking and real-flight-data replay pipeline."""
 
     def test_trajectory_tracking_follows_reference(self):
         """Sim should closely track a simple reference trajectory."""
@@ -2890,10 +2890,10 @@ class TestRealLogDownload:
         assert result_a.history == result_b.history
 
 
-# ── Phase R: Simulation Bridge Tests ─────────────────────────────────────
+# ── Simulation Bridge Tests (UDP / Timing) ───────────────────────────────
 
 class TestSimBridge:
-    """Tests for the UDP simulation bridge (Phase R1)."""
+    """Tests for the UDP simulation bridge (message contract, physics step)."""
 
     def test_bridge_message_contract(self):
         """ActionMessage and StatusMessage JSON contract matches Rust side."""
@@ -3018,7 +3018,7 @@ class TestSimBridge:
 
 
 class TestTimingContract:
-    """Tests for real-time timing contract (Phase R2) - Python side."""
+    """Tests for real-time timing contract (physics step latency, jitter)."""
 
     def test_physics_step_latency(self):
         """Single physics_step completes in < 1ms (CI gate)."""
@@ -3070,10 +3070,10 @@ class TestTimingContract:
         assert p95_ms < 1.0, f"P95 controller latency {p95_ms:.3f}ms exceeds 1ms"
 
 
-# ── Phase L: Terrain STL Export ──────────────────────────────────────────────
+# ── Terrain STL Export ───────────────────────────────────────────────────────
 
 class TestTerrainSTLExport:
-    """Tests for TerrainMap.export_stl() (Phase L1)."""
+    """Tests for TerrainMap.export_stl() (binary STL generation)."""
 
     def test_export_stl_creates_file(self, tmp_path):
         """export_stl writes a valid binary STL file."""
@@ -3158,10 +3158,10 @@ class TestTerrainSTLExport:
             offset += 50
 
 
-# ── Phase L2: Terrain Coloring ───────────────────────────────────────────────
+# ── Terrain Coloring (Gazebo Materials) ──────────────────────────────────────
 
 class TestTerrainColoring:
-    """Tests for Gazebo terrain material files (Phase L2)."""
+    """Tests for Gazebo terrain material files (color, texture)."""
 
     def test_material_file_exists(self):
         import os
@@ -3214,7 +3214,7 @@ class TestTerrainColoring:
 
 
 class TestTerrainSatelliteTexture:
-    """Tests for Phase Y satellite-texture terrain pipeline."""
+    """Tests for satellite-texture terrain pipeline (tile download, overlay)."""
 
     def test_satellite_tile_download_has_offline_fallback(self, tmp_path):
         from terrain import download_satellite_tile
@@ -3290,10 +3290,10 @@ class TestGazeboSensorVisibility:
             assert vis.text == 'true'
 
 
-# ── Phase M1: Position-Aware Wind ────────────────────────────────────────────
+# ── Position-Aware Wind ──────────────────────────────────────────────────────
 
 class TestPositionAwareWind:
-    """Tests for wind node position subscription (Phase M1)."""
+    """Tests for wind node position subscription (altitude-dependent density)."""
 
     def test_wind_node_has_pose_subscription(self):
         """wind_node.py subscribes to /mavros/local_position/pose."""
@@ -3340,7 +3340,7 @@ class TestPositionAwareWind:
         assert 0.55 < ratio < 0.70, f"Density ratio {ratio:.3f} unexpected"
 
 
-# ── Phase M2: Euler Rate Kinematics ─────────────────────────────────────────
+# ── Euler Rate Kinematics (Eq. 2) ────────────────────────────────────────────
 
 class TestEulerRates:
     """Tests for euler_rates_from_body_rates (paper Eq. 2)."""

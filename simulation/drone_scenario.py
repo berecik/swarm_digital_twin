@@ -218,7 +218,7 @@ def replay_mission(log_source, airframe: DroneParams,
                     output_plot: str = None,
                     segment_start_s: float = 0.0,
                     segment_end_s: float = None) -> dict:
-    """Automated mission replay pipeline (Phase J2).
+    """Automated mission replay pipeline (flight-log replay and Table 5 comparison).
 
     Loads a flight log → extracts waypoints + wind profile →
     runs simulation with matching airframe/atmosphere →
@@ -336,7 +336,7 @@ def replay_mission(log_source, airframe: DroneParams,
 
 def run_real_log_validation(data_dir: str = "data/flight_logs",
                             multiplier: float = 6.0):
-    """Run Phase V paper Table 5 validation with real OSSITLQUAD logs.
+    """Run paper Table 5 validation with real OSSITLQUAD flight logs.
 
     Multiplier default is 6x because we use a simple PID position controller
     rather than the paper's ArduPilot flight controller.  The paper achieves
@@ -352,7 +352,7 @@ def run_real_log_validation(data_dir: str = "data/flight_logs",
     local_logs = ensure_real_log_logs(data_dir)
     airframe = make_irs4_quadrotor()
 
-    print(f"Phase V: validating against real flight logs in '{data_dir}'")
+    print(f"Real-flight-data validation (paper Table 5) in '{data_dir}'")
     results = {}
     for mission_name in mission_names:
         mission = get_real_log_mission(mission_name)
@@ -370,7 +370,7 @@ def run_real_log_validation(data_dir: str = "data/flight_logs",
             f"rmse_x={metrics['rmse_x']:.4f}, rmse_y={metrics['rmse_y']:.4f}"
         )
 
-    print("Phase V validation PASS")
+    print("Real-flight-data validation PASS")
     return results
 
 
@@ -486,9 +486,9 @@ def main():
         euler=np.array([r.euler for r in records]),
         thrust=np.array([r.thrust for r in records]),
         ang_vel=np.array([r.angular_velocity for r in records]),
-        euler_rates=np.array([r.euler_rates for r in records]),  # Phase M2: Eq. 2
+        euler_rates=np.array([r.euler_rates for r in records]),  # Euler rate kinematics (Eq. 2)
         waypoints=np.array(waypoints),
-        # Phase 2 additions
+        # terrain and wind data
         terrain_x=tx,
         terrain_y=ty,
         terrain_z=terrain.elevations,
@@ -501,7 +501,7 @@ def main():
     )
     print(f"\n  Data saved to {output_path}")
 
-    # Export terrain as STL for Gazebo (Phase L1)
+    # Export terrain as STL for Gazebo
     stl_path = os.path.join(script_dir, 'terrain_mesh.stl')
     terrain.export_stl(stl_path)
     print(f"  Terrain STL saved to {stl_path}")

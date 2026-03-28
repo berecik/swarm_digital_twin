@@ -2,7 +2,7 @@
 """
 Swarm Scenario - Standalone multi-drone digital twin.
 
-Demonstrates Phase C standalone swarm simulation with shared wind/terrain,
+Demonstrates standalone swarm simulation with shared wind/terrain,
 boids-style coupling, and collision-avoidance constraints.
 """
 

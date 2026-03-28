@@ -56,7 +56,7 @@ class SimBridge:
         self.controller = PositionController(self.params)
         self.wind = WindField(wind_speed=0.0, wind_direction=np.array([1.0, 0.0, 0.0]))
 
-        # Sensor noise (Phase S)
+        # Sensor noise models (GPS perturbation on reported position)
         self.gps_noise = GPSNoise() if sensor_noise else None
 
         # Vehicle status FSM (mirrors PX4 nav/arming states)
@@ -99,15 +99,13 @@ class SimBridge:
     def make_status_message(self) -> dict:
         """Build the status JSON to send back to Rust.
 
-        If sensor noise is enabled, the reported position includes GPS-class
-        perturbation so the Rust controller sees realistic noisy feedback.
+        If sensor noise is enabled, the reported position is routed through
+        the GPSNoise.apply_local API so that white noise, bias drift, and
+        sigma parameters stay consistent with the rest of the sensor pipeline.
         """
         pos = self.state.position.copy()
         if self.gps_noise is not None:
-            # Apply noise in local frame (meters) directly
-            pos[0] += np.random.normal(0.0, self.gps_noise.horizontal_sigma_m)
-            pos[1] += np.random.normal(0.0, self.gps_noise.horizontal_sigma_m)
-            pos[2] += np.random.normal(0.0, self.gps_noise.vertical_sigma_m)
+            pos = self.gps_noise.apply_local(pos, dt=self.dt)
         return {
             "nav_state": self.nav_state,
             "arming_state": self.arming_state,

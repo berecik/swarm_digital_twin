@@ -157,7 +157,10 @@ class MotorModel:
     def step(self, omega: np.ndarray, thrust_cmd_total: float, dt: float, max_thrust_total: float) -> Tuple[np.ndarray, float]:
         n = max(int(self.num_motors), 1)
         if omega.shape != (n,):
-            omega = np.zeros(n)
+            raise ValueError(
+                f"MotorModel.step: omega shape {omega.shape} does not match "
+                f"num_motors={self.num_motors} (expected ({n},))"
+            )
 
         thrust_cmd_total = float(np.clip(thrust_cmd_total, 0.0, max_thrust_total))
         thrust_cmd_per_motor = np.full(n, thrust_cmd_total / n)
@@ -420,7 +423,7 @@ def make_irs4_quadrotor(altitude_msl: float = 2800.0) -> DroneParams:
             tau_motor=0.05,             # paper-aligned motor spin-up timescale
             num_motors=4,
         ),
-        motor_dynamics_enabled=True,    # Phase T: use Eq. 4 motor dynamics
+        motor_dynamics_enabled=True,    # motor dynamics (paper Eq. 4)
         battery_model=BatteryModel(cells=6, capacity_mah=6000.0),
         aero=QuadrotorAero(
             reference_area=0.05,         # frontal area (compact quad frame)
@@ -696,8 +699,8 @@ def physics_step(state: DroneState, cmd: DroneCommand,
     atmo = params.atmo
 
     control_surface_next = state.control_surface_deflections
-    control_surface_current = np.zeros(3)
-    if aero is not None and isinstance(aero, FixedWingAero):
+    if isinstance(aero, FixedWingAero):
+        control_surface_current = np.zeros(3)
         if state.control_surface_deflections is not None:
             control_surface_current = np.asarray(state.control_surface_deflections, dtype=float)
 
@@ -789,11 +792,11 @@ def physics_step(state: DroneState, cmd: DroneCommand,
 
     # Aerodynamic pitching moment: M_pitch = 0.5 * rho * A * c * V^2 * C_M(alpha)
     aero_torque = np.zeros(3)
-    if aero is not None and isinstance(aero, FixedWingAero):
+    if isinstance(aero, FixedWingAero):
         rho_m = (atmo.rho if atmo is not None else 1.225)
         V_body_m = R.T @ state.velocity
         V_mag = np.linalg.norm(V_body_m)
-        if V_mag > 1e-6:
+        if V_mag > 1e-6 and control_surface_next is not None:
             aoa = compute_aoa(V_body_m)
             q_dyn = 0.5 * rho_m * V_mag**2
             delta_e, delta_a, delta_r = control_surface_next
@@ -1037,7 +1040,7 @@ def run_trajectory_tracking(ref_times: np.ndarray,
                             dt: float = 0.005,
                             wind=None,
                             terrain=None) -> List[SimRecord]:
-    """Track a reference trajectory point-by-point (Phase V validation mode).
+    """Track a reference trajectory point-by-point (real-flight-data validation mode).
 
     At each simulation timestep, the controller targets the reference position
     interpolated at the current time.  This matches the paper's validation

@@ -12,7 +12,7 @@ services:
         ipv4_address: 10.10.1.11
     environment:
       - ROS_DOMAIN_ID=1
-    profiles: ["phase_b_stack"]
+    profiles: ["swarm_sitl"]
     command: tail -f /dev/null
     healthcheck:
       test: ["CMD-SHELL", "bash -lc 'test -f /dev/null'"]
@@ -24,7 +24,7 @@ services:
     image: swarm_companion:latest
     container_name: swarm_node_1
     restart: always
-    profiles: ["phase_b_stack"]
+    profiles: ["swarm_sitl"]
     networks:
       swarm_net:
         ipv4_address: 10.10.1.21
@@ -50,7 +50,7 @@ services:
         ipv4_address: 10.10.1.31
     environment:
       - ROS_DOMAIN_ID=1
-    profiles: ["phase_b_stack"]
+    profiles: ["swarm_sitl"]
     volumes:
       - ./perception:/root/workspace/perception
     command: bash -c "export PYTHONPATH=\$PYTHONPATH:/root/workspace/perception && ros2 run perception_core detector"
@@ -65,7 +65,7 @@ services:
         ipv4_address: 10.10.1.12
     environment:
       - ROS_DOMAIN_ID=2
-    profiles: ["phase_b_stack"]
+    profiles: ["swarm_sitl"]
     command: tail -f /dev/null
 
   swarm_node_2:
@@ -76,7 +76,7 @@ services:
         ipv4_address: 10.10.1.22
     environment:
       - ROS_DOMAIN_ID=2
-    profiles: ["phase_b_stack"]
+    profiles: ["swarm_sitl"]
     volumes:
       - ./swarm_control:/root/workspace/swarm_control
       - ./simulation:/root/workspace/simulation
@@ -92,7 +92,7 @@ services:
         ipv4_address: 10.10.1.13
     environment:
       - ROS_DOMAIN_ID=3
-    profiles: ["phase_b_stack"]
+    profiles: ["swarm_sitl"]
     command: tail -f /dev/null
 
   swarm_node_3:
@@ -103,7 +103,7 @@ services:
         ipv4_address: 10.10.1.23
     environment:
       - ROS_DOMAIN_ID=3
-    profiles: ["phase_b_stack"]
+    profiles: ["swarm_sitl"]
     volumes:
       - ./swarm_control:/root/workspace/swarm_control
       - ./simulation:/root/workspace/simulation
@@ -111,12 +111,196 @@ services:
     depends_on:
       - sitl_drone_3
 
-  # ── Phase K: ArduPilot SITL ───────────────────────────────────────────
+  # ── Drones 4-6 (completing the 6-drone swarm) ─────────────────────────
+
+  sitl_drone_4:
+    image: swarm_companion:latest
+    container_name: sitl_drone_4
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.14
+    environment:
+      - ROS_DOMAIN_ID=4
+    profiles: ["swarm_sitl"]
+    command: tail -f /dev/null
+
+  swarm_node_4:
+    image: swarm_companion:latest
+    container_name: swarm_node_4
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.24
+    environment:
+      - ROS_DOMAIN_ID=4
+    profiles: ["swarm_sitl"]
+    volumes:
+      - ./swarm_control:/root/workspace/swarm_control
+      - ./simulation:/root/workspace/simulation
+    command: bash -c "cd /root/workspace/swarm_control && cargo run -- 4"
+    depends_on:
+      - sitl_drone_4
+
+  sitl_drone_5:
+    image: swarm_companion:latest
+    container_name: sitl_drone_5
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.15
+    environment:
+      - ROS_DOMAIN_ID=5
+    profiles: ["swarm_sitl"]
+    command: tail -f /dev/null
+
+  swarm_node_5:
+    image: swarm_companion:latest
+    container_name: swarm_node_5
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.25
+    environment:
+      - ROS_DOMAIN_ID=5
+    profiles: ["swarm_sitl"]
+    volumes:
+      - ./swarm_control:/root/workspace/swarm_control
+      - ./simulation:/root/workspace/simulation
+    command: bash -c "cd /root/workspace/swarm_control && cargo run -- 5"
+    depends_on:
+      - sitl_drone_5
+
+  sitl_drone_6:
+    image: swarm_companion:latest
+    container_name: sitl_drone_6
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.16
+    environment:
+      - ROS_DOMAIN_ID=6
+    profiles: ["swarm_sitl"]
+    command: tail -f /dev/null
+
+  swarm_node_6:
+    image: swarm_companion:latest
+    container_name: swarm_node_6
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.26
+    environment:
+      - ROS_DOMAIN_ID=6
+    profiles: ["swarm_sitl"]
+    volumes:
+      - ./swarm_control:/root/workspace/swarm_control
+      - ./simulation:/root/workspace/simulation
+    command: bash -c "cd /root/workspace/swarm_control && cargo run -- 6"
+    depends_on:
+      - sitl_drone_6
+
+  # ── Zenoh-bridge-ros2dds (one per drone) ─────────────────────────────
+
+  zenoh_bridge_1:
+    image: eclipse/zenoh-bridge-ros2dds:latest
+    container_name: zenoh_bridge_1
+    profiles: ["swarm_sitl"]
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.41
+    environment:
+      - ROS_DOMAIN_ID=1
+    volumes:
+      - ./docker/zenoh/bridge_drone_1.json5:/etc/zenoh/bridge.json5:ro
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    depends_on:
+      - sitl_drone_1
+    restart: unless-stopped
+
+  zenoh_bridge_2:
+    image: eclipse/zenoh-bridge-ros2dds:latest
+    container_name: zenoh_bridge_2
+    profiles: ["swarm_sitl"]
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.42
+    environment:
+      - ROS_DOMAIN_ID=2
+    volumes:
+      - ./docker/zenoh/bridge_drone_2.json5:/etc/zenoh/bridge.json5:ro
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    depends_on:
+      - sitl_drone_2
+    restart: unless-stopped
+
+  zenoh_bridge_3:
+    image: eclipse/zenoh-bridge-ros2dds:latest
+    container_name: zenoh_bridge_3
+    profiles: ["swarm_sitl"]
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.43
+    environment:
+      - ROS_DOMAIN_ID=3
+    volumes:
+      - ./docker/zenoh/bridge_drone_3.json5:/etc/zenoh/bridge.json5:ro
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    depends_on:
+      - sitl_drone_3
+    restart: unless-stopped
+
+  zenoh_bridge_4:
+    image: eclipse/zenoh-bridge-ros2dds:latest
+    container_name: zenoh_bridge_4
+    profiles: ["swarm_sitl"]
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.44
+    environment:
+      - ROS_DOMAIN_ID=4
+    volumes:
+      - ./docker/zenoh/bridge_drone_4.json5:/etc/zenoh/bridge.json5:ro
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    depends_on:
+      - sitl_drone_4
+    restart: unless-stopped
+
+  zenoh_bridge_5:
+    image: eclipse/zenoh-bridge-ros2dds:latest
+    container_name: zenoh_bridge_5
+    profiles: ["swarm_sitl"]
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.45
+    environment:
+      - ROS_DOMAIN_ID=5
+    volumes:
+      - ./docker/zenoh/bridge_drone_5.json5:/etc/zenoh/bridge.json5:ro
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    depends_on:
+      - sitl_drone_5
+    restart: unless-stopped
+
+  zenoh_bridge_6:
+    image: eclipse/zenoh-bridge-ros2dds:latest
+    container_name: zenoh_bridge_6
+    profiles: ["swarm_sitl"]
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.46
+    environment:
+      - ROS_DOMAIN_ID=6
+    volumes:
+      - ./docker/zenoh/bridge_drone_6.json5:/etc/zenoh/bridge.json5:ro
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    depends_on:
+      - sitl_drone_6
+    restart: unless-stopped
+
+  # ── ArduPilot SITL ───────────────────────────────────────────────────
   ardupilot_sitl:
     build:
       context: .
       dockerfile: Dockerfile.sitl
+      platforms:
+        - linux/amd64
     image: ardupilot-sitl:latest
+    platform: linux/amd64
     container_name: ardupilot_sitl
     profiles: ["sitl"]
     networks:
@@ -137,19 +321,22 @@ services:
       - ./gazebo/models:/sitl/models:ro
       - ./missions:/sitl/missions:ro
       - sitl_logs:/sitl/logs
-    command: ["copter", "--param-file", "/sitl/params/irs4_quad.parm"]
+    command: ["copter"]
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import socket,sys; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.settimeout(2); s.bind(('0.0.0.0',14551)); d,_=s.recvfrom(300); sys.exit(0 if len(d)>0 else 1)\" 2>/dev/null || exit 1"]
+      test: ["CMD-SHELL", "pgrep -x 'arducopter|arduplane' > /dev/null"]
       interval: 5s
       timeout: 3s
-      start_period: 20s
-      retries: 6
+      start_period: 15s
+      retries: 3
 
   ardupilot_sitl_plane:
     build:
       context: .
       dockerfile: Dockerfile.sitl
+      platforms:
+        - linux/amd64
     image: ardupilot-sitl:latest
+    platform: linux/amd64
     container_name: ardupilot_sitl_plane
     profiles: ["sitl_plane"]
     networks:
@@ -168,7 +355,7 @@ services:
       - ./gazebo/models:/sitl/models:ro
       - ./missions:/sitl/missions:ro
       - sitl_logs:/sitl/logs
-    command: ["plane", "--param-file", "/sitl/params/valencia_fw.parm"]
+    command: ["plane"]
 
 volumes:
   sitl_logs:

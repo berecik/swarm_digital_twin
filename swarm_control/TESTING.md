@@ -47,7 +47,7 @@ Core mathematical and utility functions are separated into `src/utils.rs` and `s
     - **Expected Outcome**: Neighbor is ignored by boids aggregation and result follows non-neighbor branch.
 
 #### D. Cross-Module Parity (Rust vs Standalone Twin)
-- **Parity Contract (Phase C)**:
+- **Parity Contract (Rust–Python Cross-Module)**:
     - **Purpose**: Keep standalone swarm simulation behavior aligned with Rust swarm logic before SITL integration.
     - **Reference**: `src/boids.rs` (`FlockingParams` defaults and `calculate_flocking_vector`).
     - **Verification**:

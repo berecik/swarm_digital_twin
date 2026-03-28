@@ -93,7 +93,7 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # Wind perturbation node (altitude-dependent ISA density, Phase M1)
+        # Wind perturbation node (altitude-dependent ISA density, position-aware)
         Node(
             package='gazebo',
             executable='wind_node.py',

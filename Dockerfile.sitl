@@ -1,11 +1,14 @@
 # Dockerfile.sitl — ArduPilot SITL for Swarm Digital Twin
 # Builds ArduPilot SITL (plane + copter) for use with Gazebo plugin bridge.
 #
+# IMPORTANT: Must build for linux/amd64 — ArduPilot SITL has floating-point
+# exceptions on ARM64 (Apple Silicon). Docker Desktop handles x86 emulation via QEMU.
+#
 # Usage:
-#   docker build -f Dockerfile.sitl -t ardupilot-sitl .
+#   docker build --platform linux/amd64 -f Dockerfile.sitl -t ardupilot-sitl .
 #   docker compose --profile sitl up ardupilot_sitl
 
-FROM ubuntu:22.04 AS builder
+FROM --platform=linux/amd64 ubuntu:22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -22,27 +25,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtool \
     automake \
     autoconf \
+    pkg-config \
     libexpat1-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone ArduPilot
+# Clone ArduPilot (depth 1 + submodules for a lean checkout)
 ARG ARDUPILOT_TAG=Copter-4.5.7
 RUN git clone --recurse-submodules --depth 1 --branch ${ARDUPILOT_TAG} \
     https://github.com/ArduPilot/ardupilot.git /ardupilot
 
 WORKDIR /ardupilot
 
-# Install Python dependencies
-RUN pip3 install --no-cache-dir future lxml pymavlink MAVProxy pexpect
+# Install Python dependencies (empy 3.x is required by waf code generation;
+# empy 4.x has an incompatible API and will break the build)
+RUN pip3 install --no-cache-dir \
+    "empy==3.3.4" future lxml pymavlink MAVProxy pexpect pyserial
 
-# Build SITL for copter
-RUN ./waf configure --board sitl && ./waf copter
-
-# Build SITL for plane
+# Build SITL for copter, then plane (same configure step)
+RUN ./waf configure --board sitl
+RUN ./waf copter
 RUN ./waf plane
 
 # ── Runtime stage ─────────────────────────────────────────────────────────
-FROM ubuntu:22.04
+FROM --platform=linux/amd64 ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -51,6 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-setuptools \
     netcat-openbsd \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --no-cache-dir future lxml pymavlink MAVProxy pexpect
@@ -77,17 +83,10 @@ EXPOSE 9002/udp 9003/udp 14550/udp 14555/udp 5760/tcp
 
 WORKDIR /sitl
 
-# Health check: wait for MAVLink heartbeat on port 14550
-HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=6 \
-    CMD python3 -c " \
-import socket, struct, sys; \
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); \
-s.settimeout(2); \
-s.bind(('0.0.0.0', 14551)); \
-try: \
-    d, _ = s.recvfrom(300); \
-    sys.exit(0) if len(d) > 0 else sys.exit(1); \
-except: sys.exit(1)" || exit 1
+# Health check: verify ArduPilot SITL process is running
+# (Do NOT probe TCP 5760 — repeated connect/disconnect crashes ArduPilot)
+HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=3 \
+    CMD pgrep -x "arducopter|arduplane" > /dev/null
 
 # Default: start copter SITL
 # Override with --vehicle plane for fixed-wing

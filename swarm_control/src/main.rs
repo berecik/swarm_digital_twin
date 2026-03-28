@@ -6,8 +6,12 @@ use std::time::Duration;
 use nalgebra::Vector3;
 use tokio;
 
+use raft::storage::MemStorage;
+
 use swarm_control_core::driver_core::{DriverAction, DriverCore, DriverStatus};
 use swarm_control_core::px4_safety::{Px4CommandKind, Px4SafetyBuilder};
+use swarm_control_core::consensus::{MissionConsensus, MissionState};
+use swarm_control_core::consensus_transport::{ConsensusTransportLoop, TransportLoopConfig};
 
 mod utils;
 
@@ -104,9 +108,42 @@ impl OffboardController {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let context = rclrs::Context::new(env::args())?;
-    let node = rclrs::Node::new(&context, "swarm_control_core")?;
+
+    // Parse drone ID from CLI args (e.g. `cargo run -- 3`), default to 1
+    let drone_id: u64 = env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+
+    let node = rclrs::Node::new(&context, &format!("swarm_node_{drone_id}"))?;
 
     let controller = Arc::new(Mutex::new(OffboardController::new(&node)?));
+
+    // ── Raft consensus ─────────────────────────────────────────────────
+    let peers: Vec<u64> = (1..=6).collect();
+    let storage = MemStorage::new_with_conf_state((peers.clone(), vec![]));
+    let consensus = MissionConsensus::new(drone_id, &peers, storage)
+        .expect("consensus init failed");
+    let consensus_shared = Arc::new(Mutex::new(consensus));
+
+    let mut transport_loop = ConsensusTransportLoop::new(
+        Arc::clone(&consensus_shared),
+        drone_id,
+        TransportLoopConfig::default(),
+    );
+
+    // Consensus tick loop (100ms = 10Hz Raft ticks)
+    let consensus_for_tick = Arc::clone(&consensus_shared);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        loop {
+            interval.tick().await;
+            // In production this would also publish outbox via Zenoh.
+            // For now, tick the Raft node to keep elections alive.
+            let mut c = consensus_for_tick.lock().unwrap();
+            c.tick();
+        }
+    });
 
     // Heartbeat Loop (20Hz) - Async and Robust
     let hb_controller = Arc::clone(&controller);

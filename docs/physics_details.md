@@ -325,7 +325,7 @@ $$C_D(\alpha) = C_{D0} + C_{D\alpha,stall} \cdot \alpha^2$$
 | `make_holybro_x500()` | 2.0 kg | diag(0.03, 0.03, 0.05) | $C_D=1.1$, $A=0.06$ m^2 | Paper validation |
 | `make_fixed_wing()` | 3.0 kg | with off-diag products | `FixedWingAero` ($A=0.50$ m^2) | Fixed-wing simulation |
 
-### 10.1 Aerodynamic Parameter Registry (Phase B Provenance)
+### 10.1 Aerodynamic Parameter Registry (Calibration Provenance)
 
 | Preset | Parameter set | Source / provenance | Valid runtime range | Uncertainty notes |
 |:---|:---|:---|:---|:---|

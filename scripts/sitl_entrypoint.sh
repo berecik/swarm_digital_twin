@@ -47,6 +47,12 @@ case "$VEHICLE" in
         ;;
 esac
 
+# Combine defaults with custom param file if provided
+if [ -n "$PARAM_FILE" ] && [ -f "$PARAM_FILE" ]; then
+    DEFAULTS="$DEFAULTS,$PARAM_FILE"
+    echo "Params:   $PARAM_FILE"
+fi
+
 # Build SITL arguments
 SITL_ARGS=(
     --model "$FRAME"
@@ -55,12 +61,6 @@ SITL_ARGS=(
     --defaults "$DEFAULTS"
     --base-port 5760
 )
-
-# Add custom parameter file if provided
-if [ -n "$PARAM_FILE" ] && [ -f "$PARAM_FILE" ]; then
-    SITL_ARGS+=(--defaults "$DEFAULTS,$PARAM_FILE")
-    echo "Params:   $PARAM_FILE"
-fi
 
 echo "Binary:   $BIN"
 echo "Frame:    $FRAME"

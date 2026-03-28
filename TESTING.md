@@ -9,7 +9,7 @@ This document tracks the high-level testing status and provides detailed explana
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM + Transport + Timing Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics** (Python) | ✅ Pass (241) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + Phase V real-log gate + Phase W aero-area gate + Phase X battery/energy gate + Phase Y terrain satellite-texture gate + Phase Z wind auto-tuning gate + trajectory-tracking validation) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation + trajectory tracking + quadrotor effective aero-area model + battery & energy model + satellite-texture terrain overlay + wind disturbance auto-tuning |
+| **Drone Physics** (Python) | ✅ Pass (241) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + real-log gate + aero-area gate + battery/energy gate + terrain satellite-texture gate + wind auto-tuning gate + trajectory-tracking validation) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation + trajectory tracking + quadrotor effective aero-area model + battery & energy model + satellite-texture terrain overlay + wind disturbance auto-tuning |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 \* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
@@ -82,19 +82,19 @@ The following tests verify the AI-driven human detection and 3D localization log
 
 Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py`
 
-#### A1. Phase V Real Flight Data Validation
+#### A1. Real Flight Data Validation (Paper Table 5)
 - **`./run_scenario.sh --real-log`** / **`python simulation/drone_scenario.py --real-log`**:
     - **Purpose**: Reproduce paper-aligned Table 5 validation against real OSSITLQUAD flight logs for Carolina/EPN mission windows.
     - **Input**: `Carolina_quad_40m_plus_20m.bin` and `EPN_quad_30m_plus_20m.bin` (auto-downloaded to `data/flight_logs/` if missing), mission profiles `quad_carolina_40`, `quad_carolina_20`, `quad_epn_30`, `quad_epn_20`.
     - **Expected Outcome**: Each mission passes RMSE gate `rmse_z/x/y <= 2x` paper-reported Table 5 values.
 
-#### A0. Phase A Reproducible Validation Baseline
+#### A0. Reproducible Validation Baseline
 - **`./run_scenario.sh --benchmark`**:
     - **Purpose**: Runs one-command deterministic benchmark validation gates for both single-drone and swarm profile sets.
     - **Input**: Single-drone canonical profiles (`moderate`, `strong_wind`, `crosswind`, `storm`) from `simulation/validation.py` and swarm profiles (`baseline`, `crosswind`, `gusty`) from `simulation/swarm_scenario.py`, all with fixed seeds.
     - **Expected Outcome**: All profiles pass configured envelopes; repeated runs on same commit produce equivalent metrics within configured tolerance.
 
-#### A2. Phase W Quadrotor Effective Aerodynamic Area
+#### A2. Quadrotor Effective Aerodynamic Area
 - **`TestQuadrotorAeroArea::test_effective_area_increases_with_tilt`**:
     - **Purpose**: Verifies effective drag area is attitude-dependent.
     - **Input**: `QuadrotorAero` at 0° and 35° tilt with fixed thrust ratio.
@@ -108,11 +108,11 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
     - **Input**: Constant body velocity, varying tilt and thrust-ratio inputs to `_compute_quadratic_drag()`.
     - **Expected Outcome**: Drag magnitude increases from level/low-thrust → tilted/low-thrust → tilted/high-thrust.
 - **`TestIRS4Preset::test_irs4_hover_stable`**:
-    - **Purpose**: Regression check that IRS-4 hover remains stable after Phase W changes.
+    - **Purpose**: Regression check that IRS-4 hover remains stable after aero-area changes.
     - **Input**: `make_irs4_quadrotor()` simulation hover run.
     - **Expected Outcome**: Hover vertical RMSE remains within configured threshold (`< 1.5 m`).
 
-#### A3. Phase Y Satellite Texture Terrain Overlay
+#### A3. Satellite Texture Terrain Overlay
 - **`TestTerrainSatelliteTexture::test_satellite_tile_download_has_offline_fallback`**:
     - **Purpose**: Verifies satellite texture acquisition is available for SRTM region and deterministic offline fallback exists.
     - **Input**: `download_satellite_tile(-0.508333, -78.141667, cache_dir, tile_size=64)`.
@@ -130,7 +130,7 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
     - **Input**: `gazebo/worlds/antisana.world` and `gazebo/media/materials/scripts/antisana_terrain.material`.
     - **Expected Outcome**: Material defines `AntisanaTerrain/SatelliteTextured` with satellite diffuse texture; world includes the textured material reference.
 
-#### A4. Phase Z Wind Disturbance Auto-Tuning
+#### A4. Wind Disturbance Auto-Tuning
 - **`TestWindAutoTuning::test_auto_tuning_converges_and_recovers_scale`**:
     - **Purpose**: Verifies iterative wind-force scaling optimization converges and minimizes altitude RMSE.
     - **Input**: Synthetic reference trajectory with known wind scale (`1.7`), deterministic simulation callback, convergence tolerance `0.01 m`.
@@ -140,7 +140,7 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
     - **Input**: Identical reference signal and simulation callback evaluated in two consecutive runs.
     - **Expected Outcome**: Both runs produce identical `best_scale`, `best_rmse_z`, and full optimization history.
 
-#### A5. Phase V Trajectory Tracking and Real-Log Validation Fix
+#### A5. Trajectory Tracking and Real-Log Validation
 - **`TestTrajectoryTracking::test_trajectory_tracking_follows_reference`**:
     - **Purpose**: Verifies `run_trajectory_tracking` follows a reference trajectory with sub-meter RMSE.
     - **Input**: Gentle helical path, IRS-4 quadrotor, no wind.
@@ -158,7 +158,7 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
     - **Input**: `REAL_LOG_MISSIONS` segment masks applied to downloaded flight logs.
     - **Expected Outcome**: Each segment has >= 10 GPS points (catches gap/boundary misalignment).
 
-#### A6. Phase X Battery and Energy Model
+#### A6. Battery and Energy Model
 - **`TestBatteryModel::test_lipo_voltage_curve_is_soc_dependent`**:
     - **Purpose**: Verifies Li-Po open-circuit voltage follows SoC (full > mid > empty) and known endpoint voltages.
     - **Input**: `BatteryModel(cells=6)` evaluated at `SoC={1.0, 0.5, 0.0}`.
@@ -211,30 +211,30 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 #### H. Energy Conservation
 - **`test_freefall_energy_conservation`**: KE + PE conserved within 0.5% during drag-free freefall.
 
-#### I. Quadratic Drag (Phase 1)
+#### I. Quadratic Drag
 - **`test_quadratic_drag_scales_with_v_squared`**: Drag force quadruples when velocity doubles (V² scaling).
 - **`test_high_altitude_less_drag`**: Same velocity at 4500m ASL produces ~63% of sea-level drag.
 - **`test_terminal_velocity`**: Freefall with quadratic drag converges to finite terminal velocity (variation < 5%).
 
-#### J. Atmosphere Model (Phase 1)
+#### J. Atmosphere Model (ISA)
 - **`test_sea_level_density`**: ISA sea level density = 1.225 kg/m³.
 - **`test_high_altitude_density`**: ISA at 4500m = ~0.77 kg/m³.
 
-#### K. Wind Model (Phase 1)
+#### K. Wind Model
 - **`test_no_wind_unchanged`**: `turbulence_type="none"` produces zero force.
 - **`test_constant_wind_deflects_hover`**: Hovering drone drifts > 1m downwind in 10s with 5 m/s wind.
 - **`test_stronger_wind_more_force`**: Wind force scales with V² (10 m/s wind → 4x force of 5 m/s).
 - **`test_wind_from_log_matches_data`**: `from_log` interpolates altitude profile correctly.
 
-#### L. Inertia & Presets (Phase 1)
+#### L. Inertia & Presets
 - **`test_off_diagonal_inertia_coupling`**: Off-diagonal inertia terms cause cross-axis angular velocity coupling.
 - **`test_preset_loading`**: `make_generic_quad()` and `make_holybro_x500()` return correct parameters.
 
-#### M. Body-Frame Dynamics (Phase 1)
+#### M. Body-Frame Dynamics (Eq. 3)
 - **`test_body_frame_hover_equivalent`**: Body-frame quadratic drag hover matches world-frame linear drag hover at ~10m.
 - **`test_body_frame_freefall`**: Body-frame freefall (C_D=0) matches analytical kinematics.
 
-#### N. Validation Module (Phase 1)
+#### N. Validation Module (RMSE / Envelopes)
 - **`test_rmse_identical`**: RMSE of identical trajectories = 0.
 - **`test_rmse_known_offset`**: Constant 1m X-offset → RMSE_x = 1.0.
 - **`test_flight_log_csv_roundtrip`**: FlightLog parses CSV, returns correct shape, origin at (0,0,0).
@@ -245,10 +245,10 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_swarm_benchmark_profiles_stay_within_envelopes`**: Every swarm profile satisfies its configured envelope for separation (`min_separation`, `p05_separation`), tracking (`mean/p75/max error`), and kinematics (`mean_speed`, `p90_speed`).
 - **`test_swarm_profile_risk_ordering`**: Relative scenario difficulty remains coherent: gusty conditions are harder than baseline (tracking/speed), while tight-ring reduces minimum separation versus baseline.
 
-#### N2. Phase B Runtime Guardrails
+#### N2. Runtime Guardrails (Aero Parameter Warnings)
 - **`test_runtime_warning_for_out_of_range_aero_params`**: Out-of-range aerodynamic coefficients emit one-shot runtime warning tied to documented validity envelopes.
 
-#### O. Terrain (Phase 2)
+#### O. Terrain Model
 - **`test_flat_terrain_elevation`**: Flat terrain returns constant elevation at all query points.
 - **`test_from_array_elevation_query`**: Grid-based terrain uses bilinear interpolation (exact + midpoint checks).
 - **`test_terrain_collision_detection`**: `check_collision()` detects below/at/above terrain surface.
@@ -256,7 +256,7 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_from_function_terrain`**: `from_function(lambda x,y: 0.1*x)` slope gives correct elevation.
 - **`test_stl_file_not_found`**: Nonexistent STL raises FileNotFoundError.
 
-#### P. Fixed-Wing Aerodynamics (Phase 3)
+#### P. Fixed-Wing Aerodynamics (AoA / Stall)
 - **`test_aoa_computation_level_flight`**: Level forward flight (V=[20,0,0]) produces AoA=0.
 - **`test_aoa_computation_climbing`**: Climbing flight (V_z > 0) produces negative AoA.
 - **`test_aoa_computation_descending`**: Descending flight (V_z < 0) produces positive AoA.
@@ -271,11 +271,11 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_fixed_wing_generates_lift_in_flight`**: Forward flight with descent generates upward lift.
 - **`test_quadratic_drag_uses_aoa_dependent_cd`**: Drag uses `get_CD(alpha)` — higher AoA → more drag.
 
-#### P2. Fixed-Wing Control Surfaces (Phase U)
+#### P2. Fixed-Wing Control Surfaces
 - **`test_elevator_pitch_response_matches_control_effectiveness`**: Elevator deflection produces pitch response consistent with the configured control-effectiveness model within 10% tolerance.
 - **`test_control_surface_rate_limit_prevents_instant_step`**: Elevator/aileron/rudder deflections are rate-limited and cannot jump instantaneously in one physics step.
 
-#### Q. MAVLink Bridge (Phase 3)
+#### Q. MAVLink Bridge
 - **`test_crc_computation`**: MAVLink X.25 CRC is consistent and in range [0, 0xFFFF].
 - **`test_heartbeat_encoding`**: Heartbeat has MAVLink v2 STX byte (0xFD) and correct length.
 - **`test_heartbeat_decode_roundtrip`**: Encoded heartbeat decodes to msg_id=0, non-empty payload.
@@ -287,14 +287,14 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_sim_state_from_record`**: SimRecord converts to SimState with correct thrust %.
 - **`test_invalid_message_returns_none`**: Garbage data and truncated messages return None.
 
-#### S. Pitching Moment (Phase D)
+#### S. Pitching Moment (Paper Table 3)
 - **`test_pitching_moment_pre_stall`**: C_M is negative and proportional to alpha below stall (stabilizing).
 - **`test_pitching_moment_post_stall`**: C_M uses C_Ma_stall slope above stall angle.
 - **`test_pitching_moment_zero_at_zero_alpha`**: No pitching moment at zero AoA.
 - **`test_pitching_moment_applied_in_physics_step`**: Physics step applies aero pitching moment on pitch axis for fixed-wing.
 - **`test_quadrotor_has_no_pitching_moment`**: Base AeroCoefficients returns zero C_M.
 
-#### T. Valencia Paper-Exact Preset (Phase D)
+#### T. Valencia Paper-Exact Preset (Table 2/3)
 - **`test_valencia_fixed_wing_mass`**: Mass matches paper Table 2 (2.5 kg).
 - **`test_valencia_fixed_wing_ref_area`**: Wing reference area = 0.3997 m^2.
 - **`test_valencia_fixed_wing_chord`**: Chord = 0.235 m.
@@ -302,28 +302,28 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_valencia_fixed_wing_high_altitude_atmosphere`**: Antisana atmosphere at 4500m MSL, rho ~0.77.
 - **`test_valencia_fixed_wing_passes_provenance_check`**: No out-of-range warnings.
 
-#### U. Gamma-Term Equivalence (Phase D)
+#### U. Gamma-Term Equivalence (Eq. 4)
 - **`test_gamma_terms_match_matrix_form`**: Expanded paper Eq. 4 Gamma terms match matrix-form `I_inv @ (tau - omega x I@omega)` within 1e-12 for non-diagonal inertia tensor.
 
-#### V. Flight Log Binary Parser (Phase E)
+#### V. Flight Log Binary Parser (DataFlash .bin)
 - **`test_bin_parser_creates_flight_log`**: Synthetic DataFlash binary with FMT+GPS messages parses into FlightLog with correct positions.
 - **`test_bin_parser_file_not_found`**: Missing .bin file raises FileNotFoundError.
 - **`test_get_elevator_returns_pitch_rate`**: `get_elevator()` returns pitch rate derivative as elevator estimate.
 - **`test_extract_waypoints_from_dwell`**: `extract_waypoints()` detects dwell points where speed drops below threshold.
 
-#### W. Sim-vs-Real Comparison (Phase E)
+#### W. Sim-vs-Real Comparison
 - **`test_compare_sim_real_identical`**: Identical sim and real trajectories produce zero RMSE in all axes.
 - **`test_compare_sim_real_known_offset`**: Constant 5m Z-offset produces expected RMSE and percentile metrics.
 - **`test_compare_signals_perfect_match`**: Identical signals produce RMSE=0 and correlation=1.0.
 - **`test_compare_signals_anticorrelated`**: Anticorrelated signals produce correlation=-1.0.
 
-#### X. SRTM Terrain Pipeline (Phase F)
+#### X. SRTM Terrain Pipeline
 - **`test_from_hgt_synthetic`**: Synthetic .hgt file (3601x3601 int16 big-endian) loads into TerrainMap with correct GPS origin.
 - **`test_gps_elevation_query`**: `get_elevation_gps(lat, lon)` returns correct elevation for known GPS coordinates.
 - **`test_gps_query_without_origin_raises`**: GPS query on TerrainMap without `origin_gps` raises ValueError.
 - **`test_hgt_parser_file_not_found`**: Missing .hgt file raises FileNotFoundError.
 
-#### Y. Gazebo Model Integration (Phase G)
+#### Y. Gazebo Model Integration
 - **`test_sdf_model_exists`**: `gazebo/models/valencia_fixed_wing/model.sdf` file exists.
 - **`test_sdf_model_config_exists`**: `gazebo/models/valencia_fixed_wing/model.config` file exists.
 - **`test_sdf_contains_liftdrag_plugin`**: SDF file contains `<plugin>` with LiftDrag configuration.
@@ -332,23 +332,23 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_antisana_world_gps_origin`**: World file contains Antisana GPS coordinates (-0.508333, -78.141667).
 - **`test_parm_file_exists`**: `gazebo/models/valencia_fixed_wing/valencia_fw.parm` file exists.
 
-#### Z. SITL Mission Lifecycle (Phase H)
+#### Z. SITL Mission Lifecycle
 - **`test_sitl_script_exists`**: `scripts/run_sitl_mission.sh` exists and is executable.
 - **`test_sitl_script_has_required_steps`**: Script contains all 6 lifecycle steps (start, health check, upload, arm, capture, validate).
 
-#### AA. 3D Wind Estimation (Phase H2)
+#### AA. 3D Wind Estimation
 - **`test_still_trajectory_gives_zero_wind`**: Stationary drone produces near-zero 3D wind estimate.
 - **`test_constant_drift_detected`**: Sinusoidal lateral deviation produces non-zero Y-component wind.
 - **`test_3d_profile_has_correct_shape`**: 3D wind profile returns Nx4 array [t, wx, wy, wz].
 - **`test_3d_profile_too_short_returns_zero`**: Trajectory with < 3 points returns zero wind.
 - **`test_from_log_3d_wind_replay`**: WindField with `from_log_3d` correctly interpolates 3D wind profile.
 
-#### AB. CI Pipeline (Phase I1)
+#### AB. CI Pipeline
 - **`test_ci_workflow_exists`**: `.github/workflows/ci.yml` file exists.
 - **`test_ci_workflow_has_required_jobs`**: Workflow contains pytest, benchmark, and upload-artifact steps.
 - **`test_ci_workflow_triggers_on_push`**: Workflow triggers on push to master/main.
 
-#### AC. IRS-4 Quadrotor Preset (Phase J1)
+#### AC. IRS-4 Quadrotor Preset
 - **`test_irs4_mass`**: IRS-4 mass is in [1.0, 3.0] kg range for compact quadrotor.
 - **`test_irs4_atmosphere_quito`**: Default atmosphere at 2800m MSL, density ~0.93 kg/m^3.
 - **`test_irs4_custom_altitude`**: Accepts custom altitude for different experiment sites.
@@ -357,14 +357,14 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_irs4_hover_stable`**: Maintains hover within 0.5m after settling.
 - **`test_irs4_waypoint_tracking`**: Tracks square waypoint pattern and returns home.
 
-#### AD. Mission Replay Pipeline (Phase J2)
+#### AD. Mission Replay Pipeline
 - **`test_replay_returns_metrics`**: `replay_mission()` returns dict with all standard metric keys.
 - **`test_replay_quad_produces_valid_rmse`**: Quadrotor replay produces finite, positive RMSE values.
 - **`test_replay_fixed_wing_produces_valid_rmse`**: Fixed-wing replay produces finite RMSE.
 - **`test_replay_with_wind_from_log`**: Replay with from_log wind completes without error.
 - **`test_replay_rejects_short_log`**: Rejects flight logs with fewer than 10 data points.
 
-#### AE. Paper Table 5 Acceptance (Phase J3)
+#### AE. Paper Table 5 Acceptance
 - **`test_quadrotor_carolina_hover_accuracy[20/40]`**: Hover accuracy at Carolina-like 20m and 40m AGL.
 - **`test_quadrotor_epn_hover_accuracy[20/30]`**: Hover accuracy at EPN-like 20m and 30m AGL.
 - **`test_fixed_wing_deterministic`**: Fixed-wing sim is deterministic (identical inputs → RMSE≈0).
@@ -377,18 +377,18 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_irs4_benchmark_profiles_are_deterministic[irs4_carolina]`**: Carolina quadrotor benchmark is repeatable (identical RMSE across runs).
 - **`test_irs4_benchmark_profiles_are_deterministic[irs4_epn]`**: EPN quadrotor benchmark is repeatable.
 
-#### AF. Simulation Bridge (Phase R1)
+#### AF. Simulation Bridge (UDP)
 - **`test_bridge_message_contract`**: ActionMessage and StatusMessage JSON contract matches Rust wire format.
 - **`test_bridge_process_actions`**: SimBridge correctly processes RequestOffboard, RequestArm, PublishSetpoint action batches.
 - **`test_bridge_physics_step`**: Armed bridge advances physics upward toward target altitude.
 - **`test_bridge_status_message_format`**: Status response contains nav_state, arming_state, position fields.
 - **`test_bridge_udp_roundtrip`**: Full UDP roundtrip — client sends actions, bridge processes and returns status.
 
-#### AG. Real-Time Timing Contract (Phase R2)
+#### AG. Real-Time Timing Contract
 - **`test_physics_step_latency`**: Single `physics_step()` mean < 1ms, p95 < 2ms (CI gate for real-time viability).
 - **`test_controller_step_latency`**: `PositionController.compute()` p95 < 1ms.
 
-#### AH. IRS-4 Gazebo Model (Phase K2)
+#### AH. IRS-4 Gazebo Model (SDF / Sensors)
 - **`test_irs4_sdf_exists`**: IRS-4 SDF model file exists.
 - **`test_irs4_model_config_exists`**: Model config XML exists.
 - **`test_irs4_parm_exists`**: ArduPilot parameter file exists.
@@ -400,7 +400,7 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_irs4_parm_copter_frame`**: Parameter file configures copter frame (FRAME_CLASS=1).
 - **`test_irs4_parm_carolina_origin`**: GPS origin at Carolina Park (-0.189, 2800m).
 
-#### AI. Docker SITL Configuration (Phase K1)
+#### AI. Docker SITL Configuration
 - **`test_dockerfile_sitl_exists`**: Dockerfile.sitl exists.
 - **`test_dockerfile_builds_copter_and_plane`**: Dockerfile builds both arducopter and arduplane.
 - **`test_dockerfile_exposes_ports`**: Required UDP/TCP ports (9002, 9003, 14550) exposed.
@@ -409,7 +409,7 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_compose_sitl_ports`**: SITL compose service maps correct ports.
 - **`test_sitl_entrypoint_exists`**: Entrypoint script exists and is executable.
 
-#### AJ. Mission Waypoint Files (Phase N1)
+#### AJ. Mission Waypoint Files
 - **`test_fw_158_exists`**: FW mission 158 waypoint file exists.
 - **`test_fw_178_exists`**: FW mission 178 waypoint file exists.
 - **`test_fw_185_exists`**: FW mission 185 waypoint file exists.
@@ -421,7 +421,7 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_quad_mission_to_qgc_wpl`**: `mission_to_qgc_wpl()` produces valid QGC format.
 - **`test_quad_missions_have_correct_origins`**: Carolina=-0.189, EPN=-0.210.
 
-#### AK. Terrain STL Export (Phase L1)
+#### AK. Terrain STL Export
 - **`test_export_stl_creates_file`**: export_stl writes a binary STL with correct triangle count (2 per grid cell).
 - **`test_export_stl_expected_size`**: STL file size = 84 + n_triangles × 50 bytes.
 - **`test_export_stl_roundtrip`**: export → from_stl preserves center elevation within 2m.
@@ -429,7 +429,7 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_export_stl_rejects_1x1`**: 1×1 grid raises ValueError (cannot tessellate).
 - **`test_export_stl_normals_point_up`**: Triangle normals on flat terrain point upward (nz > 0.99).
 
-#### AL. Terrain Coloring (Phase L2)
+#### AL. Terrain Coloring (Gazebo Shaders)
 - **`test_material_file_exists`**: Gazebo material script exists.
 - **`test_vertex_shader_exists`**: GLSL vertex shader file exists.
 - **`test_fragment_shader_exists`**: GLSL fragment shader file exists.
@@ -437,14 +437,14 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_fragment_has_elevation_bands`**: Fragment shader contains green_max, brown_max, snow_min uniforms.
 - **`test_world_references_material`**: antisana.world references the terrain material.
 
-#### AM. Position-Aware Wind (Phase M1)
+#### AM. Position-Aware Wind
 - **`test_wind_node_has_pose_subscription`**: wind_node.py subscribes to /mavros/local_position/pose.
 - **`test_wind_node_has_pose_callback`**: _pose_callback method exists.
 - **`test_wind_node_uses_drone_pos`**: Hardcoded `np.zeros(3)` TODO removed, uses self.drone_pos.
 - **`test_wind_node_altitude_density`**: _get_altitude_density method and base_altitude_msl parameter exist.
 - **`test_isa_density_at_altitude`**: ISA density at 4500m is 55–70% of sea level.
 
-#### AN. Euler Rate Kinematics (Phase M2)
+#### AN. Euler Rate Kinematics (Eq. 2)
 - **`test_identity_at_zero_attitude`**: At phi=theta=0, euler rates equal body rates.
 - **`test_pure_roll_rate`**: Pure p maps to phi_dot only.
 - **`test_pitched_yaw_coupling`**: Body yaw rate couples into phi_dot and psi_dot at nonzero pitch.
@@ -452,12 +452,12 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_gimbal_lock_raises`**: ValueError at theta=π/2 (cos(theta)≈0).
 - **`test_symmetric_roll`**: Negating phi changes coupling sign on theta_dot.
 
-#### AO. Motor Dynamics (Phase T)
+#### AO. Motor Dynamics (Eq. 4 Rotor Model)
 - **`test_motor_step_response_reaches_63pct_near_tau`**: Motor speed reaches ~63% of commanded value after one time-constant (τ=0.05s), validating first-order spin-up dynamics.
 - **`test_motor_steady_state_matches_kt_omega_squared`**: At steady state, motor thrust matches `k_T·ω²` relationship from paper Eq. 4.
 - **`test_default_physics_step_without_motor_model_stays_backward_compatible`**: With `motor_dynamics_enabled=False`, physics_step produces identical results to legacy behavior.
 
-#### AP. Sensor Noise Models (Phase S)
+#### AP. Sensor Noise Models (GPS / IMU / Barometer)
 - **`test_gps_noise_quantization_and_statistics`**: GPS output quantized to 1e-7 deg; horizontal CEP < 3.5m; altitude σ < 6m.
 - **`test_gps_noise_drift_growth_and_zero_dt_bias_behavior`**: GPS random-walk drift magnitude grows over long horizon (`~sqrt(t)` trend via early/late windows), and `dt=0.0` keeps internal bias unchanged.
 - **`test_imu_noise_density_matches_order_of_magnitude`**: Accelerometer/gyro white noise σ matches configured density within 20%.
@@ -465,7 +465,7 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
 - **`test_baro_noise_quantization_and_lag`**: Barometer output quantized to 0.12 hPa; first-order lag visible on step input; sea-level altitude noise σ ≤ 1m.
 - **`test_baro_noise_drift_and_multi_dt_lag_consistency`**: Baro bias random walk broadens long-horizon spread, and responses at matched physical time remain consistent across `dt=0.1` vs `dt=1.0` lag regimes.
 
-#### R. Swarm Standalone Twin (Phase C)
+#### R. Swarm Standalone Twin
 - **`test_flocking_vector_returns_zero_without_neighbors`**: Empty neighbor list returns zero steering vector (stable no-neighbor behavior).
 - **`test_flocking_vector_excludes_neighbor_at_radius_boundary`**: Neighbor exactly at `neighbor_radius` is excluded, mirroring Rust `<` condition.
 - **`test_flocking_vector_matches_rust_reference_case`**: Python boids helper matches hand-derived Rust reference vector.

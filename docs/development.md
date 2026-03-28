@@ -37,11 +37,11 @@ To develop with the full stack (ROS 2, Zenoh, PX4 Messages):
    python3 visualize_on_host.py
    ```
 
-### QGroundControl Mission Replay (Phase B Protocol)
+### QGroundControl Mission Replay (SITL Protocol)
 
 1. **Start operation stack (profile):**
    ```bash
-   docker compose --profile phase_b_stack up -d
+   docker compose --profile swarm_sitl up -d
    ```
 2. **Launch Gazebo SITL world (separate terminal):**
    ```bash

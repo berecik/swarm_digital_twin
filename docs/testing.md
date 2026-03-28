@@ -46,18 +46,18 @@ Standalone physics engine tests for rigid-body quadrotor dynamics.
 | **Stability** | Hover equilibrium and drift. | `test_hover_thrust` |
 | **Dynamics** | Aerodynamic drag and energy. | `test_drag_slows_horizontal` |
 
-### 4. Phase A Reproducible Validation Baseline (Paper-Aligned)
+### 4. Reproducible Validation Baseline (Paper-Aligned)
 
 | Command | Purpose | Expected Outcome |
 | :--- | :--- | :--- |
-| `./run_scenario.sh --benchmark` | Single-entry benchmark verification aligned with Phase A deterministic gates (`A1+A2`) and Phase C swarm benchmark gates. Runs single-drone profiles (`moderate`, `strong_wind`, `crosswind`, `storm`) and swarm profiles (`baseline`, `crosswind`, `gusty`, `tight_ring`, `high_altitude`). | Command exits with success only when all single-drone and swarm benchmark profiles pass their configured validation envelopes. |
+| `./run_scenario.sh --benchmark` | Single-entry benchmark verification aligned with deterministic validation gates and swarm benchmark gates. Runs single-drone profiles (`moderate`, `strong_wind`, `crosswind`, `storm`) and swarm profiles (`baseline`, `crosswind`, `gusty`, `tight_ring`, `high_altitude`). | Command exits with success only when all single-drone and swarm benchmark profiles pass their configured validation envelopes. |
 
-### 5. Phase B Mission Replay Verification (SITL/GCS)
+### 5. SITL Mission Replay Verification (GCS)
 
 | Check | Command / Action | Expected Outcome |
 | :--- | :--- | :--- |
-| Stack profile | `docker compose --profile phase_b_stack up -d` | SITL stack starts with no failed containers. |
-| Container health | `docker compose --profile phase_b_stack ps` | `sitl_drone_*` and `swarm_node_1` show `running` and healthy status. |
+| Stack profile | `docker compose --profile swarm_sitl up -d` | SITL stack starts with no failed containers. |
+| Container health | `docker compose --profile swarm_sitl ps` | `sitl_drone_*` and `swarm_node_1` show `running` and healthy status. |
 | Gazebo + ROS topics | `ros2 launch gazebo sitl_empty.launch.py` then `ros2 topic list` | `/wind/velocity` and `/wind/force` are present. |
 | MAVLink telemetry | Open QGroundControl on UDP `14550` | Continuous `HEARTBEAT`, `ATTITUDE`, `GLOBAL_POSITION_INT`, `VFR_HUD`, `SYS_STATUS`. |
 | Replay proof | Upload and execute a mission in QGC | Replay completes and `.tlog` is saved without link dropouts. |
@@ -70,7 +70,7 @@ Standalone physics engine tests for rigid-body quadrotor dynamics.
 | Profile catalog sanity | `cd simulation && pytest -q test_drone_physics.py::TestPaperValidation::test_real_log_mission_catalog_has_required_profiles` | Mission catalog includes all four required paper-aligned quadrotor windows and valid source/segment metadata. |
 | Acceptance gate behavior | `cd simulation && pytest -q test_drone_physics.py::TestPaperValidation::test_real_log_acceptance_gate_passes_within_2x_paper test_drone_physics.py::TestPaperValidation::test_real_log_acceptance_gate_fails_over_2x_paper` | Gate accepts metrics within `2x` envelope and rejects metrics above envelope. |
 
-### 6. Phase C Swarm-Ready Standalone Twin Verification
+### 6. Swarm-Ready Standalone Twin Verification
 
 | Check | Command / Action | Expected Outcome |
 | :--- | :--- | :--- |
@@ -91,10 +91,10 @@ Standalone physics engine tests for rigid-body quadrotor dynamics.
 # Physics & Scenario Simulation
 ./run_scenario.sh --test
 
-# Phase A deterministic benchmark baseline (validation gates)
+# Deterministic benchmark baseline (validation gates)
 ./run_scenario.sh --benchmark
 
-# Phase V real-flight-data validation
+# Real-flight-data validation (paper Table 5)
 ./run_scenario.sh --real-log
 
 # Swarm Control (Rust)
@@ -103,10 +103,10 @@ cd swarm_control && cargo test
 # Perception (Python)
 cd perception && pytest test/
 
-# Phase B stack health snapshot
-docker compose --profile phase_b_stack ps
+# SITL stack health snapshot
+docker compose --profile swarm_sitl ps
 
-# Phase C standalone swarm checks
+# Standalone swarm checks
 cd simulation && pytest -q test_drone_physics.py -k SwarmStandaloneTwin
 python simulation/swarm_scenario.py
 ```

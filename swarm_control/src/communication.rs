@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use zenoh::prelude::r#async::*;
 use crate::boids::Boid;
+use crate::consensus_transport::{raft_tx_topic, raft_tx_subscribe_pattern, drone_id_from_key};
 use bincode;
 
 pub struct ZenohManager {
     session: Session,
     pub neighbors: Arc<Mutex<HashMap<String, Boid>>>,
     drone_id: String,
+    drone_id_numeric: u64,
     namespace: String,
 }
 
@@ -32,10 +34,16 @@ impl ZenohManager {
             }
         });
 
+        let drone_id_numeric = drone_id
+            .strip_prefix("drone_")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
         ZenohManager {
             session,
             neighbors,
             drone_id,
+            drone_id_numeric,
             namespace,
         }
     }
@@ -62,5 +70,52 @@ impl ZenohManager {
         if let Ok(payload) = bincode::serialize(boid) {
             self.session.put(key, payload).res().await.unwrap();
         }
+    }
+
+    // ── Consensus (Raft) pub/sub ────────────────────────────────────────
+
+    /// Publish a serialized Raft message to a specific target drone's
+    /// consensus topic: `/swarm/drone_{target_id}/consensus/raft_tx`.
+    pub async fn publish_raft_message(
+        &self,
+        target_id: u64,
+        payload: Vec<u8>,
+    ) -> Result<(), String> {
+        let topic = raft_tx_topic(target_id);
+        self.session
+            .put(&topic, payload)
+            .res()
+            .await
+            .map_err(|e| format!("zenoh put to {topic}: {e}"))
+    }
+
+    /// Publish a batch of outgoing Raft messages (from `ConsensusTransportLoop::drain_outbox`).
+    pub async fn publish_raft_batch(
+        &self,
+        messages: Vec<(u64, Vec<u8>)>,
+    ) -> Result<usize, String> {
+        let mut sent = 0;
+        for (target_id, payload) in messages {
+            self.publish_raft_message(target_id, payload).await?;
+            sent += 1;
+        }
+        Ok(sent)
+    }
+
+    /// Subscribe to all drones' Raft consensus traffic.
+    /// Returns a Zenoh subscriber.  The caller should spawn a task to
+    /// receive samples and feed them into `ConsensusTransportLoop::handle_incoming`.
+    pub async fn subscribe_raft(&self) -> zenoh::subscriber::Subscriber<'_, flume::Receiver<Sample>> {
+        let pattern = raft_tx_subscribe_pattern();
+        self.session
+            .declare_subscriber(&pattern)
+            .res()
+            .await
+            .unwrap()
+    }
+
+    /// Get this manager's numeric drone ID.
+    pub fn drone_id_numeric(&self) -> u64 {
+        self.drone_id_numeric
     }
 }

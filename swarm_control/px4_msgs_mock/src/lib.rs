@@ -83,4 +83,20 @@ pub mod msg {
         pub lon: f64,
         pub alt: f32,
     }
+
+    #[derive(Serialize, Deserialize, Debug, Default, Clone)]
+    pub struct VehicleStatus {
+        pub timestamp: u64,
+        pub nav_state: u8,
+        pub arming_state: u8,
+        pub vehicle_type: u8,
+        pub failsafe: bool,
+    }
+
+    #[derive(Serialize, Deserialize, Debug, Default, Clone)]
+    pub struct SysStatus {
+        pub voltage_battery: u16,    // mV
+        pub current_battery: i16,    // cA (10 * mA)
+        pub battery_remaining: i8,   // %
+    }
 }

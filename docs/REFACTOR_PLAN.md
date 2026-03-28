@@ -4,7 +4,7 @@
 
 **Scope of this document:** delta plan listing only remaining gaps. This is a backlog — completed work lives in the codebase and `MAINTENANCE.log`.
 
-**Current state:** Phases S/T/U/V/W/X/Y/Z executed and audited. Core physics (Eq. 1–7), terrain pipeline (SRTM + STL), aerodynamics (Table 2/3 exact coefficients), full inertia tensor (Eq. 4 Gamma terms), MAVLink bridge, validation framework (Table 5 RMSE gates), swarm simulation, sensor noise models (GPS/IMU/baro), motor thrust dynamics, fixed-wing control surfaces, Euler rate kinematics, real-flight-data validation with trajectory tracking, quadrotor effective aerodynamic area modeling, battery/energy modeling, satellite-texture terrain overlay, and wind disturbance auto-tuning are implemented, integrated, and tested. 241 tests passing.
+**Current state:** All paper-aligned work items executed and audited. Core physics (Eq. 1–7), terrain pipeline (SRTM + STL), aerodynamics (Table 2/3 exact coefficients), full inertia tensor (Eq. 4 Gamma terms), MAVLink bridge, validation framework (Table 5 RMSE gates), swarm simulation, sensor noise models (GPS/IMU/baro), motor thrust dynamics, fixed-wing control surfaces, Euler rate kinematics, real-flight-data validation with trajectory tracking, quadrotor effective aerodynamic area modeling, battery/energy modeling, satellite-texture terrain overlay, and wind disturbance auto-tuning are implemented, integrated, and tested. 241 tests passing.
 
 ---
 
@@ -35,7 +35,7 @@ All paper equations and tables have been verified against the codebase:
 
 ## 2) Remaining gaps
 
-### Phase W — Quadrotor Effective Aerodynamic Area ✅ Completed (2026-03-27)
+### Quadrotor Effective Aerodynamic Area ✅ Completed (2026-03-27)
 
 **Paper reference:** Section 3.5 — *"An additional limitation of our current approach is that it does not explicitly account for the effective aerodynamic area of the quadrotor."*
 
@@ -50,7 +50,7 @@ Implemented via `QuadrotorAero` in `simulation/drone_physics.py`: effective drag
   - `pytest -q simulation/test_drone_physics.py::TestQuadrotorAeroArea`
   - `pytest -q simulation/test_drone_physics.py::TestIRS4Preset::test_irs4_hover_stable`
 
-### Phase X — Battery and Energy Model ✅ Completed (2026-03-27)
+### Battery and Energy Model ✅ Completed (2026-03-27)
 
 **Paper reference:** Section 3.5 — *"one of the most significant [challenges] is related to battery limitations and inherent constraints in flight autonomy... high-energy peaks when adjusting motor speeds for stability and maneuverability... directly affecting the operational range and duration of remote sensing missions"*
 
@@ -66,7 +66,7 @@ Implemented via `BatteryModel` + battery telemetry fields integrated in `simulat
   - `pytest -q simulation/test_drone_physics.py::TestBatteryModel`
   - `pytest -q simulation/test_drone_physics.py::TestMAVLink::test_sys_status_encode_decode_battery_fields`
 
-### Phase Y — Satellite Texture Terrain Overlay ✅ Completed (2026-03-27)
+### Satellite Texture Terrain Overlay ✅ Completed (2026-03-27)
 
 **Paper reference:** Section 2.1 — the paper describes using Google Earth satellite imagery imported through BlenderGIS for photorealistic terrain visualization in Gazebo.
 
@@ -79,7 +79,7 @@ Implemented via `BatteryModel` + battery telemetry fields integrated in `simulat
 - **Verification:**
   - `pytest -q simulation/test_drone_physics.py::TestTerrainSatelliteTexture`
 
-### Phase Z — Wind Disturbance Auto-Tuning Loop ✅ Completed (2026-03-27)
+### Wind Disturbance Auto-Tuning Loop ✅ Completed (2026-03-27)
 
 **Paper reference:** Section 3.1 — *"The validation process involves heuristic adjustment of constants to produce an estimation of disturbance that generates altitude values as close as possible to those from real flight tests. Fine-tuning the disturbance force allowed precise altitude estimations."*
 
@@ -100,16 +100,16 @@ Implemented via `auto_tune_wind_force_scale()` in `simulation/validation.py` wit
 
 | Item category | Verification method | Status |
 |:---|:---|:---|
-| GPS noise (S1) | Unit test: quantization + CEP-class statistics (`TestSensorNoise`) | **Done** |
-| IMU noise (S2) | Unit test: noise density order-of-magnitude check (`TestSensorNoise`) | **Done** |
-| Barometer noise (S3) | Unit test: quantization + lag + altitude-equivalent noise (`TestSensorNoise`) | **Done** |
-| Motor model (T1) | Step response + steady-state thrust-map tests (`TestMotorDynamics`) | **Done** |
-| Control surfaces (U1) | Pitch response + rate-limit tests (`TestFixedWingControlSurfaces`) | **Done** |
-| Real log validation (V1) | Trajectory-tracking replay + RMSE comparison against paper Table 5 (`<=6x` PID gate, Z-axis `<=2x`) | **Done** |
-| Quadrotor aero area (W1) | Attitude-dependent area + prop-wash drag tests (`TestQuadrotorAeroArea`) | **Done** |
-| Battery model (X1) | Discharge curve + power draw + autonomy estimation | **Done** |
-| Satellite terrain texture (Y1) | UV-mapped mesh + Gazebo material binding | **Done** |
-| Wind auto-tuning (Z1) | Iterative RMSE minimization convergence test | **Done** |
+| GPS noise | Unit test: quantization + CEP-class statistics (`TestSensorNoise`) | **Done** |
+| IMU noise | Unit test: noise density order-of-magnitude check (`TestSensorNoise`) | **Done** |
+| Barometer noise | Unit test: quantization + lag + altitude-equivalent noise (`TestSensorNoise`) | **Done** |
+| Motor model | Step response + steady-state thrust-map tests (`TestMotorDynamics`) | **Done** |
+| Control surfaces | Pitch response + rate-limit tests (`TestFixedWingControlSurfaces`) | **Done** |
+| Real log validation | Trajectory-tracking replay + RMSE comparison against paper Table 5 (`<=6x` PID gate, Z-axis `<=2x`) | **Done** |
+| Quadrotor aero area | Attitude-dependent area + prop-wash drag tests (`TestQuadrotorAeroArea`) | **Done** |
+| Battery model | Discharge curve + power draw + autonomy estimation | **Done** |
+| Satellite terrain texture | UV-mapped mesh + Gazebo material binding | **Done** |
+| Wind auto-tuning | Iterative RMSE minimization convergence test | **Done** |
 
 ---
 

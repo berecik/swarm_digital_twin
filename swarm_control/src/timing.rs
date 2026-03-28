@@ -27,6 +27,17 @@ impl TimingMetrics {
         self.samples.push(elapsed);
     }
 
+    /// The configured loop deadline (1 / target_hz).
+    pub fn deadline(&self) -> Duration {
+        self.deadline
+    }
+
+    /// Clear all recorded samples and reset missed count.
+    pub fn reset(&mut self) {
+        self.samples.clear();
+        self.missed_count = 0;
+    }
+
     /// Number of recorded samples.
     pub fn count(&self) -> usize {
         self.samples.len()

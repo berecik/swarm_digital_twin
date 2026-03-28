@@ -6,7 +6,8 @@ Company: Marysia Software Limited <ceo@marysia.app>
 Domain: app.marysia.drone
 Website: https://marysia.app
 
-Reads scenario_data.npz (produced by drone_scenario.py) and renders:
+Reads scenario_data.npz (produced by drone_scenario.py), swarm_data.npz,
+or ArduPilot DataFlash .BIN logs (from SITL missions) and renders:
   - 3D terrain surface with color-mapped elevation
   - Animated drone with body-frame axes (attitude indicator)
   - Velocity vector and ground shadow projected onto terrain
@@ -16,6 +17,7 @@ Reads scenario_data.npz (produced by drone_scenario.py) and renders:
 
 import os
 import sys
+from typing import Optional
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -36,13 +38,105 @@ DATA_CANDIDATES = [
     Path('simulation/scenario_data.npz'),
 ]
 
+# SITL log search paths (newest first)
+SITL_LOG_GLOBS = [
+    SCRIPT_DIR.parent / 'logs' / 'sitl_*' / 'flight_logs' / '*.BIN',
+    Path('logs') / 'sitl_*' / 'flight_logs' / '*.BIN',
+]
+
+
+def _load_bin(path: str) -> dict:
+    """Load an ArduPilot DataFlash .BIN log and convert to visualization format.
+
+    Converts NED (ArduPilot) -> ENU (visualization) coordinate frame.
+    Computes velocity from position differences.
+    Extracts waypoints from dwell-point detection.
+    """
+    from flight_log import FlightLog
+
+    log = FlightLog.from_bin(path)
+    if len(log.timestamps) < 2:
+        raise ValueError(f"Flight log {path} contains insufficient data")
+
+    # Relative timestamps
+    t = log.timestamps - log.timestamps[0]
+
+    # NED -> ENU: X_enu=East(ned_e), Y_enu=North(ned_n), Z_enu=Up(-ned_d)
+    pos_enu = np.column_stack([
+        log.positions[:, 1],   # East
+        log.positions[:, 0],   # North
+        -log.positions[:, 2],  # Up
+    ])
+
+    # Velocity via central differences (ENU)
+    dt = np.diff(t)
+    dt = np.maximum(dt, 1e-6)
+    vel_diff = np.diff(pos_enu, axis=0) / dt[:, np.newaxis]
+    vel_enu = np.vstack([vel_diff, vel_diff[-1:]])
+
+    # Attitudes (roll, pitch, yaw) already in radians from FlightLog
+    euler = log.attitudes
+
+    # Throttle percentage (0-100) — displayed as-is on the throttle panel
+    if len(log.throttle) == len(t):
+        thrust = log.throttle.copy()
+    else:
+        thrust = np.full(len(t), 0.0)
+
+    # Extract waypoints via dwell detection, convert NED -> ENU
+    waypoints_ned = log.extract_waypoints()
+    if waypoints_ned:
+        waypoints = np.array([[wp[1], wp[0], -wp[2]] for wp in waypoints_ned])
+    else:
+        waypoints = np.array([pos_enu[0], pos_enu[-1]])
+
+    origin_str = f"{log.origin_lat:.6f}, {log.origin_lon:.6f}, {log.origin_alt:.0f}m MSL"
+    print(f"Loaded SITL log: {path}")
+    print(f"  GPS origin: {origin_str}")
+    print(f"  Duration: {t[-1]:.1f}s, {len(t)} samples")
+    print(f"  Waypoints detected: {len(waypoints)}")
+
+    return dict(
+        t=t,
+        pos=pos_enu,
+        vel=vel_enu,
+        euler=euler,
+        thrust=thrust,
+        waypoints=waypoints,
+        source='sitl',
+        origin_lat=np.float64(log.origin_lat),
+        origin_lon=np.float64(log.origin_lon),
+        origin_alt=np.float64(log.origin_alt),
+    )
+
+
+def _find_newest_sitl_log() -> Optional[Path]:
+    """Find the most recently modified .BIN file in SITL log directories."""
+    bins = []
+    for pattern in SITL_LOG_GLOBS:
+        bins.extend(pattern.parent.parent.parent.glob(
+            str(Path(*pattern.parts[-3:]))))
+    if not bins:
+        return None
+    return max(bins, key=lambda p: p.stat().st_mtime)
+
 
 def load_data(path: str = None):
     if path:
+        if path.lower().endswith('.bin'):
+            return _load_bin(path)
         return dict(np.load(path, allow_pickle=True))
+
+    # Try standard npz candidates first
     for p in DATA_CANDIDATES:
         if p.exists():
             return dict(np.load(str(p), allow_pickle=True))
+
+    # Try SITL logs as fallback
+    sitl_log = _find_newest_sitl_log()
+    if sitl_log:
+        print(f"No .npz data found. Using newest SITL log: {sitl_log}")
+        return _load_bin(str(sitl_log))
 
     # No file found -- run the scenario inline
     print("No scenario_data.npz found. Running simulation inline...")
@@ -180,8 +274,16 @@ def main():
 
     # ── Figure layout ────────────────────────────────────────────────────
     fig = plt.figure(figsize=(18, 11), facecolor='#1a1a2e')
-    fig.suptitle('Swarm Digital Twin — Full Physics Visualization',
-                 color='white', fontsize=14, fontweight='bold')
+    is_sitl = data.get('source') == 'sitl'
+    if is_sitl:
+        origin_lat = float(data.get('origin_lat', 0))
+        origin_lon = float(data.get('origin_lon', 0))
+        origin_alt = float(data.get('origin_alt', 0))
+        title = (f'Swarm Digital Twin — SITL Flight Replay  '
+                 f'({origin_lat:.4f}, {origin_lon:.4f}, {origin_alt:.0f}m MSL)')
+    else:
+        title = 'Swarm Digital Twin — Full Physics Visualization'
+    fig.suptitle(title, color='white', fontsize=14, fontweight='bold')
 
     # 3D trajectory (main, left column)
     ax3d = fig.add_subplot(2, 2, (1, 3), projection='3d', facecolor='#16213e')
@@ -329,16 +431,24 @@ def main():
         ax_thr.set_ylabel('Min separation (m)', fontsize=9)
         ax_thr.set_title('Swarm Separation', fontsize=10, color='white')
     else:
-        ax_thr.set_ylim(0, thrust.max() * 1.2)
+        ax_thr.set_ylim(0, max(thrust.max() * 1.2, 1.0) if not is_sitl else 105)
     ax_thr.set_xlabel('Time (s)', fontsize=9)
     if not is_swarm:
-        ax_thr.set_ylabel('Thrust (N)', fontsize=9)
-        ax_thr.set_title('Thrust', fontsize=10, color='white')
+        if is_sitl:
+            ax_thr.set_ylabel('Throttle (%)', fontsize=9)
+            ax_thr.set_title('Throttle', fontsize=10, color='white')
+        else:
+            ax_thr.set_ylabel('Thrust (N)', fontsize=9)
+            ax_thr.set_title('Thrust', fontsize=10, color='white')
     ax_thr.grid(True, alpha=0.2, color='white')
     if not is_swarm:
-        hover_thrust = 1.5 * 9.81
-        ax_thr.axhline(y=hover_thrust, color='yellow', linestyle='--', alpha=0.5,
-                        label=f'Hover ({hover_thrust:.1f} N)')
+        if is_sitl:
+            ax_thr.axhline(y=50, color='yellow', linestyle='--', alpha=0.5,
+                            label='Hover (~50%)')
+        else:
+            hover_thrust = 1.5 * 9.81
+            ax_thr.axhline(y=hover_thrust, color='yellow', linestyle='--', alpha=0.5,
+                            label=f'Hover ({hover_thrust:.1f} N)')
         ax_thr.legend(loc='upper right', fontsize=7)
 
     # ── Animated elements ────────────────────────────────────────────────
@@ -386,6 +496,10 @@ def main():
 
     # Static physics info
     phys_parts = []
+    if is_sitl:
+        phys_parts.append("source=SITL")
+        phys_parts.append(f"samples={len(t)}")
+        phys_parts.append(f"duration={t[-1]:.1f}s")
     if 'aero_cd' in data:
         phys_parts.append(f"C_D={float(data['aero_cd']):.1f}")
     if 'aero_area' in data:
@@ -462,10 +576,16 @@ def main():
                                                      alt_line, speed_line, agl_line, thr_line,
                                                      time_text, info_text])
 
-        time_text.set_text(
-            f't={t[i]:.2f}s  pos=[{p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f}]  '
-            f'v={speed[i]:.2f}m/s  T={thrust[i]:.1f}N  AGL={agl[i]:.1f}m'
-        )
+        if is_sitl:
+            time_text.set_text(
+                f't={t[i]:.2f}s  pos=[{p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f}]  '
+                f'v={speed[i]:.2f}m/s  throttle={thrust[i]:.0f}%  AGL={agl[i]:.1f}m'
+            )
+        else:
+            time_text.set_text(
+                f't={t[i]:.2f}s  pos=[{p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f}]  '
+                f'v={speed[i]:.2f}m/s  T={thrust[i]:.1f}N  AGL={agl[i]:.1f}m'
+            )
         info_text.set_text(
             f'roll={np.degrees(r):+.1f} deg  pitch={np.degrees(pt):+.1f} deg  '
             f'yaw={np.degrees(yw):+.1f} deg'

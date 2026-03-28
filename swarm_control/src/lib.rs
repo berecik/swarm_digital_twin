@@ -9,6 +9,7 @@ use rclrs;
 pub mod boids;
 pub mod communication;
 pub mod consensus;
+pub mod consensus_transport;
 pub mod driver_core;
 pub mod px4_safety;
 pub mod timing;
@@ -18,10 +19,14 @@ pub mod search;
 #[path = "main.rs"]
 pub mod main_module;
 pub use driver_core::{DriverAction, DriverCore, DriverStatus, FlightState};
-pub use px4_safety::{Px4CommandKind, Px4SafetyBuilder, Px4SafetyError};
+pub use px4_safety::{
+    ControlLoopWatchdog, Px4CommandKind, Px4SafetyBuilder, Px4SafetyError,
+    SafetyLimits, SetpointRateLimiter,
+};
 pub use main_module::OffboardController;
 pub use timing::TimingMetrics;
 pub use transport::Transport;
+pub use consensus_transport::{ConsensusTransportLoop, TransportLoopConfig, DedupCache};
 
 #[cfg(test)]
 pub mod tests;

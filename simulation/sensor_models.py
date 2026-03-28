@@ -68,6 +68,27 @@ class GPSNoise:
 
         return float(noisy_lat), float(noisy_lon), float(noisy_alt)
 
+    def apply_local(self, position_m: np.ndarray, dt: float = 0.02) -> np.ndarray:
+        """Apply GPS noise in local frame (meters).
+
+        For use in simulation bridges that work in local NED/ENU coordinates
+        rather than geodetic (lat/lon/alt).  Applies the same white noise,
+        bias drift, and sigma model as ``apply()``, but directly in meters.
+
+        Args:
+            position_m: True position as [x, y, z] in meters.
+            dt: Sample period [s].
+
+        Returns:
+            Noisy position as [x, y, z] in meters.
+        """
+        self._update_bias(dt)
+        pos = np.asarray(position_m, dtype=float).copy()
+        pos[0] += self._rng.normal(0.0, self.horizontal_sigma_m) + self._bias_m[0]
+        pos[1] += self._rng.normal(0.0, self.horizontal_sigma_m) + self._bias_m[1]
+        pos[2] += self._rng.normal(0.0, self.vertical_sigma_m) + self._bias_m[2]
+        return pos
+
 
 @dataclass
 class IMUNoise:

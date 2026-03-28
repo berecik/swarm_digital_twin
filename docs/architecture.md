@@ -81,12 +81,12 @@ Full Gazebo Harmonic integration for hardware-in-the-loop testing.
 - **Launch**: ROS 2 launch file (`sitl_empty.launch.py`) orchestrating Gazebo, SITL, XRCE-DDS agent, and wind node.
 - **Wind Node** (`wind_node.py`): ROS 2 node publishing `WindField` forces to `/wind/velocity` and `/wind/force`.
 
-#### Phase B Startup Profile (Reproducible)
+#### SITL Swarm Startup Profile (Reproducible)
 
 Use the dedicated compose profile for the DT operation loop:
 
 ```bash
-docker compose --profile phase_b_stack up -d
+docker compose --profile swarm_sitl up -d
 ```
 
 Expected stack state:
@@ -95,7 +95,7 @@ Expected stack state:
 - Gazebo launch (`ros2 launch gazebo sitl_empty.launch.py`) provides world + model + XRCE + wind node.
 
 Health-check contract (must pass before mission replay):
-1. **Core services**: `docker compose --profile phase_b_stack ps` shows `running/healthy`.
+1. **Core services**: `docker compose --profile swarm_sitl ps` shows `running/healthy`.
 2. **ROS topics**: `ros2 topic list` includes `/wind/velocity` and `/wind/force`.
 3. **MAVLink UDP**: bridge endpoint `udp://127.0.0.1:14550` receives `HEARTBEAT` at ~1 Hz.
 
