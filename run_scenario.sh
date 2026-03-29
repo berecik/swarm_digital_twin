@@ -206,7 +206,7 @@ sitl_ensure_network() {
         info "Creating Docker network via compose..."
         cd "$ROOT_DIR"
         docker compose --profile sitl up --no-start 2>&1 | tail -3
-        docker compose --profile sitl down 2>/dev/null || true
+        docker compose --profile sitl rm -f 2>/dev/null || true
     fi
 }
 
@@ -313,10 +313,11 @@ run_sitl_swarm() {
     # (parse from the waypoint files — home is line 2 of each file)
     sitl_ensure_network
 
-    # Cleanup on exit
+    # Cleanup on exit (use global so the trap can access it after local scope ends)
+    _SITL_SWARM_N_DRONES="$n_drones"
     sitl_swarm_cleanup() {
         info "Cleaning up swarm containers..."
-        for i in $(seq 0 $((n_drones - 1))); do
+        for i in $(seq 0 $((_SITL_SWARM_N_DRONES - 1))); do
             docker rm -f "sitl_swarm_${i}" 2>/dev/null || true
         done
     }
