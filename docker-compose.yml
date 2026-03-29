@@ -5,22 +5,32 @@ services:
       company: Marysia Software Limited
       website: https://marysia.app
       domain: app.marysia.drone
-    image: swarm_companion:latest
+    image: ardupilot-sitl:latest
+    platform: linux/amd64
     container_name: sitl_drone_1
     networks:
       swarm_net:
         ipv4_address: 10.10.1.11
     environment:
-    - ROS_DOMAIN_ID=1
+    - SIM_LAT=-0.508333
+    - SIM_LNG=-78.141667
+    - SIM_ALT=4500
+    - INSTANCE=0
     profiles:
     - swarm_sitl
-    command: tail -f /dev/null
+    ports:
+    - "5760:5760/tcp"
+    command:
+    - copter
+    volumes:
+    - sitl_logs:/sitl/logs
     healthcheck:
       test:
       - CMD-SHELL
-      - bash -lc 'test -e /dev/null'
-      interval: 10s
+      - pgrep -x 'arducopter|arduplane' > /dev/null
+      interval: 5s
       timeout: 3s
+      start_period: 15s
       retries: 3
   swarm_node_1:
     image: swarm_companion:latest
@@ -71,22 +81,32 @@ services:
       timeout: 5s
       retries: 5
   sitl_drone_2:
-    image: swarm_companion:latest
+    image: ardupilot-sitl:latest
+    platform: linux/amd64
     container_name: sitl_drone_2
     networks:
       swarm_net:
         ipv4_address: 10.10.1.12
     environment:
-    - ROS_DOMAIN_ID=2
+    - SIM_LAT=-0.508333
+    - SIM_LNG=-78.141667
+    - SIM_ALT=4500
+    - INSTANCE=0
     profiles:
     - swarm_sitl
-    command: tail -f /dev/null
+    ports:
+    - "5770:5760/tcp"
+    command:
+    - copter
+    volumes:
+    - sitl_logs:/sitl/logs
     healthcheck:
       test:
       - CMD-SHELL
-      - bash -lc 'test -e /dev/null'
-      interval: 10s
+      - pgrep -x 'arducopter|arduplane' > /dev/null
+      interval: 5s
       timeout: 3s
+      start_period: 15s
       retries: 3
   swarm_node_2:
     image: swarm_companion:latest
@@ -113,22 +133,32 @@ services:
       timeout: 5s
       retries: 5
   sitl_drone_3:
-    image: swarm_companion:latest
+    image: ardupilot-sitl:latest
+    platform: linux/amd64
     container_name: sitl_drone_3
     networks:
       swarm_net:
         ipv4_address: 10.10.1.13
     environment:
-    - ROS_DOMAIN_ID=3
+    - SIM_LAT=-0.508333
+    - SIM_LNG=-78.141667
+    - SIM_ALT=4500
+    - INSTANCE=0
     profiles:
     - swarm_sitl
-    command: tail -f /dev/null
+    ports:
+    - "5780:5760/tcp"
+    command:
+    - copter
+    volumes:
+    - sitl_logs:/sitl/logs
     healthcheck:
       test:
       - CMD-SHELL
-      - bash -lc 'test -e /dev/null'
-      interval: 10s
+      - pgrep -x 'arducopter|arduplane' > /dev/null
+      interval: 5s
       timeout: 3s
+      start_period: 15s
       retries: 3
   swarm_node_3:
     image: swarm_companion:latest
@@ -155,22 +185,32 @@ services:
       timeout: 5s
       retries: 5
   sitl_drone_4:
-    image: swarm_companion:latest
+    image: ardupilot-sitl:latest
+    platform: linux/amd64
     container_name: sitl_drone_4
     networks:
       swarm_net:
         ipv4_address: 10.10.1.14
     environment:
-    - ROS_DOMAIN_ID=4
+    - SIM_LAT=-0.508333
+    - SIM_LNG=-78.141667
+    - SIM_ALT=4500
+    - INSTANCE=0
     profiles:
     - swarm_sitl
-    command: tail -f /dev/null
+    ports:
+    - "5790:5760/tcp"
+    command:
+    - copter
+    volumes:
+    - sitl_logs:/sitl/logs
     healthcheck:
       test:
       - CMD-SHELL
-      - bash -lc 'test -e /dev/null'
-      interval: 10s
+      - pgrep -x 'arducopter|arduplane' > /dev/null
+      interval: 5s
       timeout: 3s
+      start_period: 15s
       retries: 3
   swarm_node_4:
     image: swarm_companion:latest
@@ -197,22 +237,32 @@ services:
       timeout: 5s
       retries: 5
   sitl_drone_5:
-    image: swarm_companion:latest
+    image: ardupilot-sitl:latest
+    platform: linux/amd64
     container_name: sitl_drone_5
     networks:
       swarm_net:
         ipv4_address: 10.10.1.15
     environment:
-    - ROS_DOMAIN_ID=5
+    - SIM_LAT=-0.508333
+    - SIM_LNG=-78.141667
+    - SIM_ALT=4500
+    - INSTANCE=0
     profiles:
     - swarm_sitl
-    command: tail -f /dev/null
+    ports:
+    - "5800:5760/tcp"
+    command:
+    - copter
+    volumes:
+    - sitl_logs:/sitl/logs
     healthcheck:
       test:
       - CMD-SHELL
-      - bash -lc 'test -e /dev/null'
-      interval: 10s
+      - pgrep -x 'arducopter|arduplane' > /dev/null
+      interval: 5s
       timeout: 3s
+      start_period: 15s
       retries: 3
   swarm_node_5:
     image: swarm_companion:latest
@@ -239,22 +289,32 @@ services:
       timeout: 5s
       retries: 5
   sitl_drone_6:
-    image: swarm_companion:latest
+    image: ardupilot-sitl:latest
+    platform: linux/amd64
     container_name: sitl_drone_6
     networks:
       swarm_net:
         ipv4_address: 10.10.1.16
     environment:
-    - ROS_DOMAIN_ID=6
+    - SIM_LAT=-0.508333
+    - SIM_LNG=-78.141667
+    - SIM_ALT=4500
+    - INSTANCE=0
     profiles:
     - swarm_sitl
-    command: tail -f /dev/null
+    ports:
+    - "5810:5760/tcp"
+    command:
+    - copter
+    volumes:
+    - sitl_logs:/sitl/logs
     healthcheck:
       test:
       - CMD-SHELL
-      - bash -lc 'test -e /dev/null'
-      interval: 10s
+      - pgrep -x 'arducopter|arduplane' > /dev/null
+      interval: 5s
       timeout: 3s
+      start_period: 15s
       retries: 3
   swarm_node_6:
     image: swarm_companion:latest
