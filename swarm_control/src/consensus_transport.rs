@@ -113,21 +113,21 @@ impl From<ConsensusError> for TransportLoopError {
 
 /// Publish topic for a given drone's outgoing Raft messages.
 pub fn raft_tx_topic(drone_id: u64) -> String {
-    format!("/swarm/drone_{drone_id}/consensus/raft_tx")
+    format!("swarm/drone_{drone_id}/consensus/raft_tx")
 }
 
 /// Wildcard subscription pattern for all drones' Raft messages.
 pub fn raft_tx_subscribe_pattern() -> String {
-    "/swarm/drone_*/consensus/raft_tx".to_string()
+    "swarm/drone_$*/consensus/raft_tx".to_string()
 }
 
 /// Extract the source drone ID from a key expression like
-/// `/swarm/drone_3/consensus/raft_tx`.  Returns `None` if unparseable.
+/// `swarm/drone_3/consensus/raft_tx`.  Returns `None` if unparseable.
 pub fn drone_id_from_key(key: &str) -> Option<u64> {
     let parts: Vec<&str> = key.split('/').collect();
-    // Expected: ["", "swarm", "drone_N", "consensus", "raft_tx"]
-    if parts.len() >= 3 {
-        parts[2]
+    // Expected: ["swarm", "drone_N", "consensus", "raft_tx"]
+    if parts.len() >= 2 {
+        parts[1]
             .strip_prefix("drone_")
             .and_then(|s| s.parse::<u64>().ok())
     } else {
@@ -349,18 +349,18 @@ mod tests {
 
     #[test]
     fn raft_tx_topic_format() {
-        assert_eq!(raft_tx_topic(3), "/swarm/drone_3/consensus/raft_tx");
+        assert_eq!(raft_tx_topic(3), "swarm/drone_3/consensus/raft_tx");
     }
 
     #[test]
     fn drone_id_from_key_parses() {
         assert_eq!(
-            drone_id_from_key("/swarm/drone_5/consensus/raft_tx"),
+            drone_id_from_key("swarm/drone_5/consensus/raft_tx"),
             Some(5)
         );
-        assert_eq!(drone_id_from_key("/swarm/drone_12/consensus/raft_tx"), Some(12));
+        assert_eq!(drone_id_from_key("swarm/drone_12/consensus/raft_tx"), Some(12));
         assert_eq!(drone_id_from_key("garbage"), None);
-        assert_eq!(drone_id_from_key("/swarm/not_drone/consensus"), None);
+        assert_eq!(drone_id_from_key("swarm/not_drone/consensus"), None);
     }
 
     // ── Transport loop tests ─────────────────────────────────────────────
