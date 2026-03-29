@@ -21,11 +21,11 @@
 #   ./run_scenario.sh --down       # tear down all swarm containers
 #   ./run_scenario.sh --viz-only   # open visualization (using existing data)
 #   ./run_scenario.sh --sitl-viz [F] # visualize SITL .BIN flight log (newest or specified file)
-#   ./run_scenario.sh --test       # run physics tests
+#   ./run_scenario.sh --test       # run physics + integration tests
 #   ./run_scenario.sh --benchmark  # run deterministic benchmark validation gates
 #   ./run_scenario.sh --real-log   # run real-log validation against paper Table 5
 #   ./run_scenario.sh --ci-local   # run local CI/CD-equivalent pipeline (tests + all benchmarks)
-#   ./run_scenario.sh --all        # run tests, benchmark, full swarm, and visualization
+#   ./run_scenario.sh --all        # run tests, benchmark, single-drone stack, and visualization
 #   ./run_scenario.sh --physics-single   # [legacy] run Python physics single-drone scenario
 #   ./run_scenario.sh --physics-swarm [N] # [legacy] run Python physics swarm scenario
 #   ./run_scenario.sh --physics-sim-only  # [legacy] run Python physics scenario (no GUI)
@@ -441,6 +441,13 @@ run_tests() {
     info "Running drone physics tests..."
     python -m pytest "$SIM_DIR/test_drone_physics.py" -v
     ok "All physics tests passed"
+
+    info "Running integration tests..."
+    python -m pytest "$ROOT_DIR/tests/test_integration_sitl.py" -v
+    python -m pytest "$ROOT_DIR/tests/test_integration_swarm_node.py" -v
+    python -m pytest "$ROOT_DIR/tests/test_integration_perception.py" -v
+    python -m pytest "$ROOT_DIR/tests/test_integration_zenoh.py" -v
+    ok "All integration tests passed"
 }
 
 run_scenario() {
@@ -613,8 +620,8 @@ case "$MODE" in
         run_tests
         run_benchmark
         run_real_log
-        run_swarm_mission "$MAX_DRONES" 600
-        run_viz "$SIM_DIR/swarm_data.npz"
+        run_single_mission 300
+        run_single_viz
         ;;
     --benchmark)
         ensure_venv
@@ -647,11 +654,11 @@ case "$MODE" in
         echo "  --physics-sim-only   Run Python physics scenario only (no GUI)"
         echo ""
         echo "Testing & validation:"
-        echo "  --test          Run physics tests"
+        echo "  --test          Run physics + integration tests"
         echo "  --benchmark     Run deterministic benchmark validation gates"
         echo "  --real-log      Run real-log validation against paper Table 5"
         echo "  --ci-local      Run local CI/CD-equivalent pipeline (tests + all CI benchmarks)"
-        echo "  --all           Run tests, benchmark, full 6-drone swarm, and visualization"
+        echo "  --all           Run tests, benchmark, single-drone stack, and visualization"
         echo "  --help          Show this help"
         echo ""
         echo "Per-Drone Stack (6 drones × 4 services = 24 containers):"
