@@ -350,6 +350,7 @@ services:
         ipv4_address: 10.10.1.41
     environment:
     - ROS_DOMAIN_ID=1
+    - ROS_DISTRO=humble
     volumes:
     - ./docker/zenoh/bridge_drone_1.json5:/etc/zenoh/bridge.json5:ro
     command:
@@ -358,6 +359,14 @@ services:
     depends_on:
     - sitl_drone_1
     restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pgrep -f zenoh-bridge-ros2dds > /dev/null
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
   zenoh_bridge_2:
     image: eclipse/zenoh-bridge-ros2dds:latest
     container_name: zenoh_bridge_2
@@ -368,6 +377,7 @@ services:
         ipv4_address: 10.10.1.42
     environment:
     - ROS_DOMAIN_ID=2
+    - ROS_DISTRO=humble
     volumes:
     - ./docker/zenoh/bridge_drone_2.json5:/etc/zenoh/bridge.json5:ro
     command:
@@ -376,6 +386,14 @@ services:
     depends_on:
     - sitl_drone_2
     restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pgrep -f zenoh-bridge-ros2dds > /dev/null
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
   zenoh_bridge_3:
     image: eclipse/zenoh-bridge-ros2dds:latest
     container_name: zenoh_bridge_3
@@ -386,6 +404,7 @@ services:
         ipv4_address: 10.10.1.43
     environment:
     - ROS_DOMAIN_ID=3
+    - ROS_DISTRO=humble
     volumes:
     - ./docker/zenoh/bridge_drone_3.json5:/etc/zenoh/bridge.json5:ro
     command:
@@ -394,6 +413,14 @@ services:
     depends_on:
     - sitl_drone_3
     restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pgrep -f zenoh-bridge-ros2dds > /dev/null
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
   zenoh_bridge_4:
     image: eclipse/zenoh-bridge-ros2dds:latest
     container_name: zenoh_bridge_4
@@ -404,6 +431,7 @@ services:
         ipv4_address: 10.10.1.44
     environment:
     - ROS_DOMAIN_ID=4
+    - ROS_DISTRO=humble
     volumes:
     - ./docker/zenoh/bridge_drone_4.json5:/etc/zenoh/bridge.json5:ro
     command:
@@ -412,6 +440,14 @@ services:
     depends_on:
     - sitl_drone_4
     restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pgrep -f zenoh-bridge-ros2dds > /dev/null
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
   zenoh_bridge_5:
     image: eclipse/zenoh-bridge-ros2dds:latest
     container_name: zenoh_bridge_5
@@ -422,6 +458,7 @@ services:
         ipv4_address: 10.10.1.45
     environment:
     - ROS_DOMAIN_ID=5
+    - ROS_DISTRO=humble
     volumes:
     - ./docker/zenoh/bridge_drone_5.json5:/etc/zenoh/bridge.json5:ro
     command:
@@ -430,6 +467,14 @@ services:
     depends_on:
     - sitl_drone_5
     restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pgrep -f zenoh-bridge-ros2dds > /dev/null
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
   zenoh_bridge_6:
     image: eclipse/zenoh-bridge-ros2dds:latest
     container_name: zenoh_bridge_6
@@ -440,6 +485,7 @@ services:
         ipv4_address: 10.10.1.46
     environment:
     - ROS_DOMAIN_ID=6
+    - ROS_DISTRO=humble
     volumes:
     - ./docker/zenoh/bridge_drone_6.json5:/etc/zenoh/bridge.json5:ro
     command:
@@ -448,6 +494,14 @@ services:
     depends_on:
     - sitl_drone_6
     restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pgrep -f zenoh-bridge-ros2dds > /dev/null
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
   ardupilot_sitl:
     build:
       context: .
