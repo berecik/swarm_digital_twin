@@ -11,51 +11,33 @@
     "multicast": { "enabled": false }
   },
   "timestamping": {
-    "enabled": { "egress": true, "ingress": true }
+    "enabled": { "router": true, "peer": true, "client": false }
   },
 
   // ROS 2 DDS domain isolation — each drone gets its own domain
-  "ros2dds": {
-    "domain": 3,
-    "namespace": "/swarm/drone_3",
+  "plugins": {
+    "ros2dds": {
+      "domain": 3,
+      "namespace": "/swarm/drone_3",
 
-    // Only bridge the PX4 and control topics we actually need
-    "allow": {
-      "publishers": [
-        "/fmu/out/vehicle_status",
-        "/fmu/out/vehicle_odometry",
-        "/fmu/out/vehicle_global_position",
-        "/fmu/out/sensor_combined"
-      ],
-      "subscribers": [
-        "/fmu/in/offboard_control_mode",
-        "/fmu/in/trajectory_setpoint",
-        "/fmu/in/vehicle_command"
-      ],
-      "service_servers": [],
-      "service_clients": [],
-      "action_servers": [],
-      "action_clients": []
-    },
-
-    // Block all DDS discovery noise
-    "deny": {
-      "publishers": [
-        "/rosout",
-        "/parameter_events",
-        "/tf",
-        "/tf_static",
-        "/diagnostics",
-        "/clock",
-        "/joint_states",
-        "/camera/**",
-        "/lidar/**",
-        "/image/**"
-      ],
-      "subscribers": [
-        "/rosout",
-        "/parameter_events"
-      ]
+      // Only bridge the PX4 and control topics we actually need
+      "allow": {
+        "publishers": [
+          "/fmu/out/vehicle_status",
+          "/fmu/out/vehicle_odometry",
+          "/fmu/out/vehicle_global_position",
+          "/fmu/out/sensor_combined"
+        ],
+        "subscribers": [
+          "/fmu/in/offboard_control_mode",
+          "/fmu/in/trajectory_setpoint",
+          "/fmu/in/vehicle_command"
+        ],
+        "service_servers": [],
+        "service_clients": [],
+        "action_servers": [],
+        "action_clients": []
+      }
     }
   }
 }

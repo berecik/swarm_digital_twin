@@ -4,8 +4,6 @@
 /// Domain: app.marysia.drone
 /// Website: https://marysia.app
 
-use rclrs;
-
 pub mod boids;
 pub mod communication;
 pub mod consensus;
@@ -16,14 +14,11 @@ pub mod timing;
 pub mod transport;
 pub mod utils;
 pub mod search;
-#[path = "main.rs"]
-pub mod main_module;
 pub use driver_core::{DriverAction, DriverCore, DriverStatus, FlightState};
 pub use px4_safety::{
     ControlLoopWatchdog, Px4CommandKind, Px4SafetyBuilder, Px4SafetyError,
     SafetyLimits, SetpointRateLimiter,
 };
-pub use main_module::OffboardController;
 pub use timing::TimingMetrics;
 pub use transport::Transport;
 pub use consensus_transport::{ConsensusTransportLoop, TransportLoopConfig, DedupCache};
@@ -47,12 +42,11 @@ pub fn calculate_target_pos(leader_pos: [f32; 3], offset: [f32; 3]) -> [f32; 3] 
 }
 
 #[cfg(test)]
-mod tests {
+mod lib_tests {
     use super::*;
 
     #[test]
     fn test_hello_swarm() {
-        // Simple test to verify test infra
         hello_swarm();
     }
 

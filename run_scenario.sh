@@ -5,18 +5,27 @@
 # Company: Marysia Software Limited <ceo@marysia.app>
 # Website: https://marysia.app
 #
+# Per-Drone Stack (6 drones × 4 services each = 24 containers):
+#   sitl_drone_N      — Pixhawk simulator with Micro-XRCE-DDS Agent
+#   swarm_node_N      — Rust swarm control logic
+#   perception_node_N — Vision pipeline (Python)
+#   zenoh_bridge_N    — Mesh networking router
+#
 # Usage:
-#   ./run_scenario.sh              # run single-drone SITL mission then open 3D visualization
-#   ./run_scenario.sh --single     # run single-drone SITL mission then visualize
-#   ./run_scenario.sh --swarm [N]  # run N-drone SITL swarm (default: 3) then visualize
-#   ./run_scenario.sh --sim-only   # run single-drone SITL mission only (no GUI)
+#   ./run_scenario.sh              # run single-drone stack (4 containers) then visualize
+#   ./run_scenario.sh --single     # run single-drone stack (4 containers) then visualize
+#   ./run_scenario.sh --swarm [N]  # run N-drone stack (default: 6, N×4 containers) then visualize
+#   ./run_scenario.sh --sim-only   # run single-drone stack only (no GUI)
+#   ./run_scenario.sh --swarm-only [N] # run N-drone stack only (no GUI)
+#   ./run_scenario.sh --status     # show health of running swarm containers
+#   ./run_scenario.sh --down       # tear down all swarm containers
 #   ./run_scenario.sh --viz-only   # open visualization (using existing data)
 #   ./run_scenario.sh --sitl-viz [F] # visualize SITL .BIN flight log (newest or specified file)
 #   ./run_scenario.sh --test       # run physics tests
 #   ./run_scenario.sh --benchmark  # run deterministic benchmark validation gates
 #   ./run_scenario.sh --real-log   # run real-log validation against paper Table 5
 #   ./run_scenario.sh --ci-local   # run local CI/CD-equivalent pipeline (tests + all benchmarks)
-#   ./run_scenario.sh --all        # run tests, benchmark, SITL scenario, and visualization
+#   ./run_scenario.sh --all        # run tests, benchmark, full swarm, and visualization
 #   ./run_scenario.sh --physics-single   # [legacy] run Python physics single-drone scenario
 #   ./run_scenario.sh --physics-swarm [N] # [legacy] run Python physics swarm scenario
 #   ./run_scenario.sh --physics-sim-only  # [legacy] run Python physics scenario (no GUI)
@@ -33,12 +42,24 @@ GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+BOLD='\033[1m'
 NC='\033[0m'
 
-info()  { echo -e "${CYAN}[INFO]${NC}  $*"; }
-ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-fail()  { echo -e "${RED}[FAIL]${NC}  $*"; exit 1; }
+info()  { echo -e "${CYAN}[INFO]${NC}  $*" >&2; }
+ok()    { echo -e "${GREEN}[OK]${NC}    $*" >&2; }
+warn()  { echo -e "${YELLOW}[WARN]${NC}  $*" >&2; }
+fail()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
+
+# ── Constants ────────────────────────────────────────────────────────────────
+MAX_DRONES=6
+COMPOSE_PROFILE="swarm_sitl"
+COMPOSE_CMD="docker compose"
+
+# Service name templates — N is replaced with drone number (1-6)
+SERVICE_SITL="sitl_drone"
+SERVICE_SWARM="swarm_node"
+SERVICE_PERCEPTION="perception_node"
+SERVICE_ZENOH="zenoh_bridge"
 
 # ── Virtual environment ──────────────────────────────────────────────────────
 ensure_venv() {
@@ -87,7 +108,335 @@ ensure_venv() {
     ok "Virtual environment ready"
 }
 
-# ── Actions ──────────────────────────────────────────────────────────────────
+# ── Docker Compose helpers ───────────────────────────────────────────────────
+
+# Build list of services for N drones
+# Usage: drone_services 3  →  "sitl_drone_1 swarm_node_1 perception_node_1 zenoh_bridge_1 sitl_drone_2 ..."
+drone_services() {
+    local n="${1:-$MAX_DRONES}"
+    local services=""
+    for i in $(seq 1 "$n"); do
+        services+="${SERVICE_SITL}_${i} ${SERVICE_SWARM}_${i} ${SERVICE_PERCEPTION}_${i} ${SERVICE_ZENOH}_${i} "
+    done
+    echo "$services"
+}
+
+# Ensure Docker image is built
+ensure_image() {
+    if ! docker image inspect swarm_companion:latest &>/dev/null; then
+        info "Building swarm_companion Docker image..."
+        cd "$ROOT_DIR"
+        docker build -t swarm_companion:latest .
+        ok "Docker image built"
+    fi
+}
+
+# Wait for a single container's healthcheck to pass
+wait_container_healthy() {
+    local container="$1"
+    local timeout="${2:-120}"
+    local elapsed=0
+    while [ $elapsed -lt "$timeout" ]; do
+        local health
+        health=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "missing")
+        case "$health" in
+            healthy) return 0 ;;
+            unhealthy) return 1 ;;
+            missing)
+                # Container doesn't exist or has no healthcheck — check if running
+                local state
+                state=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "missing")
+                if [ "$state" = "running" ]; then
+                    return 0
+                elif [ "$state" = "missing" ]; then
+                    return 1
+                fi
+                ;;
+        esac
+        sleep 3
+        elapsed=$((elapsed + 3))
+    done
+    return 1
+}
+
+# Wait for all services of N drones to be healthy
+wait_swarm_healthy() {
+    local n="${1:-$MAX_DRONES}"
+    local timeout="${2:-180}"
+    local all_ok=true
+
+    info "Waiting for ${n}-drone stack to become healthy (timeout: ${timeout}s)..."
+
+    for i in $(seq 1 "$n"); do
+        for svc in "$SERVICE_SITL" "$SERVICE_SWARM" "$SERVICE_PERCEPTION" "$SERVICE_ZENOH"; do
+            local container="${svc}_${i}"
+            if wait_container_healthy "$container" "$timeout"; then
+                ok "  ${container}"
+            else
+                warn "  ${container} — not healthy after ${timeout}s"
+                all_ok=false
+            fi
+        done
+    done
+
+    if [ "$all_ok" = true ]; then
+        ok "All $((n * 4)) containers healthy"
+    else
+        warn "Some containers did not pass health checks"
+    fi
+}
+
+# ── Swarm lifecycle ──────────────────────────────────────────────────────────
+
+swarm_up() {
+    local n="${1:-$MAX_DRONES}"
+    local log_dir="$ROOT_DIR/logs/swarm_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$log_dir"
+
+    if [ "$n" -gt "$MAX_DRONES" ]; then
+        fail "Maximum $MAX_DRONES drones supported (docker-compose defines 1-$MAX_DRONES)"
+    fi
+
+    ensure_image
+
+    local services
+    services=$(drone_services "$n")
+
+    info "Launching ${n}-drone stack (${n}×4 = $((n * 4)) containers)..."
+    echo "" >&2
+    echo -e "${BOLD}  Per-Drone Stack:${NC}" >&2
+    for i in $(seq 1 "$n"); do
+        echo -e "    Drone $i: ${SERVICE_SITL}_${i}  ${SERVICE_SWARM}_${i}  ${SERVICE_PERCEPTION}_${i}  ${SERVICE_ZENOH}_${i}" >&2
+    done
+    echo "" >&2
+
+    cd "$ROOT_DIR"
+    # shellcheck disable=SC2086
+    $COMPOSE_CMD --profile "$COMPOSE_PROFILE" up -d $services 2>&1 | tail -10 >&2
+
+    wait_swarm_healthy "$n" 180
+
+    ok "Swarm stack running ($((n * 4)) containers)"
+    echo "" >&2
+    swarm_status "$n"
+
+    echo "$n" > "$log_dir/.drone_count"
+    echo "$log_dir"  # sole stdout — captured by callers
+}
+
+swarm_down() {
+    info "Tearing down swarm stack..."
+    cd "$ROOT_DIR"
+    $COMPOSE_CMD --profile "$COMPOSE_PROFILE" down --timeout 15 2>&1 | tail -5
+    ok "Swarm stack stopped"
+}
+
+swarm_status() {
+    local n="${1:-$MAX_DRONES}"
+
+    echo -e "${BOLD}┌────────┬──────────┬───────────────┬───────────────┬────────────────┬───────────────┐${NC}" >&2
+    echo -e "${BOLD}│ Drone  │ Domain   │ sitl_drone    │ swarm_node    │ perception     │ zenoh_bridge  │${NC}" >&2
+    echo -e "${BOLD}├────────┼──────────┼───────────────┼───────────────┼────────────────┼───────────────┤${NC}" >&2
+
+    for i in $(seq 1 "$n"); do
+        local sitl_status swarm_status percep_status zenoh_status
+
+        sitl_status=$(container_status_icon "${SERVICE_SITL}_${i}")
+        swarm_status=$(container_status_icon "${SERVICE_SWARM}_${i}")
+        percep_status=$(container_status_icon "${SERVICE_PERCEPTION}_${i}")
+        zenoh_status=$(container_status_icon "${SERVICE_ZENOH}_${i}")
+
+        printf "│   %-4s │   %-6s │  %-12s │  %-12s │  %-13s │  %-12s │\n" \
+            "$i" "$i" "$sitl_status" "$swarm_status" "$percep_status" "$zenoh_status" >&2
+    done
+
+    echo -e "${BOLD}└────────┴──────────┴───────────────┴───────────────┴────────────────┴───────────────┘${NC}" >&2
+
+    local running
+    running=$(docker ps --filter "label=com.docker.compose.project" --format '{{.Names}}' 2>/dev/null | \
+        grep -cE "(sitl_drone|swarm_node|perception_node|zenoh_bridge)_[1-6]" || true)
+    echo -e "  Running containers: ${BOLD}${running}${NC} / $((n * 4))" >&2
+}
+
+container_status_icon() {
+    local container="$1"
+    local state health
+    state=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "absent")
+    health=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "none")
+
+    if [ "$state" = "absent" ]; then
+        echo -e "${RED}DOWN${NC}"
+    elif [ "$state" != "running" ]; then
+        echo -e "${RED}${state}${NC}"
+    elif [ "$health" = "healthy" ]; then
+        echo -e "${GREEN}healthy${NC}"
+    elif [ "$health" = "unhealthy" ]; then
+        echo -e "${RED}unhealthy${NC}"
+    elif [ "$health" = "starting" ]; then
+        echo -e "${YELLOW}starting${NC}"
+    else
+        echo -e "${GREEN}running${NC}"
+    fi
+}
+
+# ── Swarm mission orchestration ──────────────────────────────────────────────
+
+# Globals for trap cleanup (locals aren't accessible during EXIT unwinding with set -u)
+_CLEANUP_DRONE_COUNT=""
+_CLEANUP_LOG_DIR=""
+_SWARM_CLEANUP_DONE=false
+
+swarm_cleanup() {
+    if [ "$_SWARM_CLEANUP_DONE" = false ]; then
+        _SWARM_CLEANUP_DONE=true
+        info "Capturing logs before shutdown..."
+
+        local n="${_CLEANUP_DRONE_COUNT:-0}"
+        local log_dir="${_CLEANUP_LOG_DIR:-}"
+
+        if [ "$n" -gt 0 ] && [ -n "$log_dir" ]; then
+            for i in $(seq 1 "$n"); do
+                local drone_log_dir="$log_dir/drone_${i}"
+                mkdir -p "$drone_log_dir"
+                docker logs "${SERVICE_SWARM}_${i}" > "$drone_log_dir/swarm_node.log" 2>&1 || true
+                docker logs "${SERVICE_PERCEPTION}_${i}" > "$drone_log_dir/perception_node.log" 2>&1 || true
+                docker logs "${SERVICE_ZENOH}_${i}" > "$drone_log_dir/zenoh_bridge.log" 2>&1 || true
+                docker logs "${SERVICE_SITL}_${i}" > "$drone_log_dir/sitl_drone.log" 2>&1 || true
+            done
+            ok "Logs saved to $log_dir"
+        fi
+
+        swarm_down
+    fi
+}
+
+run_swarm_mission() {
+    local n="${1:-$MAX_DRONES}"
+    local timeout="${2:-600}"
+    local log_dir
+
+    log_dir=$(swarm_up "$n")
+
+    # Set globals for trap handler
+    _CLEANUP_DRONE_COUNT="$n"
+    _CLEANUP_LOG_DIR="$log_dir"
+    _SWARM_CLEANUP_DONE=false
+    trap swarm_cleanup EXIT
+
+    # Generate waypoint missions for each drone
+    info "Generating waypoint missions for $n drones..."
+    local mission_dir="$log_dir/missions"
+    python "$SIM_DIR/sitl_waypoints.py" \
+        --n "$n" --output-dir "$mission_dir" \
+        --ref-lat "-0.508333" --ref-lon "-78.141667" --ref-alt "4500"
+
+    # Run swarm orchestrator against the compose stack
+    info "Running swarm mission (${n} drones, timeout=${timeout}s)..."
+    info "  Orchestrator connects to swarm_node containers via ROS 2 domains 1-${n}"
+    python "$SIM_DIR/sitl_orchestrator.py" swarm \
+        --n "$n" \
+        --base-port 5760 \
+        --port-step 10 \
+        --mission-dir "$mission_dir" \
+        --timeout "$timeout" || true
+
+    # Merge logs into swarm_data.npz if BIN logs exist
+    local log_dirs=()
+    for i in $(seq 1 "$n"); do
+        local drone_log_dir="$log_dir/drone_${i}"
+        mkdir -p "$drone_log_dir"
+        docker cp "${SERVICE_SITL}_${i}:/sitl/logs/." "$drone_log_dir/" 2>/dev/null || true
+        local bin_count
+        bin_count=$(find "$drone_log_dir" -name "*.BIN" 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$bin_count" -gt 0 ]; then
+            info "  drone_${i}: ${bin_count} .BIN file(s)"
+            log_dirs+=("$drone_log_dir")
+        fi
+    done
+
+    if [ ${#log_dirs[@]} -gt 0 ]; then
+        info "Merging ${#log_dirs[@]} drone logs into swarm data..."
+        python "$SIM_DIR/sitl_log_merger.py" swarm --log-dirs "${log_dirs[@]}"
+    fi
+
+    ok "Swarm mission complete (${n} drones, log: $log_dir)"
+}
+
+_SINGLE_CLEANUP_DONE=false
+
+single_cleanup() {
+    if [ "$_SINGLE_CLEANUP_DONE" = false ]; then
+        _SINGLE_CLEANUP_DONE=true
+        local log_dir="${_CLEANUP_LOG_DIR:-}"
+
+        if [ -n "$log_dir" ]; then
+            info "Capturing logs..."
+            local drone_log_dir="$log_dir/drone_1"
+            mkdir -p "$drone_log_dir"
+            docker logs "${SERVICE_SWARM}_1" > "$drone_log_dir/swarm_node.log" 2>&1 || true
+            docker logs "${SERVICE_PERCEPTION}_1" > "$drone_log_dir/perception_node.log" 2>&1 || true
+            docker logs "${SERVICE_ZENOH}_1" > "$drone_log_dir/zenoh_bridge.log" 2>&1 || true
+            docker logs "${SERVICE_SITL}_1" > "$drone_log_dir/sitl_drone.log" 2>&1 || true
+            ok "Logs saved to $log_dir"
+        fi
+
+        info "Stopping single-drone stack..."
+        cd "$ROOT_DIR"
+        local services
+        services=$(drone_services 1)
+        # shellcheck disable=SC2086
+        $COMPOSE_CMD --profile "$COMPOSE_PROFILE" stop $services 2>/dev/null || true
+        # shellcheck disable=SC2086
+        $COMPOSE_CMD --profile "$COMPOSE_PROFILE" rm -f $services 2>/dev/null || true
+    fi
+}
+
+run_single_mission() {
+    local timeout="${1:-300}"
+    local n=1
+
+    local log_dir
+    log_dir=$(swarm_up "$n")
+
+    # Set globals for trap handler
+    _CLEANUP_DRONE_COUNT="$n"
+    _CLEANUP_LOG_DIR="$log_dir"
+    _SINGLE_CLEANUP_DONE=false
+    trap single_cleanup EXIT
+
+    # Generate mission
+    local mission_dir="$log_dir/missions"
+    python "$SIM_DIR/sitl_waypoints.py" --n 1 --output-dir "$mission_dir"
+    local mission_file="$mission_dir/drone_0.waypoints"
+
+    # Run orchestrator
+    info "Running single-drone mission (timeout=${timeout}s)..."
+    python "$SIM_DIR/sitl_orchestrator.py" single \
+        --port 5760 \
+        --mission "$mission_file" \
+        --timeout "$timeout" || true
+
+    # Capture flight logs
+    local drone_log_dir="$log_dir/drone_1"
+    mkdir -p "$drone_log_dir"
+    docker cp "${SERVICE_SITL}_1:/sitl/logs/." "$drone_log_dir/" 2>/dev/null || true
+
+    local newest_bin
+    newest_bin=$(find "$drone_log_dir" -name "*.BIN" -type f 2>/dev/null | \
+        xargs ls -t 2>/dev/null | head -1)
+
+    if [ -n "$newest_bin" ]; then
+        info "Converting flight log to NPZ..."
+        python "$SIM_DIR/sitl_log_merger.py" single "$newest_bin"
+    else
+        warn "No .BIN flight log captured"
+    fi
+
+    ok "Single-drone mission complete (log: $log_dir)"
+}
+
+# ── Test & benchmark actions ─────────────────────────────────────────────────
+
 run_tests() {
     info "Running drone physics tests..."
     python -m pytest "$SIM_DIR/test_drone_physics.py" -v
@@ -171,259 +520,45 @@ run_single_viz() {
 run_sitl_viz() {
     local bin_file="${1:-}"
     if [ -z "$bin_file" ]; then
-        # Find the newest SITL .BIN log
         bin_file=$(find "$ROOT_DIR/logs" -name "*.BIN" -type f 2>/dev/null | \
             xargs ls -t 2>/dev/null | head -1)
     fi
     if [ -z "$bin_file" ] || [ ! -f "$bin_file" ]; then
-        fail "No SITL .BIN log found. Run a SITL mission first: ./scripts/run_sitl_mission.sh"
+        fail "No SITL .BIN log found. Run a SITL mission first."
     fi
     info "Visualizing SITL flight log: $bin_file"
     python "$SIM_DIR/visualize_drone_3d.py" "$bin_file"
 }
 
-# ── SITL Actions ──────────────────────────────────────────────────────────────
-
-SITL_IMAGE="ardupilot-sitl:latest"
-SITL_NETWORK="swarm_digital_twin_swarm_net"
-SITL_REF_LAT="-0.508333"
-SITL_REF_LON="-78.141667"
-SITL_REF_ALT="4500"
-
-sitl_ensure_network() {
-    # Ensure the compose-managed network exists with correct labels.
-    # If a stale (non-compose) network exists, remove it and let compose recreate.
-    if docker network inspect "$SITL_NETWORK" &>/dev/null; then
-        local net_label
-        net_label=$(docker network inspect "$SITL_NETWORK" \
-            --format '{{index .Labels "com.docker.compose.network"}}' 2>/dev/null || true)
-        if [ "$net_label" != "swarm_net" ]; then
-            warn "Removing stale network $SITL_NETWORK (wrong labels)..."
-            docker network rm "$SITL_NETWORK" 2>/dev/null || true
-        fi
-    fi
-    if ! docker network inspect "$SITL_NETWORK" &>/dev/null; then
-        info "Creating Docker network via compose..."
-        cd "$ROOT_DIR"
-        docker compose --profile sitl up --no-start 2>&1 | tail -3
-        docker compose --profile sitl rm -f 2>/dev/null || true
-    fi
-}
-
-sitl_wait_healthy() {
-    local container="$1"
-    local timeout="${2:-90}"
-    local elapsed=0
-    while [ $elapsed -lt "$timeout" ]; do
-        if docker exec "$container" sh -c "pgrep -x 'arducopter|arduplane'" \
-            >/dev/null 2>&1; then
-            return 0
-        fi
-        sleep 3
-        elapsed=$((elapsed + 3))
-        if [ $((elapsed % 15)) -eq 0 ]; then
-            info "  Waiting for $container... (${elapsed}s)"
-        fi
-    done
-    return 1
-}
-
-run_sitl_single() {
-    local timeout="${1:-300}"
-    local log_dir="$ROOT_DIR/logs/sitl_$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "$log_dir"
-
-    info "Starting single-drone SITL mission..."
-
-    # Generate mission
-    local mission_dir="$log_dir/missions"
-    python "$SIM_DIR/sitl_waypoints.py" --n 1 --output-dir "$mission_dir"
-    local mission_file="$mission_dir/drone_0.waypoints"
-
-    # Start SITL via compose (compose manages its own network)
-    cd "$ROOT_DIR"
-    docker compose --profile sitl up -d 2>&1 | tail -5
-    local sitl_container="ardupilot_sitl"
-
-    # Cleanup on exit
-    SITL_SINGLE_CLEANUP_DONE=false
-    sitl_single_cleanup() {
-        if [ "$SITL_SINGLE_CLEANUP_DONE" = false ]; then
-            SITL_SINGLE_CLEANUP_DONE=true
-            info "Stopping SITL stack..."
-            cd "$ROOT_DIR"
-            docker compose --profile sitl down --timeout 10 2>/dev/null || true
-        fi
-    }
-    trap sitl_single_cleanup EXIT
-
-    # Wait for healthy
-    info "Waiting for ArduPilot SITL..."
-    if ! sitl_wait_healthy "$sitl_container" 90; then
-        fail "SITL health check failed"
-    fi
-    ok "SITL is healthy"
-
-    # Run orchestrator from host venv
-    info "Running SITL mission (timeout=${timeout}s)..."
-    python "$SIM_DIR/sitl_orchestrator.py" single \
-        --port 5760 \
-        --mission "$mission_file" \
-        --timeout "$timeout" || true
-
-    # Capture logs
-    info "Capturing flight logs..."
-    mkdir -p "$log_dir/flight_logs"
-    docker cp "$sitl_container:/sitl/logs/." "$log_dir/flight_logs/" 2>/dev/null || true
-
-    # Find newest .BIN
-    local newest_bin
-    newest_bin=$(find "$log_dir/flight_logs" -name "*.BIN" -type f 2>/dev/null | \
-        xargs ls -t 2>/dev/null | head -1)
-
-    if [ -z "$newest_bin" ]; then
-        warn "No .BIN flight log captured"
-        return 1
-    fi
-
-    # Convert to scenario_data.npz
-    info "Converting flight log to NPZ..."
-    python "$SIM_DIR/sitl_log_merger.py" single "$newest_bin"
-
-    ok "SITL single-drone mission complete (log: $log_dir)"
-}
-
-run_sitl_swarm() {
-    local n_drones="${1:-3}"
-    local timeout="${2:-600}"
-    local log_dir="$ROOT_DIR/logs/sitl_swarm_$(date +%Y%m%d_%H%M%S)"
-    local base_port=5760
-    local port_step=10
-    mkdir -p "$log_dir"
-
-    info "Starting ${n_drones}-drone SITL swarm..."
-
-    # Generate ring-formation missions
-    local mission_dir="$log_dir/missions"
-    python "$SIM_DIR/sitl_waypoints.py" \
-        --n "$n_drones" --output-dir "$mission_dir" \
-        --ref-lat "$SITL_REF_LAT" --ref-lon "$SITL_REF_LON" --ref-alt "$SITL_REF_ALT"
-
-    # Get per-drone home GPS from the generated missions
-    # (parse from the waypoint files — home is line 2 of each file)
-    sitl_ensure_network
-
-    # Cleanup on exit (use global so the trap can access it after local scope ends)
-    _SITL_SWARM_N_DRONES="$n_drones"
-    sitl_swarm_cleanup() {
-        info "Cleaning up swarm containers..."
-        for i in $(seq 0 $((_SITL_SWARM_N_DRONES - 1))); do
-            docker rm -f "sitl_swarm_${i}" 2>/dev/null || true
-        done
-    }
-    trap sitl_swarm_cleanup EXIT
-
-    # Launch N containers with staggered startup
-    info "Launching $n_drones SITL containers..."
-    for i in $(seq 0 $((n_drones - 1))); do
-        local container_name="sitl_swarm_${i}"
-        local ip="10.10.1.$((60 + i))"
-        local host_port=$((base_port + i * port_step))
-
-        # Read home GPS from the generated mission file (line 2, fields 9-11)
-        local mission_file="$mission_dir/drone_${i}.waypoints"
-        local home_lat home_lon
-        home_lat=$(awk 'NR==2 {print $9}' "$mission_file")
-        home_lon=$(awk 'NR==2 {print $10}' "$mission_file")
-
-        docker rm -f "$container_name" 2>/dev/null || true
-        docker run -d \
-            --name "$container_name" \
-            --platform linux/amd64 \
-            --network "$SITL_NETWORK" \
-            --ip "$ip" \
-            -p "${host_port}:5760/tcp" \
-            -e "SIM_LAT=${home_lat}" \
-            -e "SIM_LNG=${home_lon}" \
-            -e "SIM_ALT=${SITL_REF_ALT}" \
-            -e "INSTANCE=0" \
-            "$SITL_IMAGE" copter >/dev/null
-
-        info "  drone_${i}: ${container_name} (${ip}, port ${host_port})"
-
-        # Stagger startup to avoid QEMU overload
-        if [ "$i" -lt $((n_drones - 1)) ]; then
-            sleep 5
-        fi
-    done
-
-    # Wait for all containers to be healthy
-    info "Waiting for all SITL instances..."
-    for i in $(seq 0 $((n_drones - 1))); do
-        if ! sitl_wait_healthy "sitl_swarm_${i}" 120; then
-            fail "sitl_swarm_${i} health check failed"
-        fi
-        ok "  sitl_swarm_${i} is healthy"
-    done
-
-    # Run swarm orchestrator from host
-    info "Running swarm mission (${n_drones} drones, timeout=${timeout}s)..."
-    python "$SIM_DIR/sitl_orchestrator.py" swarm \
-        --n "$n_drones" \
-        --base-port "$base_port" \
-        --port-step "$port_step" \
-        --mission-dir "$mission_dir" \
-        --timeout "$timeout" || true
-
-    # Capture logs from each container
-    info "Capturing flight logs from $n_drones containers..."
-    local log_dirs=()
-    for i in $(seq 0 $((n_drones - 1))); do
-        local drone_log_dir="$log_dir/drone_${i}"
-        mkdir -p "$drone_log_dir"
-        docker cp "sitl_swarm_${i}:/sitl/logs/." "$drone_log_dir/" 2>/dev/null || true
-        local bin_count
-        bin_count=$(find "$drone_log_dir" -name "*.BIN" 2>/dev/null | wc -l | tr -d ' ')
-        info "  drone_${i}: ${bin_count} .BIN file(s)"
-        if [ "$bin_count" -gt 0 ]; then
-            log_dirs+=("$drone_log_dir")
-        fi
-    done
-
-    if [ ${#log_dirs[@]} -eq 0 ]; then
-        warn "No .BIN logs captured from any drone"
-        return 1
-    fi
-
-    # Merge into swarm_data.npz
-    info "Merging ${#log_dirs[@]} drone logs into swarm data..."
-    python "$SIM_DIR/sitl_log_merger.py" swarm --log-dirs "${log_dirs[@]}"
-
-    ok "SITL swarm mission complete (${#log_dirs[@]}/${n_drones} drones, log: $log_dir)"
-}
-
 # ── Parse args ───────────────────────────────────────────────────────────────
 MODE="${1:---default}"
-SWARM_DRONES="${2:-3}"
+SWARM_DRONES="${2:-6}"
 
 case "$MODE" in
-    # ── Primary modes (ArduPilot SITL — requires Docker) ─────────────────────
+    # ── Primary modes (Docker Compose per-drone stack) ──────────────────────
     --single|--sitl)
         NEED_PYMAVLINK=1 ensure_venv
-        run_sitl_single 300
+        run_single_mission 300
         run_single_viz
         ;;
     --swarm|--sitl-swarm)
         NEED_PYMAVLINK=1 ensure_venv
-        if ! [[ "$SWARM_DRONES" =~ ^[1-9][0-9]*$ ]]; then
-            SWARM_DRONES=3
+        if ! [[ "$SWARM_DRONES" =~ ^[1-6]$ ]]; then
+            SWARM_DRONES=6
         fi
-        run_sitl_swarm "$SWARM_DRONES" 600
+        run_swarm_mission "$SWARM_DRONES" 600
         run_viz "$SIM_DIR/swarm_data.npz"
         ;;
     --sim-only)
         NEED_PYMAVLINK=1 ensure_venv
-        run_sitl_single 300
+        run_single_mission 300
+        ;;
+    --swarm-only)
+        NEED_PYMAVLINK=1 ensure_venv
+        if ! [[ "$SWARM_DRONES" =~ ^[1-6]$ ]]; then
+            SWARM_DRONES=6
+        fi
+        run_swarm_mission "$SWARM_DRONES" 600
         ;;
     --viz-only)
         ensure_venv
@@ -432,6 +567,17 @@ case "$MODE" in
     --sitl-viz)
         ensure_venv
         run_sitl_viz "${2:-}"
+        ;;
+
+    # ── Stack management ────────────────────────────────────────────────────
+    --status)
+        if ! [[ "$SWARM_DRONES" =~ ^[1-6]$ ]]; then
+            SWARM_DRONES=6
+        fi
+        swarm_status "$SWARM_DRONES"
+        ;;
+    --down)
+        swarm_down
         ;;
 
     # ── Legacy modes (Python physics engine — no Docker needed) ──────────────
@@ -467,8 +613,8 @@ case "$MODE" in
         run_tests
         run_benchmark
         run_real_log
-        run_sitl_single 300
-        run_single_viz
+        run_swarm_mission "$MAX_DRONES" 600
+        run_viz "$SIM_DIR/swarm_data.npz"
         ;;
     --benchmark)
         ensure_venv
@@ -483,11 +629,15 @@ case "$MODE" in
     --help|-h)
         echo "Usage: $0 [MODE]"
         echo ""
-        echo "ArduPilot SITL (default — requires Docker):"
-        echo "  (default)       Run single-drone SITL mission then open 3D visualization"
-        echo "  --single        Run single-drone SITL mission then visualize"
-        echo "  --swarm [N]     Run N-drone SITL swarm (default: 3) then visualize"
-        echo "  --sim-only      Run single-drone SITL mission only (no GUI)"
+        echo "Docker Compose per-drone stack (default — requires Docker):"
+        echo "  (default)       Run single-drone stack (4 containers) then visualize"
+        echo "  --single        Run single-drone stack (4 containers) then visualize"
+        echo "  --swarm [N]     Run N-drone stack (default: 6, max: 6) then visualize"
+        echo "                  Each drone: sitl_drone_N + swarm_node_N + perception_node_N + zenoh_bridge_N"
+        echo "  --sim-only      Run single-drone stack only (no GUI)"
+        echo "  --swarm-only [N] Run N-drone stack only (no GUI)"
+        echo "  --status [N]    Show health status of running containers"
+        echo "  --down          Tear down all swarm containers"
         echo "  --viz-only      Open visualization (uses existing data)"
         echo "  --sitl-viz [F]  Visualize newest SITL .BIN log (or specify path)"
         echo ""
@@ -501,14 +651,20 @@ case "$MODE" in
         echo "  --benchmark     Run deterministic benchmark validation gates"
         echo "  --real-log      Run real-log validation against paper Table 5"
         echo "  --ci-local      Run local CI/CD-equivalent pipeline (tests + all CI benchmarks)"
-        echo "  --all           Run tests, benchmark, SITL scenario, and visualization"
+        echo "  --all           Run tests, benchmark, full 6-drone swarm, and visualization"
         echo "  --help          Show this help"
+        echo ""
+        echo "Per-Drone Stack (6 drones × 4 services = 24 containers):"
+        echo "  sitl_drone_N      — Pixhawk sim + Micro-XRCE-DDS Agent (ROS_DOMAIN_ID=N)"
+        echo "  swarm_node_N      — Rust swarm control (restart: always, healthcheck)"
+        echo "  perception_node_N — Python vision pipeline (restart: always, healthcheck)"
+        echo "  zenoh_bridge_N    — Mesh networking router (restart: unless-stopped)"
         ;;
 
     # ── Default (no args) ────────────────────────────────────────────────────
     --default)
         NEED_PYMAVLINK=1 ensure_venv
-        run_sitl_single 300
+        run_single_mission 300
         run_single_viz
         ;;
     *)

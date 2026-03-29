@@ -1,47 +1,51 @@
 services:
   sitl_drone_1:
     labels:
-      author: "beret@hipisi.org.pl"
-      company: "Marysia Software Limited"
-      website: "https://marysia.app"
-      domain: "app.marysia.drone"
+      author: beret@hipisi.org.pl
+      company: Marysia Software Limited
+      website: https://marysia.app
+      domain: app.marysia.drone
     image: swarm_companion:latest
     container_name: sitl_drone_1
     networks:
       swarm_net:
         ipv4_address: 10.10.1.11
     environment:
-      - ROS_DOMAIN_ID=1
-    profiles: ["swarm_sitl"]
+    - ROS_DOMAIN_ID=1
+    profiles:
+    - swarm_sitl
     command: tail -f /dev/null
     healthcheck:
-      test: ["CMD-SHELL", "bash -lc 'test -f /dev/null'"]
+      test:
+      - CMD-SHELL
+      - bash -lc 'test -e /dev/null'
       interval: 10s
       timeout: 3s
       retries: 3
-
   swarm_node_1:
     image: swarm_companion:latest
     container_name: swarm_node_1
     restart: always
-    profiles: ["swarm_sitl"]
+    profiles:
+    - swarm_sitl
     networks:
       swarm_net:
         ipv4_address: 10.10.1.21
     environment:
-      - ROS_DOMAIN_ID=1
+    - ROS_DOMAIN_ID=1
     volumes:
-      - ./swarm_control:/root/workspace/swarm_control
-      - ./simulation:/root/workspace/simulation
-    command: bash -c "cd /root/workspace/swarm_control && cargo run"
+    - ./swarm_control:/root/workspace/swarm_control
+    - ./simulation:/root/workspace/simulation
+    command: bash -c "cd /root/workspace/swarm_control && cargo run --bin swarm_node -- 1"
     healthcheck:
-      test: ["CMD-SHELL", "bash -lc 'pgrep -f cargo >/dev/null'"]
+      test:
+      - CMD-SHELL
+      - bash -lc 'pgrep -f cargo >/dev/null'
       interval: 15s
       timeout: 5s
       retries: 5
     depends_on:
-      - sitl_drone_1
-
+    - sitl_drone_1
   perception_node_1:
     image: swarm_companion:latest
     container_name: perception_node_1
@@ -49,14 +53,23 @@ services:
       swarm_net:
         ipv4_address: 10.10.1.31
     environment:
-      - ROS_DOMAIN_ID=1
-    profiles: ["swarm_sitl"]
+    - ROS_DOMAIN_ID=1
+    profiles:
+    - swarm_sitl
     volumes:
-      - ./perception:/root/workspace/perception
-    command: bash -c "export PYTHONPATH=\$PYTHONPATH:/root/workspace/perception && ros2 run perception_core detector"
+    - ./perception:/root/workspace/perception
+    command: bash -c "export PYTHONPATH=/root/workspace/perception:$$PYTHONPATH &&
+      python3 -m perception_core.detector"
     depends_on:
-      - sitl_drone_1
-
+    - sitl_drone_1
+    restart: always
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'pgrep -f detector >/dev/null'
+      interval: 15s
+      timeout: 5s
+      retries: 5
   sitl_drone_2:
     image: swarm_companion:latest
     container_name: sitl_drone_2
@@ -64,10 +77,17 @@ services:
       swarm_net:
         ipv4_address: 10.10.1.12
     environment:
-      - ROS_DOMAIN_ID=2
-    profiles: ["swarm_sitl"]
+    - ROS_DOMAIN_ID=2
+    profiles:
+    - swarm_sitl
     command: tail -f /dev/null
-
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'test -e /dev/null'
+      interval: 10s
+      timeout: 3s
+      retries: 3
   swarm_node_2:
     image: swarm_companion:latest
     container_name: swarm_node_2
@@ -75,15 +95,23 @@ services:
       swarm_net:
         ipv4_address: 10.10.1.22
     environment:
-      - ROS_DOMAIN_ID=2
-    profiles: ["swarm_sitl"]
+    - ROS_DOMAIN_ID=2
+    profiles:
+    - swarm_sitl
     volumes:
-      - ./swarm_control:/root/workspace/swarm_control
-      - ./simulation:/root/workspace/simulation
-    command: bash -c "cd /root/workspace/swarm_control && cargo run -- 2"
+    - ./swarm_control:/root/workspace/swarm_control
+    - ./simulation:/root/workspace/simulation
+    command: bash -c "cd /root/workspace/swarm_control && cargo run --bin swarm_node -- 2"
     depends_on:
-      - sitl_drone_2
-
+    - sitl_drone_2
+    restart: always
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'pgrep -f cargo >/dev/null'
+      interval: 15s
+      timeout: 5s
+      retries: 5
   sitl_drone_3:
     image: swarm_companion:latest
     container_name: sitl_drone_3
@@ -91,10 +119,17 @@ services:
       swarm_net:
         ipv4_address: 10.10.1.13
     environment:
-      - ROS_DOMAIN_ID=3
-    profiles: ["swarm_sitl"]
+    - ROS_DOMAIN_ID=3
+    profiles:
+    - swarm_sitl
     command: tail -f /dev/null
-
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'test -e /dev/null'
+      interval: 10s
+      timeout: 3s
+      retries: 3
   swarm_node_3:
     image: swarm_companion:latest
     container_name: swarm_node_3
@@ -102,17 +137,23 @@ services:
       swarm_net:
         ipv4_address: 10.10.1.23
     environment:
-      - ROS_DOMAIN_ID=3
-    profiles: ["swarm_sitl"]
+    - ROS_DOMAIN_ID=3
+    profiles:
+    - swarm_sitl
     volumes:
-      - ./swarm_control:/root/workspace/swarm_control
-      - ./simulation:/root/workspace/simulation
-    command: bash -c "cd /root/workspace/swarm_control && cargo run -- 3"
+    - ./swarm_control:/root/workspace/swarm_control
+    - ./simulation:/root/workspace/simulation
+    command: bash -c "cd /root/workspace/swarm_control && cargo run --bin swarm_node -- 3"
     depends_on:
-      - sitl_drone_3
-
-  # ── Drones 4-6 (completing the 6-drone swarm) ─────────────────────────
-
+    - sitl_drone_3
+    restart: always
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'pgrep -f cargo >/dev/null'
+      interval: 15s
+      timeout: 5s
+      retries: 5
   sitl_drone_4:
     image: swarm_companion:latest
     container_name: sitl_drone_4
@@ -120,10 +161,17 @@ services:
       swarm_net:
         ipv4_address: 10.10.1.14
     environment:
-      - ROS_DOMAIN_ID=4
-    profiles: ["swarm_sitl"]
+    - ROS_DOMAIN_ID=4
+    profiles:
+    - swarm_sitl
     command: tail -f /dev/null
-
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'test -e /dev/null'
+      interval: 10s
+      timeout: 3s
+      retries: 3
   swarm_node_4:
     image: swarm_companion:latest
     container_name: swarm_node_4
@@ -131,15 +179,23 @@ services:
       swarm_net:
         ipv4_address: 10.10.1.24
     environment:
-      - ROS_DOMAIN_ID=4
-    profiles: ["swarm_sitl"]
+    - ROS_DOMAIN_ID=4
+    profiles:
+    - swarm_sitl
     volumes:
-      - ./swarm_control:/root/workspace/swarm_control
-      - ./simulation:/root/workspace/simulation
-    command: bash -c "cd /root/workspace/swarm_control && cargo run -- 4"
+    - ./swarm_control:/root/workspace/swarm_control
+    - ./simulation:/root/workspace/simulation
+    command: bash -c "cd /root/workspace/swarm_control && cargo run --bin swarm_node -- 4"
     depends_on:
-      - sitl_drone_4
-
+    - sitl_drone_4
+    restart: always
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'pgrep -f cargo >/dev/null'
+      interval: 15s
+      timeout: 5s
+      retries: 5
   sitl_drone_5:
     image: swarm_companion:latest
     container_name: sitl_drone_5
@@ -147,10 +203,17 @@ services:
       swarm_net:
         ipv4_address: 10.10.1.15
     environment:
-      - ROS_DOMAIN_ID=5
-    profiles: ["swarm_sitl"]
+    - ROS_DOMAIN_ID=5
+    profiles:
+    - swarm_sitl
     command: tail -f /dev/null
-
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'test -e /dev/null'
+      interval: 10s
+      timeout: 3s
+      retries: 3
   swarm_node_5:
     image: swarm_companion:latest
     container_name: swarm_node_5
@@ -158,15 +221,23 @@ services:
       swarm_net:
         ipv4_address: 10.10.1.25
     environment:
-      - ROS_DOMAIN_ID=5
-    profiles: ["swarm_sitl"]
+    - ROS_DOMAIN_ID=5
+    profiles:
+    - swarm_sitl
     volumes:
-      - ./swarm_control:/root/workspace/swarm_control
-      - ./simulation:/root/workspace/simulation
-    command: bash -c "cd /root/workspace/swarm_control && cargo run -- 5"
+    - ./swarm_control:/root/workspace/swarm_control
+    - ./simulation:/root/workspace/simulation
+    command: bash -c "cd /root/workspace/swarm_control && cargo run --bin swarm_node -- 5"
     depends_on:
-      - sitl_drone_5
-
+    - sitl_drone_5
+    restart: always
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'pgrep -f cargo >/dev/null'
+      interval: 15s
+      timeout: 5s
+      retries: 5
   sitl_drone_6:
     image: swarm_companion:latest
     container_name: sitl_drone_6
@@ -174,10 +245,17 @@ services:
       swarm_net:
         ipv4_address: 10.10.1.16
     environment:
-      - ROS_DOMAIN_ID=6
-    profiles: ["swarm_sitl"]
+    - ROS_DOMAIN_ID=6
+    profiles:
+    - swarm_sitl
     command: tail -f /dev/null
-
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'test -e /dev/null'
+      interval: 10s
+      timeout: 3s
+      retries: 3
   swarm_node_6:
     image: swarm_companion:latest
     container_name: swarm_node_6
@@ -185,184 +263,324 @@ services:
       swarm_net:
         ipv4_address: 10.10.1.26
     environment:
-      - ROS_DOMAIN_ID=6
-    profiles: ["swarm_sitl"]
+    - ROS_DOMAIN_ID=6
+    profiles:
+    - swarm_sitl
     volumes:
-      - ./swarm_control:/root/workspace/swarm_control
-      - ./simulation:/root/workspace/simulation
-    command: bash -c "cd /root/workspace/swarm_control && cargo run -- 6"
+    - ./swarm_control:/root/workspace/swarm_control
+    - ./simulation:/root/workspace/simulation
+    command: bash -c "cd /root/workspace/swarm_control && cargo run --bin swarm_node -- 6"
     depends_on:
-      - sitl_drone_6
-
-  # ── Zenoh-bridge-ros2dds (one per drone) ─────────────────────────────
-
+    - sitl_drone_6
+    restart: always
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'pgrep -f cargo >/dev/null'
+      interval: 15s
+      timeout: 5s
+      retries: 5
   zenoh_bridge_1:
     image: eclipse/zenoh-bridge-ros2dds:latest
     container_name: zenoh_bridge_1
-    profiles: ["swarm_sitl"]
+    profiles:
+    - swarm_sitl
     networks:
       swarm_net:
         ipv4_address: 10.10.1.41
     environment:
-      - ROS_DOMAIN_ID=1
+    - ROS_DOMAIN_ID=1
     volumes:
-      - ./docker/zenoh/bridge_drone_1.json5:/etc/zenoh/bridge.json5:ro
-    command: ["-c", "/etc/zenoh/bridge.json5"]
+    - ./docker/zenoh/bridge_drone_1.json5:/etc/zenoh/bridge.json5:ro
+    command:
+    - -c
+    - /etc/zenoh/bridge.json5
     depends_on:
-      - sitl_drone_1
+    - sitl_drone_1
     restart: unless-stopped
-
   zenoh_bridge_2:
     image: eclipse/zenoh-bridge-ros2dds:latest
     container_name: zenoh_bridge_2
-    profiles: ["swarm_sitl"]
+    profiles:
+    - swarm_sitl
     networks:
       swarm_net:
         ipv4_address: 10.10.1.42
     environment:
-      - ROS_DOMAIN_ID=2
+    - ROS_DOMAIN_ID=2
     volumes:
-      - ./docker/zenoh/bridge_drone_2.json5:/etc/zenoh/bridge.json5:ro
-    command: ["-c", "/etc/zenoh/bridge.json5"]
+    - ./docker/zenoh/bridge_drone_2.json5:/etc/zenoh/bridge.json5:ro
+    command:
+    - -c
+    - /etc/zenoh/bridge.json5
     depends_on:
-      - sitl_drone_2
+    - sitl_drone_2
     restart: unless-stopped
-
   zenoh_bridge_3:
     image: eclipse/zenoh-bridge-ros2dds:latest
     container_name: zenoh_bridge_3
-    profiles: ["swarm_sitl"]
+    profiles:
+    - swarm_sitl
     networks:
       swarm_net:
         ipv4_address: 10.10.1.43
     environment:
-      - ROS_DOMAIN_ID=3
+    - ROS_DOMAIN_ID=3
     volumes:
-      - ./docker/zenoh/bridge_drone_3.json5:/etc/zenoh/bridge.json5:ro
-    command: ["-c", "/etc/zenoh/bridge.json5"]
+    - ./docker/zenoh/bridge_drone_3.json5:/etc/zenoh/bridge.json5:ro
+    command:
+    - -c
+    - /etc/zenoh/bridge.json5
     depends_on:
-      - sitl_drone_3
+    - sitl_drone_3
     restart: unless-stopped
-
   zenoh_bridge_4:
     image: eclipse/zenoh-bridge-ros2dds:latest
     container_name: zenoh_bridge_4
-    profiles: ["swarm_sitl"]
+    profiles:
+    - swarm_sitl
     networks:
       swarm_net:
         ipv4_address: 10.10.1.44
     environment:
-      - ROS_DOMAIN_ID=4
+    - ROS_DOMAIN_ID=4
     volumes:
-      - ./docker/zenoh/bridge_drone_4.json5:/etc/zenoh/bridge.json5:ro
-    command: ["-c", "/etc/zenoh/bridge.json5"]
+    - ./docker/zenoh/bridge_drone_4.json5:/etc/zenoh/bridge.json5:ro
+    command:
+    - -c
+    - /etc/zenoh/bridge.json5
     depends_on:
-      - sitl_drone_4
+    - sitl_drone_4
     restart: unless-stopped
-
   zenoh_bridge_5:
     image: eclipse/zenoh-bridge-ros2dds:latest
     container_name: zenoh_bridge_5
-    profiles: ["swarm_sitl"]
+    profiles:
+    - swarm_sitl
     networks:
       swarm_net:
         ipv4_address: 10.10.1.45
     environment:
-      - ROS_DOMAIN_ID=5
+    - ROS_DOMAIN_ID=5
     volumes:
-      - ./docker/zenoh/bridge_drone_5.json5:/etc/zenoh/bridge.json5:ro
-    command: ["-c", "/etc/zenoh/bridge.json5"]
+    - ./docker/zenoh/bridge_drone_5.json5:/etc/zenoh/bridge.json5:ro
+    command:
+    - -c
+    - /etc/zenoh/bridge.json5
     depends_on:
-      - sitl_drone_5
+    - sitl_drone_5
     restart: unless-stopped
-
   zenoh_bridge_6:
     image: eclipse/zenoh-bridge-ros2dds:latest
     container_name: zenoh_bridge_6
-    profiles: ["swarm_sitl"]
+    profiles:
+    - swarm_sitl
     networks:
       swarm_net:
         ipv4_address: 10.10.1.46
     environment:
-      - ROS_DOMAIN_ID=6
+    - ROS_DOMAIN_ID=6
     volumes:
-      - ./docker/zenoh/bridge_drone_6.json5:/etc/zenoh/bridge.json5:ro
-    command: ["-c", "/etc/zenoh/bridge.json5"]
+    - ./docker/zenoh/bridge_drone_6.json5:/etc/zenoh/bridge.json5:ro
+    command:
+    - -c
+    - /etc/zenoh/bridge.json5
     depends_on:
-      - sitl_drone_6
+    - sitl_drone_6
     restart: unless-stopped
-
-  # ── ArduPilot SITL ───────────────────────────────────────────────────
   ardupilot_sitl:
     build:
       context: .
       dockerfile: Dockerfile.sitl
       platforms:
-        - linux/amd64
+      - linux/amd64
     image: ardupilot-sitl:latest
     platform: linux/amd64
     container_name: ardupilot_sitl
-    profiles: ["sitl"]
+    profiles:
+    - sitl
     networks:
       swarm_net:
         ipv4_address: 10.10.1.50
     environment:
-      - SIM_LAT=-0.508333
-      - SIM_LNG=-78.141667
-      - SIM_ALT=4500
-      - INSTANCE=0
+    - SIM_LAT=-0.508333
+    - SIM_LNG=-78.141667
+    - SIM_ALT=4500
+    - INSTANCE=0
     ports:
-      - "9002:9002/udp"
-      - "9003:9003/udp"
-      - "14550:14550/udp"
-      - "14555:14555/udp"
-      - "5760:5760/tcp"
+    - 9002:9002/udp
+    - 9003:9003/udp
+    - 14550:14550/udp
+    - 14555:14555/udp
+    - 5760:5760/tcp
     volumes:
-      - ./gazebo/models:/sitl/models:ro
-      - ./missions:/sitl/missions:ro
-      - sitl_logs:/sitl/logs
-    command: ["copter"]
+    - ./gazebo/models:/sitl/models:ro
+    - ./missions:/sitl/missions:ro
+    - sitl_logs:/sitl/logs
+    command:
+    - copter
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -x 'arducopter|arduplane' > /dev/null"]
+      test:
+      - CMD-SHELL
+      - pgrep -x 'arducopter|arduplane' > /dev/null
       interval: 5s
       timeout: 3s
       start_period: 15s
       retries: 3
-
   ardupilot_sitl_plane:
     build:
       context: .
       dockerfile: Dockerfile.sitl
       platforms:
-        - linux/amd64
+      - linux/amd64
     image: ardupilot-sitl:latest
     platform: linux/amd64
     container_name: ardupilot_sitl_plane
-    profiles: ["sitl_plane"]
+    profiles:
+    - sitl_plane
     networks:
       swarm_net:
         ipv4_address: 10.10.1.51
     environment:
-      - SIM_LAT=-0.508333
-      - SIM_LNG=-78.141667
-      - SIM_ALT=4500
-      - INSTANCE=1
+    - SIM_LAT=-0.508333
+    - SIM_LNG=-78.141667
+    - SIM_ALT=4500
+    - INSTANCE=1
     ports:
-      - "9012:9002/udp"
-      - "9013:9003/udp"
-      - "14560:14550/udp"
+    - 9012:9002/udp
+    - 9013:9003/udp
+    - 14560:14550/udp
     volumes:
-      - ./gazebo/models:/sitl/models:ro
-      - ./missions:/sitl/missions:ro
-      - sitl_logs:/sitl/logs
-    command: ["plane"]
-
+    - ./gazebo/models:/sitl/models:ro
+    - ./missions:/sitl/missions:ro
+    - sitl_logs:/sitl/logs
+    command:
+    - plane
+  perception_node_2:
+    image: swarm_companion:latest
+    container_name: perception_node_2
+    restart: always
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.32
+    environment:
+    - ROS_DOMAIN_ID=2
+    profiles:
+    - swarm_sitl
+    volumes:
+    - ./perception:/root/workspace/perception
+    command: bash -c "export PYTHONPATH=/root/workspace/perception:$$PYTHONPATH &&
+      python3 -m perception_core.detector"
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'pgrep -f detector >/dev/null'
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+    - sitl_drone_2
+  perception_node_3:
+    image: swarm_companion:latest
+    container_name: perception_node_3
+    restart: always
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.33
+    environment:
+    - ROS_DOMAIN_ID=3
+    profiles:
+    - swarm_sitl
+    volumes:
+    - ./perception:/root/workspace/perception
+    command: bash -c "export PYTHONPATH=/root/workspace/perception:$$PYTHONPATH &&
+      python3 -m perception_core.detector"
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'pgrep -f detector >/dev/null'
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+    - sitl_drone_3
+  perception_node_4:
+    image: swarm_companion:latest
+    container_name: perception_node_4
+    restart: always
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.34
+    environment:
+    - ROS_DOMAIN_ID=4
+    profiles:
+    - swarm_sitl
+    volumes:
+    - ./perception:/root/workspace/perception
+    command: bash -c "export PYTHONPATH=/root/workspace/perception:$$PYTHONPATH &&
+      python3 -m perception_core.detector"
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'pgrep -f detector >/dev/null'
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+    - sitl_drone_4
+  perception_node_5:
+    image: swarm_companion:latest
+    container_name: perception_node_5
+    restart: always
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.35
+    environment:
+    - ROS_DOMAIN_ID=5
+    profiles:
+    - swarm_sitl
+    volumes:
+    - ./perception:/root/workspace/perception
+    command: bash -c "export PYTHONPATH=/root/workspace/perception:$$PYTHONPATH &&
+      python3 -m perception_core.detector"
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'pgrep -f detector >/dev/null'
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+    - sitl_drone_5
+  perception_node_6:
+    image: swarm_companion:latest
+    container_name: perception_node_6
+    restart: always
+    networks:
+      swarm_net:
+        ipv4_address: 10.10.1.36
+    environment:
+    - ROS_DOMAIN_ID=6
+    profiles:
+    - swarm_sitl
+    volumes:
+    - ./perception:/root/workspace/perception
+    command: bash -c "export PYTHONPATH=/root/workspace/perception:$$PYTHONPATH &&
+      python3 -m perception_core.detector"
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - bash -lc 'pgrep -f detector >/dev/null'
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+    - sitl_drone_6
 volumes:
-  sitl_logs:
-
+  sitl_logs: null
 networks:
   swarm_net:
     driver: bridge
     ipam:
       config:
-        - subnet: 10.10.1.0/24
+      - subnet: 10.10.1.0/24

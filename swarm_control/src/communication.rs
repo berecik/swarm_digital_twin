@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use zenoh::prelude::r#async::*;
+use zenoh::handlers::FifoChannelHandler;
+use zenoh::pubsub::Subscriber;
+use zenoh::sample::Sample;
+use zenoh::Session;
 use crate::boids::Boid;
 use crate::consensus_transport::{raft_tx_topic, raft_tx_subscribe_pattern, drone_id_from_key};
 use bincode;
@@ -15,7 +18,7 @@ pub struct ZenohManager {
 
 impl ZenohManager {
     pub async fn new(drone_id: String) -> Self {
-        let session = zenoh::open(config::default()).res().await.unwrap();
+        let session = zenoh::open(zenoh::Config::default()).await.unwrap();
         let neighbors = Arc::new(Mutex::new(HashMap::new()));
         let namespace = format!("swarm/{}/", drone_id);
 
@@ -24,7 +27,6 @@ impl ZenohManager {
 
         let subscriber = session
             .declare_subscriber("swarm/*/state")
-            .res()
             .await
             .unwrap();
 
@@ -49,7 +51,9 @@ impl ZenohManager {
     }
 
     pub fn process_sample(sample: &Sample, my_id: &str, neighbors: &Arc<Mutex<HashMap<String, Boid>>>) {
-        Self::process_raw_data(sample.key_expr.as_str(), &sample.payload.contiguous(), my_id, neighbors);
+        let key = sample.key_expr().as_str();
+        let payload = sample.payload().to_bytes();
+        Self::process_raw_data(key, &payload, my_id, neighbors);
     }
 
     pub fn process_raw_data(key: &str, payload: &[u8], my_id: &str, neighbors: &Arc<Mutex<HashMap<String, Boid>>>) {
@@ -68,7 +72,7 @@ impl ZenohManager {
     pub async fn publish_state(&self, boid: &Boid) {
         let key = format!("{}state", self.namespace);
         if let Ok(payload) = bincode::serialize(boid) {
-            self.session.put(key, payload).res().await.unwrap();
+            self.session.put(&key, payload).await.unwrap();
         }
     }
 
@@ -84,7 +88,6 @@ impl ZenohManager {
         let topic = raft_tx_topic(target_id);
         self.session
             .put(&topic, payload)
-            .res()
             .await
             .map_err(|e| format!("zenoh put to {topic}: {e}"))
     }
@@ -103,13 +106,10 @@ impl ZenohManager {
     }
 
     /// Subscribe to all drones' Raft consensus traffic.
-    /// Returns a Zenoh subscriber.  The caller should spawn a task to
-    /// receive samples and feed them into `ConsensusTransportLoop::handle_incoming`.
-    pub async fn subscribe_raft(&self) -> zenoh::subscriber::Subscriber<'_, flume::Receiver<Sample>> {
+    pub async fn subscribe_raft(&self) -> Subscriber<FifoChannelHandler<Sample>> {
         let pattern = raft_tx_subscribe_pattern();
         self.session
             .declare_subscriber(&pattern)
-            .res()
             .await
             .unwrap()
     }
@@ -117,5 +117,10 @@ impl ZenohManager {
     /// Get this manager's numeric drone ID.
     pub fn drone_id_numeric(&self) -> u64 {
         self.drone_id_numeric
+    }
+
+    /// Access the underlying Zenoh session.
+    pub fn session(&self) -> &Session {
+        &self.session
     }
 }

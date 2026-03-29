@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn test_flight_states() {
         // Test basic state enum
-        let state = crate::FlightState::DISARMED;
-        assert_eq!(state, crate::FlightState::DISARMED);
+        let state = crate::FlightState::Disarmed;
+        assert_eq!(state, crate::FlightState::Disarmed);
     }
 }

@@ -1,123 +1,85 @@
-use rclrs::{self, QosProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy, QOS_PROFILE_DEFAULT};
-use px4_msgs::msg::{OffboardControlMode, TrajectorySetpoint, VehicleCommand, VehicleStatus};
+use px4_msgs::msg::{VehicleStatus};
 use std::env;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use nalgebra::Vector3;
-use tokio;
 
 use raft::storage::MemStorage;
 
 use swarm_control_core::driver_core::{DriverAction, DriverCore, DriverStatus};
 use swarm_control_core::px4_safety::{Px4CommandKind, Px4SafetyBuilder};
-use swarm_control_core::consensus::{MissionConsensus, MissionState};
+use swarm_control_core::consensus::MissionConsensus;
 use swarm_control_core::consensus_transport::{ConsensusTransportLoop, TransportLoopConfig};
+use swarm_control_core::communication::ZenohManager;
 
-mod utils;
-
-pub struct OffboardController {
-    core: DriverCore,
-    offboard_control_mode_publisher: Arc<rclrs::Publisher<OffboardControlMode>>,
-    trajectory_setpoint_publisher: Arc<rclrs::Publisher<TrajectorySetpoint>>,
-    vehicle_command_publisher: Arc<rclrs::Publisher<VehicleCommand>>,
+/// Publishes a PX4 heartbeat (offboard control mode) via Zenoh.
+async fn publish_heartbeat(zenoh: &ZenohManager, drone_id: u64) -> Result<(), String> {
+    let msg = Px4SafetyBuilder::heartbeat_mode();
+    let payload = bincode::serialize(&msg).map_err(|e| e.to_string())?;
+    let topic = format!("swarm/drone_{drone_id}/fmu/in/offboard_control_mode");
+    zenoh.session().put(&topic, payload).await.map_err(|e| e.to_string())
 }
 
-impl OffboardController {
-    pub fn new(node: &rclrs::Node) -> Result<Self, rclrs::RclrsError> {
-        let qos_reliable = QosProfile {
-            reliability: ReliabilityPolicy::Reliable,
-            durability: DurabilityPolicy::TransientLocal,
-            history: HistoryPolicy::KeepLast,
-            depth: 1,
-            ..QOS_PROFILE_DEFAULT
-        };
+/// Publishes a trajectory setpoint via Zenoh.
+async fn publish_trajectory(zenoh: &ZenohManager, drone_id: u64, enu_pos: Vector3<f32>) -> Result<(), String> {
+    let Ok(msg) = Px4SafetyBuilder::trajectory_setpoint(enu_pos) else {
+        return Ok(());
+    };
+    let payload = bincode::serialize(&msg).map_err(|e| e.to_string())?;
+    let topic = format!("swarm/drone_{drone_id}/fmu/in/trajectory_setpoint");
+    zenoh.session().put(&topic, payload).await.map_err(|e| e.to_string())
+}
 
-        let offboard_control_mode_publisher = node.create_publisher::<OffboardControlMode>(
-            "/fmu/in/offboard_control_mode",
-            qos_reliable.clone(),
-        )?;
-        let trajectory_setpoint_publisher = node.create_publisher::<TrajectorySetpoint>(
-            "/fmu/in/trajectory_setpoint",
-            qos_reliable.clone(),
-        )?;
-        let vehicle_command_publisher = node.create_publisher::<VehicleCommand>(
-            "/fmu/in/vehicle_command",
-            qos_reliable,
-        )?;
+/// Publishes a vehicle command via Zenoh.
+async fn send_command(zenoh: &ZenohManager, drone_id: u64, command: u32, param1: f32, param2: f32) -> Result<(), String> {
+    let msg = match command {
+        176 => Px4SafetyBuilder::command(Px4CommandKind::SetOffboard),
+        400 => Px4SafetyBuilder::command(Px4CommandKind::Arm),
+        _ => {
+            let mut cmd = Px4SafetyBuilder::command(Px4CommandKind::SetOffboard);
+            cmd.command = command;
+            cmd.param1 = param1;
+            cmd.param2 = param2;
+            cmd
+        }
+    };
+    let payload = bincode::serialize(&msg).map_err(|e| e.to_string())?;
+    let topic = format!("swarm/drone_{drone_id}/fmu/in/vehicle_command");
+    zenoh.session().put(&topic, payload).await.map_err(|e| e.to_string())
+}
 
-        Ok(Self {
-            core: DriverCore::new(5.0),
-            offboard_control_mode_publisher,
-            trajectory_setpoint_publisher,
-            vehicle_command_publisher,
-        })
-    }
-
-    pub fn publish_heartbeat(&self) -> Result<(), rclrs::RclrsError> {
-        let msg = Px4SafetyBuilder::heartbeat_mode();
-        self.offboard_control_mode_publisher.publish(&msg)
-    }
-
-    pub fn publish_trajectory_setpoint(&self, enu_pos: Vector3<f32>) -> Result<(), rclrs::RclrsError> {
-        let Ok(msg) = Px4SafetyBuilder::trajectory_setpoint(enu_pos) else {
-            return Ok(());
-        };
-        self.trajectory_setpoint_publisher.publish(&msg)
-    }
-
-    pub fn send_command(&self, command: u32, param1: f32, param2: f32) -> Result<(), rclrs::RclrsError> {
-        let msg = match command {
-            176 => Px4SafetyBuilder::command(Px4CommandKind::SetOffboard),
-            400 => Px4SafetyBuilder::command(Px4CommandKind::Arm),
-            _ => {
-                let mut cmd = Px4SafetyBuilder::command(Px4CommandKind::SetOffboard);
-                cmd.command = command;
-                cmd.param1 = param1;
-                cmd.param2 = param2;
-                cmd
+/// Execute driver actions produced by a control tick.
+async fn execute_actions(zenoh: &ZenohManager, drone_id: u64, actions: Vec<DriverAction>) -> Result<(), String> {
+    for action in actions {
+        match action {
+            DriverAction::RequestOffboard => {
+                send_command(zenoh, drone_id, 176, 1.0, 6.0).await?;
             }
-        };
-        self.vehicle_command_publisher.publish(&msg)
-    }
-
-    pub fn update_status(&mut self, msg: VehicleStatus) {
-        self.core.update_status(DriverStatus {
-            nav_state: msg.nav_state,
-            arming_state: msg.arming_state,
-        });
-    }
-
-    pub fn run_control_tick(&mut self) -> Result<(), rclrs::RclrsError> {
-        for action in self.core.tick() {
-            match action {
-                DriverAction::RequestOffboard => {
-                    self.send_command(176, 1.0, 6.0)?;
-                }
-                DriverAction::RequestArm => {
-                    self.send_command(400, 1.0, 0.0)?;
-                }
-                DriverAction::PublishSetpoint(enu_pos) => {
-                    self.publish_trajectory_setpoint(enu_pos)?;
-                }
+            DriverAction::RequestArm => {
+                send_command(zenoh, drone_id, 400, 1.0, 0.0).await?;
+            }
+            DriverAction::PublishSetpoint(enu_pos) => {
+                publish_trajectory(zenoh, drone_id, enu_pos).await?;
             }
         }
-        Ok(())
     }
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let context = rclrs::Context::new(env::args())?;
-
-    // Parse drone ID from CLI args (e.g. `cargo run -- 3`), default to 1
     let drone_id: u64 = env::args()
         .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
 
-    let node = rclrs::Node::new(&context, &format!("swarm_node_{drone_id}"))?;
+    println!("[swarm_node_{drone_id}] Starting...");
 
-    let controller = Arc::new(Mutex::new(OffboardController::new(&node)?));
+    // ── Zenoh session ─────────────────────────────────────────────────
+    let zenoh = Arc::new(ZenohManager::new(format!("drone_{drone_id}")).await);
+    println!("[swarm_node_{drone_id}] Zenoh connected");
+
+    let core = Arc::new(Mutex::new(DriverCore::new(5.0)));
 
     // ── Raft consensus ─────────────────────────────────────────────────
     let peers: Vec<u64> = (1..=6).collect();
@@ -126,70 +88,87 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("consensus init failed");
     let consensus_shared = Arc::new(Mutex::new(consensus));
 
-    let mut transport_loop = ConsensusTransportLoop::new(
+    let _transport_loop = ConsensusTransportLoop::new(
         Arc::clone(&consensus_shared),
         drone_id,
         TransportLoopConfig::default(),
     );
 
-    // Consensus tick loop (100ms = 10Hz Raft ticks)
-    let consensus_for_tick = Arc::clone(&consensus_shared);
+    // Subscribe to incoming Raft messages via Zenoh
+    let raft_sub = zenoh.subscribe_raft().await;
+    let consensus_for_rx = Arc::clone(&consensus_shared);
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_millis(100));
-        loop {
-            interval.tick().await;
-            // In production this would also publish outbox via Zenoh.
-            // For now, tick the Raft node to keep elections alive.
-            let mut c = consensus_for_tick.lock().unwrap();
-            c.tick();
-        }
-    });
-
-    // Heartbeat Loop (20Hz) - Async and Robust
-    let hb_controller = Arc::clone(&controller);
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_millis(50));
-        loop {
-            interval.tick().await;
-            let c = hb_controller.lock().unwrap();
-            if let Err(e) = c.publish_heartbeat() {
-                eprintln!("Failed to publish heartbeat: {}", e);
+        while let Ok(sample) = raft_sub.recv_async().await {
+            let payload = sample.payload().to_bytes();
+            if let Ok(msg) = swarm_control_core::consensus::deserialize_raft_message(&payload) {
+                let mut c = consensus_for_rx.lock().unwrap();
+                let _ = c.step(msg);
             }
         }
     });
 
-    // State Subscriber
-    let sub_controller = Arc::clone(&controller);
-    let qos_best_effort = QosProfile {
-        reliability: ReliabilityPolicy::BestEffort,
-        durability: DurabilityPolicy::Volatile,
-        history: HistoryPolicy::KeepLast,
-        depth: 1,
-        ..QOS_PROFILE_DEFAULT
-    };
-    let _status_sub = node.create_subscription::<VehicleStatus, _>(
-        "/fmu/out/vehicle_status",
-        qos_best_effort,
-        move |msg: VehicleStatus| {
-            let mut c = sub_controller.lock().unwrap();
-            c.update_status(msg);
-        },
-    )?;
-
-    // Main Control Loop (10Hz)
-    let main_controller = Arc::clone(&controller);
-    let mut interval = tokio::time::interval(Duration::from_millis(100));
-
-    // Use a separate thread for spinning ROS 2 to avoid blocking async runtime
-    let node_inner = Arc::new(node);
-    let spin_node = Arc::clone(&node_inner);
-    std::thread::spawn(move || {
-        rclrs::spin(&spin_node).unwrap();
+    // Subscribe to vehicle status via Zenoh
+    let status_topic = format!("swarm/drone_{drone_id}/fmu/out/vehicle_status");
+    let status_sub = zenoh.session().declare_subscriber(&status_topic).await.unwrap();
+    let core_for_status = Arc::clone(&core);
+    tokio::spawn(async move {
+        while let Ok(sample) = status_sub.recv_async().await {
+            let payload = sample.payload().to_bytes();
+            if let Ok(msg) = bincode::deserialize::<VehicleStatus>(&payload) {
+                let mut c = core_for_status.lock().unwrap();
+                c.update_status(DriverStatus {
+                    nav_state: msg.nav_state,
+                    arming_state: msg.arming_state,
+                });
+            }
+        }
     });
 
+    // Consensus tick + outbox publish loop (10Hz)
+    let consensus_for_tick = Arc::clone(&consensus_shared);
+    let zenoh_for_raft = Arc::clone(&zenoh);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        loop {
+            interval.tick().await;
+            let messages = {
+                let mut c = consensus_for_tick.lock().unwrap();
+                c.tick();
+                c.drain_outgoing()
+            };
+            for msg in &messages {
+                if let Ok(bytes) = swarm_control_core::consensus::serialize_raft_message(msg) {
+                    let _ = zenoh_for_raft.publish_raft_message(msg.get_to(), bytes).await;
+                }
+            }
+        }
+    });
+
+    // Heartbeat Loop (20Hz) — no lock needed
+    let zenoh_for_hb = Arc::clone(&zenoh);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(50));
+        loop {
+            interval.tick().await;
+            if let Err(e) = publish_heartbeat(&zenoh_for_hb, drone_id).await {
+                eprintln!("[swarm_node_{drone_id}] heartbeat error: {e}");
+            }
+        }
+    });
+
+    println!("[swarm_node_{drone_id}] Control loop running");
+
+    // Main Control Loop (10Hz) — collect actions under lock, execute async outside
+    let zenoh_for_ctrl = Arc::clone(&zenoh);
+    let mut interval = tokio::time::interval(Duration::from_millis(100));
     loop {
         interval.tick().await;
-        let mut c = main_controller.lock().unwrap();
-        c.run_control_tick()?;
+        let actions = {
+            let mut c = core.lock().unwrap();
+            c.tick()
+        };
+        if let Err(e) = execute_actions(&zenoh_for_ctrl, drone_id, actions).await {
+            eprintln!("[swarm_node_{drone_id}] control tick error: {e}");
+        }
     }
 }

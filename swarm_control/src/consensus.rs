@@ -10,6 +10,11 @@ use protobuf::Message as ProtobufMessage;
 use raft::eraftpb::{ConfChange, ConfChangeType, Entry, EntryType, Message};
 use raft::{Config, RawNode, StateRole, Storage};
 use serde::{Deserialize, Serialize};
+use slog;
+
+fn discard_logger() -> slog::Logger {
+    slog::Logger::root(slog::Discard, slog::o!())
+}
 
 // ── Mission types ───────────────────────────────────────────────────────────
 
@@ -38,11 +43,11 @@ impl MissionCommand {
 
 // ── Protobuf wire format ────────────────────────────────────────────────────
 
-pub fn serialize_raft_message(message: &Message) -> Result<Vec<u8>, protobuf::Error> {
+pub fn serialize_raft_message(message: &Message) -> Result<Vec<u8>, protobuf::ProtobufError> {
     message.write_to_bytes()
 }
 
-pub fn deserialize_raft_message(bytes: &[u8]) -> Result<Message, protobuf::Error> {
+pub fn deserialize_raft_message(bytes: &[u8]) -> Result<Message, protobuf::ProtobufError> {
     Message::parse_from_bytes(bytes)
 }
 
@@ -159,7 +164,8 @@ impl<S: Storage> MissionConsensus<S> {
         cfg.validate()
             .map_err(|e| ConsensusError::InvalidConfig(e.to_string()))?;
 
-        let mut raft = RawNode::new(&cfg, storage, vec![])?;
+        let logger = discard_logger();
+        let mut raft = RawNode::new(&cfg, storage, &logger)?;
 
         if raft.raft.raft_log.last_index() == 0 {
             for id in peers {
