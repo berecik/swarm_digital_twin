@@ -244,7 +244,12 @@ def main():
     has_wind = 'wind_speed' in data and float(data['wind_speed']) > 0
 
     n = len(t)
-    step = max(1, n // 2000)
+    # Increase subsampling if in headless mode to speed up GIF creation
+    is_interactive = plt.get_backend().lower() not in ['agg', 'svg', 'pdf', 'ps', 'template']
+    if not is_interactive:
+        step = max(2, n // 200) # Only ~200 frames for GIF
+    else:
+        step = max(1, n // 2000) # Full detail for interactive
     idx = np.arange(0, n, step)
 
     if is_swarm:
@@ -599,11 +604,23 @@ def main():
     # Detect headless mode
     is_interactive = plt.get_backend().lower() not in ['agg', 'svg', 'pdf', 'ps', 'template']
     if not is_interactive:
-        print(f"INFO: Non-interactive backend ({plt.get_backend()}). Skipping GUI visualization.")
-        # If we have a save path, we could save the animation here
-        # For now, we just exit gracefully to avoid warnings
-        plt.close(fig)
-        return
+        output_file = 'simulation/flight_visualization.gif'
+        print(f"INFO: Non-interactive backend ({plt.get_backend()}).")
+        print(f"      Saving visualization to {output_file}...")
+        try:
+            # We already have is_interactive check above, but for clarity:
+            ani = FuncAnimation(fig, update, frames=len(idx),
+                                interval=33, blit=False, repeat=False)
+            # Use faster settings for headless mode
+            # pillow writer is standard but slow; lower fps helps
+            ani.save(output_file, writer='pillow', fps=10)
+            print(f"OK: Visualization saved to {output_file}")
+            plt.close(fig)
+            return # Exit after saving
+        except Exception as e:
+            print(f"WARN: Could not save visualization: {e}")
+            plt.close(fig)
+            return
 
     ani = FuncAnimation(fig, update, frames=len(idx),
                         interval=33, blit=False, repeat=True)
