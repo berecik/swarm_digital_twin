@@ -1,0 +1,29 @@
+# Docker ignore file
+# Target directories
+target/
+**/target/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+
+# Logs
+logs/
+*.log
+
+# Git
+.git
+.gitignore
+
+# Data
+data/
+*.npz
+
+# IDE
+.idea/
+.vscode/

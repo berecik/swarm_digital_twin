@@ -596,6 +596,15 @@ def main():
                 alt_line, speed_line, agl_line, thr_line,
                 time_text, info_text)
 
+    # Detect headless mode
+    is_interactive = plt.get_backend().lower() not in ['agg', 'svg', 'pdf', 'ps', 'template']
+    if not is_interactive:
+        print(f"INFO: Non-interactive backend ({plt.get_backend()}). Skipping GUI visualization.")
+        # If we have a save path, we could save the animation here
+        # For now, we just exit gracefully to avoid warnings
+        plt.close(fig)
+        return
+
     ani = FuncAnimation(fig, update, frames=len(idx),
                         interval=33, blit=False, repeat=True)
 

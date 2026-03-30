@@ -121,13 +121,20 @@ drone_services() {
     echo "$services"
 }
 
-# Ensure Docker image is built
-ensure_image() {
+# Ensure Docker images are built
+ensure_images() {
+    if ! docker image inspect ardupilot-sitl:latest &>/dev/null; then
+        info "Building ardupilot-sitl Docker image..."
+        cd "$ROOT_DIR"
+        docker build --platform linux/amd64 -f Dockerfile.sitl -t ardupilot-sitl:latest .
+        ok "ardupilot-sitl image built"
+    fi
+
     if ! docker image inspect swarm_companion:latest &>/dev/null; then
         info "Building swarm_companion Docker image..."
         cd "$ROOT_DIR"
         docker build -t swarm_companion:latest .
-        ok "Docker image built"
+        ok "swarm_companion image built"
     fi
 }
 
@@ -197,7 +204,7 @@ swarm_up() {
         fail "Maximum $MAX_DRONES drones supported (docker-compose defines 1-$MAX_DRONES)"
     fi
 
-    ensure_image
+    ensure_images
 
     local services
     services=$(drone_services "$n")
