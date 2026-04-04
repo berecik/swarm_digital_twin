@@ -25,7 +25,8 @@
 #   ./run_scenario.sh --benchmark  # run deterministic benchmark validation gates
 #   ./run_scenario.sh --real-log   # run real-log validation against paper Table 5
 #   ./run_scenario.sh --ci-local   # run local CI/CD-equivalent pipeline (tests + all benchmarks)
-#   ./run_scenario.sh --all        # run tests, benchmark, single-drone stack, and visualization
+#   ./run_scenario.sh --all        # run tests, benchmarks, single-drone mission, integration tests, and visualization
+#   ./run_scenario.sh --test --timeout=300  # run tests with 300s pytest timeout
 #   ./run_scenario.sh --physics-single   # [legacy] run Python physics single-drone scenario
 #   ./run_scenario.sh --physics-swarm [N] # [legacy] run Python physics swarm scenario
 #   ./run_scenario.sh --physics-sim-only  # [legacy] run Python physics scenario (no GUI)
@@ -87,11 +88,11 @@ ensure_venv() {
 
     # pytest needed for --test/--all
     if [[ "${RUN_TESTS:-0}" == "1" ]] && ! python -c "import pytest" &>/dev/null; then
-        info "Installing pytest..."
+        info "Installing pytest + pytest-timeout..."
         if command -v uv &>/dev/null; then
-            uv pip install pytest
+            uv pip install pytest pytest-timeout
         else
-            pip install pytest
+            pip install pytest pytest-timeout
         fi
     fi
 
@@ -444,17 +445,35 @@ run_single_mission() {
 
 # ── Test & benchmark actions ─────────────────────────────────────────────────
 
-run_tests() {
+run_rust_tests() {
+    info "Running Rust unit tests..."
+    (cd "$ROOT_DIR/swarm_control" && cargo test)
+    ok "All Rust tests passed"
+}
+
+run_physics_tests() {
     info "Running drone physics tests..."
     python -m pytest "$SIM_DIR/test_drone_physics.py" -v
     ok "All physics tests passed"
+}
 
+run_integration_tests() {
     info "Running integration tests..."
-    python -m pytest "$ROOT_DIR/tests/test_integration_sitl.py" -v
-    python -m pytest "$ROOT_DIR/tests/test_integration_swarm_node.py" -v
-    python -m pytest "$ROOT_DIR/tests/test_integration_perception.py" -v
-    python -m pytest "$ROOT_DIR/tests/test_integration_zenoh.py" -v
+    local timeout_flag=()
+    if [ -n "$PYTEST_TIMEOUT" ]; then
+        timeout_flag=(--timeout="$PYTEST_TIMEOUT")
+    fi
+    python -m pytest "$ROOT_DIR/tests/test_integration_sitl.py" -v "${timeout_flag[@]}"
+    python -m pytest "$ROOT_DIR/tests/test_integration_swarm_node.py" -v "${timeout_flag[@]}"
+    python -m pytest "$ROOT_DIR/tests/test_integration_perception.py" -v "${timeout_flag[@]}"
+    python -m pytest "$ROOT_DIR/tests/test_integration_zenoh.py" -v "${timeout_flag[@]}"
     ok "All integration tests passed"
+}
+
+run_tests() {
+    run_rust_tests
+    run_physics_tests
+    run_integration_tests
 }
 
 run_scenario() {
@@ -496,6 +515,9 @@ run_real_log() {
 
 run_ci_local() {
     info "Running local CI/CD pipeline equivalent (.github/workflows/ci.yml)..."
+
+    info "[CI local] Rust test suite"
+    run_rust_tests
 
     info "[CI local] Physics test suite"
     python -m pytest "$SIM_DIR/test_drone_physics.py" -v --tb=short
@@ -545,8 +567,22 @@ run_sitl_viz() {
 }
 
 # ── Parse args ───────────────────────────────────────────────────────────────
-MODE="${1:---default}"
-SWARM_DRONES="${2:-6}"
+PYTEST_TIMEOUT=""
+POSITIONAL=()
+
+for arg in "$@"; do
+    case "$arg" in
+        --timeout=*)
+            PYTEST_TIMEOUT="${arg#--timeout=}"
+            ;;
+        *)
+            POSITIONAL+=("$arg")
+            ;;
+    esac
+done
+
+MODE="${POSITIONAL[0]:---default}"
+SWARM_DRONES="${POSITIONAL[1]:-6}"
 
 case "$MODE" in
     # ── Primary modes (Docker Compose per-drone stack) ──────────────────────
@@ -624,10 +660,16 @@ case "$MODE" in
         ;;
     --all)
         RUN_TESTS=1 NEED_PYMAVLINK=1 ensure_venv
-        run_tests
+        # Phase 1: offline tests & validation (no Docker needed)
+        run_rust_tests
+        run_physics_tests
         run_benchmark
         run_real_log
+        # Phase 2: Docker-based mission (starts containers)
         run_single_mission 300
+        # Phase 3: integration tests (containers now running)
+        run_integration_tests
+        # Phase 4: visualization
         run_single_viz
         ;;
     --benchmark)
@@ -665,7 +707,8 @@ case "$MODE" in
         echo "  --benchmark     Run deterministic benchmark validation gates"
         echo "  --real-log      Run real-log validation against paper Table 5"
         echo "  --ci-local      Run local CI/CD-equivalent pipeline (tests + all CI benchmarks)"
-        echo "  --all           Run tests, benchmark, single-drone stack, and visualization"
+        echo "  --all           Run tests, benchmarks, single-drone mission, integration tests, and viz"
+        echo "  --timeout=N     Set pytest timeout in seconds (default: no timeout)"
         echo "  --help          Show this help"
         echo ""
         echo "Per-Drone Stack (6 drones × 4 services = 24 containers):"

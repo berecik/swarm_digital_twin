@@ -1,7 +1,7 @@
 """Integration tests for swarm_node containers.
 
 Run with:
-    pytest tests/test_integration_swarm_node.py -v --timeout=120
+    pytest tests/test_integration_swarm_node.py -v --timeout=300
 
 Requires: docker compose stack with profile swarm_sitl running.
     docker compose --profile swarm_sitl up -d sitl_drone_1 swarm_node_1
@@ -15,6 +15,23 @@ import pytest
 COMPOSE_CMD = ["docker", "compose", "--profile", "swarm_sitl"]
 CONTAINER = "swarm_node_1"
 SITL_CONTAINER = "sitl_drone_1"
+
+
+def _wait_for_log(container: str, needle: str, timeout: int = 120) -> str | None:
+    """Poll docker logs until `needle` appears or `timeout` seconds elapse.
+
+    Returns the combined log output if found, or None on timeout.
+    """
+    for _ in range(timeout):
+        result = subprocess.run(
+            ["docker", "logs", container],
+            capture_output=True, text=True,
+        )
+        combined = result.stdout + result.stderr
+        if needle in combined:
+            return combined
+        time.sleep(1)
+    return None
 
 
 def _container_state(name: str) -> dict:
@@ -102,24 +119,18 @@ class TestSwarmNode:
 
     def test_zenoh_connected(self, swarm_node_up):
         """Node successfully connected to Zenoh."""
-        result = subprocess.run(
-            ["docker", "logs", CONTAINER],
-            capture_output=True, text=True,
-        )
-        combined = result.stdout + result.stderr
-        assert "Zenoh connected" in combined, (
-            "swarm_node_1 did not report 'Zenoh connected'"
+        combined = _wait_for_log(CONTAINER, "Zenoh connected", timeout=180)
+        assert combined is not None, (
+            "swarm_node_1 did not report 'Zenoh connected' within timeout "
+            "(binary may still be compiling)"
         )
 
     def test_control_loop_running(self, swarm_node_up):
         """Node entered main control loop."""
-        result = subprocess.run(
-            ["docker", "logs", CONTAINER],
-            capture_output=True, text=True,
-        )
-        combined = result.stdout + result.stderr
-        assert "Control loop running" in combined, (
-            "swarm_node_1 did not enter control loop"
+        combined = _wait_for_log(CONTAINER, "Control loop running", timeout=180)
+        assert combined is not None, (
+            "swarm_node_1 did not enter control loop within timeout "
+            "(binary may still be compiling)"
         )
 
     def test_no_panic(self, swarm_node_up):
