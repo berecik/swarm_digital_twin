@@ -12,25 +12,31 @@ fn test_driver_core_initial_state() {
 fn test_driver_core_transitions() {
     let mut core = DriverCore::new(5.0);
 
-    assert_eq!(core.tick(), vec![DriverAction::RequestOffboard]);
+    assert_eq!(core.tick_simple(), vec![DriverAction::RequestOffboard]);
 
     core.update_status(DriverStatus {
         nav_state: 14,
         arming_state: 0,
     });
-    assert_eq!(core.tick(), vec![DriverAction::RequestArm]);
+    assert_eq!(core.tick_simple(), vec![DriverAction::RequestArm]);
 
     core.update_status(DriverStatus {
         nav_state: 14,
         arming_state: 2,
     });
-    assert!(core.tick().is_empty());
+    assert!(core.tick_simple().is_empty());
+    assert_eq!(core.flight_state, FlightState::Takeoff);
 
-    let takeoff = core.tick();
+    // Publish takeoff setpoint (still climbing)
+    let takeoff = core.tick_simple();
     assert_eq!(
         takeoff,
         vec![DriverAction::PublishSetpoint(Vector3::new(0.0, 0.0, 5.0))]
     );
+
+    // Simulate reaching altitude, then transitions to Loiter
+    core.update_position(Vector3::new(0.0, 0.0, 5.0));
+    core.tick_simple();
     assert_eq!(core.flight_state, FlightState::Loiter);
 }
 

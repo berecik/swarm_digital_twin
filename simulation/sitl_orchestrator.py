@@ -319,6 +319,75 @@ def run_swarm(n_drones: int, base_port: int, port_step: int,
             drone.close()
 
 
+def run_swarm_formation(n_drones: int, base_port: int, port_step: int,
+                        timeout: float = 600,
+                        host: str = "127.0.0.1") -> bool:
+    """Run N SITL drones in offboard formation mode.
+
+    Unlike run_swarm(), this does NOT upload individual missions or switch to
+    AUTO.  The Rust swarm_node containers handle all flight control in offboard
+    mode using the shared swarm_mission.json.  This function only:
+      1. Connects to all SITL instances and waits for GPS/EKF
+      2. Monitors until all drones have disarmed (mission complete) or timeout
+    """
+    drones = []
+
+    try:
+        # Phase 1: Connect all drones
+        print(f"\n=== Connecting {n_drones} SITL drones (formation mode) ===")
+        for i in range(n_drones):
+            port = base_port + i * port_step
+            drone = SITLDrone(i, host, port)
+            drone.connect(timeout=30)
+            drone.request_streams(rate=2)
+            drones.append(drone)
+
+        # Phase 2: Wait for GPS/EKF
+        print(f"\n=== Waiting for GPS/EKF ({n_drones} drones) ===")
+        for drone in drones:
+            drone.wait_gps_ekf(timeout=90)
+
+        # Phase 3: Monitor — swarm_nodes handle offboard control
+        print(f"\n=== Formation flight active — monitoring "
+              f"(timeout={timeout}s) ===")
+        print(f"  Offboard control by swarm_node containers via Zenoh")
+
+        start = time.time()
+        active = {d.drone_id: d for d in drones}
+        completed = {}
+        last_status = 0
+
+        while active and (time.time() - start) < timeout:
+            for drone_id in list(active.keys()):
+                drone = active[drone_id]
+                result = drone.poll_once()
+                if result == "complete":
+                    elapsed = int(time.time() - start)
+                    print(f"  [drone_{drone_id}] Mission complete "
+                          f"after {elapsed}s")
+                    completed[drone_id] = True
+                    del active[drone_id]
+
+            elapsed = time.time() - start
+            if elapsed - last_status >= 10:
+                n_active = len(active)
+                n_done = len(completed)
+                print(f"  [{int(elapsed)}s] {n_active} flying, "
+                      f"{n_done} complete")
+                last_status = elapsed
+
+        for drone_id in active:
+            print(f"  [drone_{drone_id}] Timed out (still flying)")
+
+        n_ok = len(completed)
+        print(f"\n=== Formation results: {n_ok}/{n_drones} completed ===")
+        return n_ok == n_drones
+
+    finally:
+        for drone in drones:
+            drone.close()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SITL mission orchestrator")
     sub = parser.add_subparsers(dest="mode", required=True)
@@ -330,14 +399,24 @@ if __name__ == "__main__":
     sp.add_argument("--mission", required=True, help="QGC WPL mission file")
     sp.add_argument("--timeout", type=int, default=300)
 
-    # Swarm
-    sp = sub.add_parser("swarm", help="Multi-drone SITL swarm")
+    # Swarm (per-drone missions, AUTO mode)
+    sp = sub.add_parser("swarm", help="Multi-drone SITL swarm (individual missions)")
     sp.add_argument("--host", default="127.0.0.1")
     sp.add_argument("--n", type=int, required=True, help="Number of drones")
     sp.add_argument("--base-port", type=int, default=5760)
     sp.add_argument("--port-step", type=int, default=10)
     sp.add_argument("--mission-dir", required=True, help="Dir with drone_N.waypoints")
     sp.add_argument("--timeout", type=int, default=600)
+
+    # Swarm formation (offboard, Rust swarm_nodes control)
+    sp = sub.add_parser("swarm-formation",
+                        help="Multi-drone formation flight (offboard mode)")
+    sp.add_argument("--host", default="127.0.0.1")
+    sp.add_argument("--n", type=int, required=True, help="Number of drones")
+    sp.add_argument("--base-port", type=int, default=5760)
+    sp.add_argument("--port-step", type=int, default=10)
+    sp.add_argument("--timeout", type=int, default=86400,
+                    help="Timeout in seconds (default: 86400 = 24h, effectively no limit)")
 
     args = parser.parse_args()
 
@@ -351,3 +430,7 @@ if __name__ == "__main__":
         n_total = len(results)
         print(f"\n=== Swarm results: {n_ok}/{n_total} completed ===")
         sys.exit(0 if n_ok == n_total else 4)
+    elif args.mode == "swarm-formation":
+        ok = run_swarm_formation(args.n, args.base_port, args.port_step,
+                                 args.timeout, args.host)
+        sys.exit(0 if ok else 4)

@@ -202,10 +202,13 @@ mod tests {
         let mut transport = InProcessTransport::new(0.2);
 
         // Run through the FSM until loiter
-        for _ in 0..10 {
+        for _ in 0..50 {
             let status = transport.recv_status().unwrap();
             core.update_status(status);
-            let actions = core.tick();
+            // Feed transport position back into driver for takeoff detection
+            let pos = transport.position;
+            core.update_position(nalgebra::Vector3::new(pos[0], pos[1], pos[2]));
+            let actions = core.tick_simple();
             transport.send_actions(&actions).unwrap();
         }
 
