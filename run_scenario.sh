@@ -5,31 +5,23 @@
 # Company: Marysia Software Limited <ceo@marysia.app>
 # Website: https://marysia.app
 #
-# Per-Drone Stack (6 drones × 4 services each = 24 containers):
-#   sitl_drone_N      — Pixhawk simulator with Micro-XRCE-DDS Agent
-#   swarm_node_N      — Rust swarm control logic
-#   perception_node_N — Vision pipeline (Python)
-#   zenoh_bridge_N    — Mesh networking router
+# Supports two orchestration backends (auto-detected or --backend= flag):
+#   Docker Compose: 6 drones × 4 services = 24 containers
+#   Kubernetes + Helm: StatefulSet with 4-container pods + zenoh router
+#
+# Per-Drone Stack:
+#   Docker:  sitl_drone_N / swarm_node_N / perception_node_N / zenoh_bridge_N
+#   K8s:     sitl / swarm-node / perception / zenoh-bridge (in pod drone-N)
 #
 # Usage:
-#   ./run_scenario.sh              # run single-drone stack (4 containers) then visualize
-#   ./run_scenario.sh --single     # run single-drone stack (4 containers) then visualize
-#   ./run_scenario.sh --swarm [N]  # run N-drone stack (default: 6, N×4 containers) then visualize
-#   ./run_scenario.sh --sim-only   # run single-drone stack only (no GUI)
-#   ./run_scenario.sh --swarm-only [N] # run N-drone stack only (no GUI)
-#   ./run_scenario.sh --status     # show health of running swarm containers
-#   ./run_scenario.sh --down       # tear down all swarm containers
-#   ./run_scenario.sh --viz-only   # open visualization (using existing data)
-#   ./run_scenario.sh --sitl-viz [F] # visualize SITL .BIN flight log (newest or specified file)
-#   ./run_scenario.sh --test       # run physics + integration tests
-#   ./run_scenario.sh --benchmark  # run deterministic benchmark validation gates
-#   ./run_scenario.sh --real-log   # run real-log validation against paper Table 5
-#   ./run_scenario.sh --ci-local   # run local CI/CD-equivalent pipeline (tests + all benchmarks)
-#   ./run_scenario.sh --all        # run tests, benchmarks, single-drone mission, integration tests, and visualization
-#   ./run_scenario.sh --test --timeout=300  # run tests with 300s pytest timeout
-#   ./run_scenario.sh --physics-single   # [legacy] run Python physics single-drone scenario
-#   ./run_scenario.sh --physics-swarm [N] # [legacy] run Python physics swarm scenario
-#   ./run_scenario.sh --physics-sim-only  # [legacy] run Python physics scenario (no GUI)
+#   ./run_scenario.sh                          # single-drone then visualize
+#   ./run_scenario.sh --swarm [N]              # N-drone formation flight
+#   ./run_scenario.sh --swarm 2 --backend=k8s  # deploy to Kubernetes
+#   ./run_scenario.sh --status                 # show health of running stack
+#   ./run_scenario.sh --down                   # tear down stack
+#   ./run_scenario.sh --test                   # run physics + integration tests
+#   ./run_scenario.sh --test --timeout=300     # with pytest timeout
+#   ./run_scenario.sh --help                   # full usage
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -61,6 +53,220 @@ SERVICE_SITL="sitl_drone"
 SERVICE_SWARM="swarm_node"
 SERVICE_PERCEPTION="perception_node"
 SERVICE_ZENOH="zenoh_bridge"
+
+# Kubernetes / Helm
+HELM_CHART="$ROOT_DIR/helm/swarm-digital-twin"
+K8S_NAMESPACE="swarm"
+HELM_RELEASE="swarm"
+K8S_STS_NAME="swarm-swarm-digital-twin"
+
+# ── Backend detection ─────────────────────────────────────────────────────
+
+detect_backend() {
+    # Explicit BACKEND already set (from --backend= flag)
+    if [ -n "${BACKEND:-}" ]; then
+        echo "$BACKEND"
+        return
+    fi
+    # Default: k8s (uses current kubectl context)
+    echo "k8s"
+}
+
+# ── Kubernetes helpers ────────────────────────────────────────────────────
+
+k8s_pod_name() {
+    local ordinal="$1"
+    echo "${K8S_STS_NAME}-${ordinal}"
+}
+
+k8s_ensure_images() {
+    local registry="${SWARM_REGISTRY:-ghcr.io/berecik}"
+    local tag="${SWARM_IMAGE_TAG:-latest}"
+
+    local sitl_remote="${registry}/ardupilot-sitl:${tag}"
+    local companion_remote="${registry}/swarm_companion:${tag}"
+
+    # Check if images exist in registry (pull test)
+    local need_build=false
+    if ! docker manifest inspect "$sitl_remote" &>/dev/null; then
+        need_build=true
+    fi
+    if ! docker manifest inspect "$companion_remote" &>/dev/null; then
+        need_build=true
+    fi
+
+    if [ "$need_build" = true ]; then
+        info "Images not found in registry, building and pushing..."
+        "$ROOT_DIR/scripts/push_images.sh" --registry "$registry" --tag "$tag"
+    else
+        ok "Images already in registry: $registry"
+    fi
+}
+
+k8s_swarm_up() {
+    local n="${1:-$MAX_DRONES}"
+    local mission_file="${2:-}"
+    local log_dir="$ROOT_DIR/logs/swarm_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$log_dir"
+
+    k8s_ensure_images
+
+    info "Deploying ${n}-drone Helm release..."
+
+    local helm_args=(
+        upgrade --install "$HELM_RELEASE" "$HELM_CHART"
+        -n "$K8S_NAMESPACE" --create-namespace
+        --set "drones=$n"
+    )
+
+    # Deploy mission config via --set-file if provided
+    if [ -n "$mission_file" ] && [ -f "$mission_file" ]; then
+        helm_args+=(--set-file "missionConfig=$mission_file")
+    fi
+
+    # Use local values if minikube/kind detected
+    if command -v minikube &>/dev/null && minikube status --format='{{.Host}}' 2>/dev/null | grep -q Running; then
+        helm_args+=(-f "$HELM_CHART/values-local.yaml" --set "drones=$n")
+    elif command -v kind &>/dev/null && kind get clusters 2>/dev/null | grep -q .; then
+        helm_args+=(-f "$HELM_CHART/values-local.yaml" --set "drones=$n")
+    fi
+
+    helm "${helm_args[@]}" 2>&1 | tail -10 >&2
+
+    k8s_wait_swarm_healthy "$n" 300
+
+    ok "Helm release deployed (${n} drone pods)"
+    echo "" >&2
+    k8s_swarm_status "$n"
+
+    echo "$n" > "$log_dir/.drone_count"
+    echo "$log_dir"
+}
+
+k8s_swarm_down() {
+    info "Uninstalling Helm release..."
+    helm uninstall "$HELM_RELEASE" -n "$K8S_NAMESPACE" 2>/dev/null || true
+    ok "Helm release uninstalled"
+}
+
+k8s_wait_swarm_healthy() {
+    local n="${1:-$MAX_DRONES}"
+    local timeout="${2:-300}"
+
+    info "Waiting for ${n} drone pods to become ready (timeout: ${timeout}s)..."
+
+    # Wait for StatefulSet rollout
+    kubectl rollout status statefulset/"$K8S_STS_NAME" \
+        -n "$K8S_NAMESPACE" --timeout="${timeout}s" 2>&1 | tail -5 >&2 || true
+
+    # Additionally wait for all pods to be Ready
+    local elapsed=0
+    while [ $elapsed -lt "$timeout" ]; do
+        local ready
+        ready=$(kubectl get statefulset "$K8S_STS_NAME" \
+            -n "$K8S_NAMESPACE" \
+            -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+        ready="${ready:-0}"
+        if [ "$ready" -ge "$n" ]; then
+            ok "All $n drone pods ready"
+            return 0
+        fi
+        sleep 3
+        elapsed=$((elapsed + 3))
+    done
+
+    warn "Only ${ready:-0} of $n pods ready after ${timeout}s"
+    return 1
+}
+
+k8s_swarm_status() {
+    local n="${1:-$MAX_DRONES}"
+
+    echo -e "${BOLD}┌────────┬───────────┬───────────────┬───────────────┬────────────────┬───────────────┐${NC}" >&2
+    echo -e "${BOLD}│ Drone  │ Pod       │ sitl          │ swarm-node    │ perception     │ zenoh-bridge  │${NC}" >&2
+    echo -e "${BOLD}├────────┼───────────┼───────────────┼───────────────┼────────────────┼───────────────┤${NC}" >&2
+
+    for i in $(seq 0 $((n - 1))); do
+        local drone_id=$((i + 1))
+        local pod
+        pod=$(k8s_pod_name "$i")
+
+        local pod_json
+        pod_json=$(kubectl get pod "$pod" -n "$K8S_NAMESPACE" -o json 2>/dev/null || echo "{}")
+
+        local sitl_status swarm_status percep_status zenoh_status
+        sitl_status=$(k8s_container_status_icon "$pod_json" "sitl")
+        swarm_status=$(k8s_container_status_icon "$pod_json" "swarm-node")
+        percep_status=$(k8s_container_status_icon "$pod_json" "perception")
+        zenoh_status=$(k8s_container_status_icon "$pod_json" "zenoh-bridge")
+
+        printf "│   %-4s │ %-9s │  %-12s │  %-12s │  %-13s │  %-12s │\n" \
+            "$drone_id" "$pod" "$sitl_status" "$swarm_status" "$percep_status" "$zenoh_status" >&2
+    done
+
+    echo -e "${BOLD}└────────┴───────────┴───────────────┴───────────────┴────────────────┴───────────────┘${NC}" >&2
+
+    local ready
+    ready=$(kubectl get statefulset "$K8S_STS_NAME" \
+        -n "$K8S_NAMESPACE" \
+        -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    echo -e "  Ready pods: ${BOLD}${ready:-0}${NC} / $n" >&2
+}
+
+k8s_container_status_icon() {
+    local pod_json="$1"
+    local container="$2"
+
+    if [ "$pod_json" = "{}" ]; then
+        echo -e "${RED}DOWN${NC}"
+        return
+    fi
+
+    local ready state
+    ready=$(echo "$pod_json" | python3 -c "
+import sys, json
+pod = json.load(sys.stdin)
+for cs in pod.get('status', {}).get('containerStatuses', []):
+    if cs['name'] == '$container':
+        print('true' if cs.get('ready') else 'false')
+        break
+else:
+    print('missing')
+" 2>/dev/null || echo "missing")
+
+    case "$ready" in
+        true)  echo -e "${GREEN}ready${NC}" ;;
+        false) echo -e "${YELLOW}not-ready${NC}" ;;
+        *)     echo -e "${RED}missing${NC}" ;;
+    esac
+}
+
+k8s_swarm_cleanup() {
+    if [ "$_SWARM_CLEANUP_DONE" = false ]; then
+        _SWARM_CLEANUP_DONE=true
+        info "Capturing pod logs before teardown..."
+
+        local n="${_CLEANUP_DRONE_COUNT:-0}"
+        local log_dir="${_CLEANUP_LOG_DIR:-}"
+
+        if [ "$n" -gt 0 ] && [ -n "$log_dir" ]; then
+            for i in $(seq 0 $((n - 1))); do
+                local drone_id=$((i + 1))
+                local drone_log_dir="$log_dir/drone_${drone_id}"
+                mkdir -p "$drone_log_dir"
+                local pod
+                pod=$(k8s_pod_name "$i")
+                kubectl logs "$pod" -n "$K8S_NAMESPACE" -c swarm-node > "$drone_log_dir/swarm_node.log" 2>&1 || true
+                kubectl logs "$pod" -n "$K8S_NAMESPACE" -c perception > "$drone_log_dir/perception_node.log" 2>&1 || true
+                kubectl logs "$pod" -n "$K8S_NAMESPACE" -c zenoh-bridge > "$drone_log_dir/zenoh_bridge.log" 2>&1 || true
+                kubectl logs "$pod" -n "$K8S_NAMESPACE" -c sitl > "$drone_log_dir/sitl_drone.log" 2>&1 || true
+            done
+            ok "Logs saved to $log_dir"
+        fi
+
+        k8s_swarm_down
+    fi
+}
 
 # ── Virtual environment ──────────────────────────────────────────────────────
 ensure_venv() {
@@ -198,6 +404,14 @@ wait_swarm_healthy() {
 
 swarm_up() {
     local n="${1:-$MAX_DRONES}"
+    local backend
+    backend=$(detect_backend)
+
+    if [ "$backend" = "k8s" ]; then
+        k8s_swarm_up "$n"
+        return
+    fi
+
     local log_dir="$ROOT_DIR/logs/swarm_$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$log_dir"
 
@@ -233,6 +447,14 @@ swarm_up() {
 }
 
 swarm_down() {
+    local backend
+    backend=$(detect_backend)
+
+    if [ "$backend" = "k8s" ]; then
+        k8s_swarm_down
+        return
+    fi
+
     info "Tearing down swarm stack..."
     cd "$ROOT_DIR"
     $COMPOSE_CMD --profile "$COMPOSE_PROFILE" down --timeout 15 2>&1 | tail -5
@@ -241,6 +463,13 @@ swarm_down() {
 
 swarm_status() {
     local n="${1:-$MAX_DRONES}"
+    local backend
+    backend=$(detect_backend)
+
+    if [ "$backend" = "k8s" ]; then
+        k8s_swarm_status "$n"
+        return
+    fi
 
     echo -e "${BOLD}┌────────┬──────────┬───────────────┬───────────────┬────────────────┬───────────────┐${NC}" >&2
     echo -e "${BOLD}│ Drone  │ Domain   │ sitl_drone    │ swarm_node    │ perception     │ zenoh_bridge  │${NC}" >&2
@@ -295,6 +524,14 @@ _CLEANUP_LOG_DIR=""
 _SWARM_CLEANUP_DONE=false
 
 swarm_cleanup() {
+    local backend
+    backend=$(detect_backend)
+
+    if [ "$backend" = "k8s" ]; then
+        k8s_swarm_cleanup
+        return
+    fi
+
     if [ "$_SWARM_CLEANUP_DONE" = false ]; then
         _SWARM_CLEANUP_DONE=true
         info "Capturing logs before shutdown..."
@@ -321,18 +558,12 @@ swarm_cleanup() {
 run_swarm_mission() {
     local n="${1:-$MAX_DRONES}"
     local timeout="${2:-}"
-    local log_dir
-
-    log_dir=$(swarm_up "$n")
-
-    # Set globals for trap handler
-    _CLEANUP_DRONE_COUNT="$n"
-    _CLEANUP_LOG_DIR="$log_dir"
-    _SWARM_CLEANUP_DONE=false
-    trap swarm_cleanup EXIT
+    local backend
+    backend=$(detect_backend)
 
     # Generate formation mission config (shared by all swarm_nodes)
-    local mission_json="$log_dir/swarm_mission.json"
+    local tmp_mission="$ROOT_DIR/logs/.swarm_mission_tmp.json"
+    mkdir -p "$ROOT_DIR/logs"
     info "Generating formation mission for $n drones..."
     python "$SIM_DIR/sitl_waypoints.py" formation \
         --n "$n" \
@@ -340,13 +571,27 @@ run_swarm_mission() {
         --altitude 20 \
         --patrol-size 40 \
         --cruise-speed 4.0 \
-        --output "$mission_json"
+        --output "$tmp_mission"
 
-    # Copy mission config into each swarm_node container
-    for i in $(seq 1 "$n"); do
-        docker cp "$mission_json" "${SERVICE_SWARM}_${i}:/root/workspace/swarm_mission.json" 2>/dev/null || true
-    done
-    info "Formation config deployed to $n swarm_node containers"
+    local log_dir
+    if [ "$backend" = "k8s" ]; then
+        # K8s: deploy via Helm with mission config baked into ConfigMap
+        log_dir=$(k8s_swarm_up "$n" "$tmp_mission")
+    else
+        # Docker: start stack then copy config into containers
+        log_dir=$(swarm_up "$n")
+        cp "$tmp_mission" "$log_dir/swarm_mission.json"
+        for i in $(seq 1 "$n"); do
+            docker cp "$tmp_mission" "${SERVICE_SWARM}_${i}:/root/workspace/swarm_mission.json" 2>/dev/null || true
+        done
+        info "Formation config deployed to $n swarm_node containers"
+    fi
+
+    # Set globals for trap handler
+    _CLEANUP_DRONE_COUNT="$n"
+    _CLEANUP_LOG_DIR="$log_dir"
+    _SWARM_CLEANUP_DONE=false
+    trap swarm_cleanup EXIT
 
     # Run formation orchestrator (SITL GPS init + offboard monitoring)
     local timeout_flag=()
@@ -363,12 +608,18 @@ run_swarm_mission() {
         --port-step 10 \
         "${timeout_flag[@]}" || true
 
-    # Merge logs into swarm_data.npz if BIN logs exist
+    # Capture SITL logs
     local log_dirs=()
     for i in $(seq 1 "$n"); do
         local drone_log_dir="$log_dir/drone_${i}"
         mkdir -p "$drone_log_dir"
-        docker cp "${SERVICE_SITL}_${i}:/sitl/logs/." "$drone_log_dir/" 2>/dev/null || true
+        if [ "$backend" = "k8s" ]; then
+            local pod
+            pod=$(k8s_pod_name $((i - 1)))
+            kubectl cp "$K8S_NAMESPACE/$pod:/sitl/logs/." "$drone_log_dir/" -c sitl 2>/dev/null || true
+        else
+            docker cp "${SERVICE_SITL}_${i}:/sitl/logs/." "$drone_log_dir/" 2>/dev/null || true
+        fi
         local bin_count
         bin_count=$(find "$drone_log_dir" -name "*.BIN" 2>/dev/null | wc -l | tr -d ' ')
         if [ "$bin_count" -gt 0 ]; then
@@ -390,27 +641,42 @@ _SINGLE_CLEANUP_DONE=false
 single_cleanup() {
     if [ "$_SINGLE_CLEANUP_DONE" = false ]; then
         _SINGLE_CLEANUP_DONE=true
+        local backend
+        backend=$(detect_backend)
         local log_dir="${_CLEANUP_LOG_DIR:-}"
 
         if [ -n "$log_dir" ]; then
             info "Capturing logs..."
             local drone_log_dir="$log_dir/drone_1"
             mkdir -p "$drone_log_dir"
-            docker logs "${SERVICE_SWARM}_1" > "$drone_log_dir/swarm_node.log" 2>&1 || true
-            docker logs "${SERVICE_PERCEPTION}_1" > "$drone_log_dir/perception_node.log" 2>&1 || true
-            docker logs "${SERVICE_ZENOH}_1" > "$drone_log_dir/zenoh_bridge.log" 2>&1 || true
-            docker logs "${SERVICE_SITL}_1" > "$drone_log_dir/sitl_drone.log" 2>&1 || true
+            if [ "$backend" = "k8s" ]; then
+                local pod
+                pod=$(k8s_pod_name 0)
+                kubectl logs "$pod" -n "$K8S_NAMESPACE" -c swarm-node > "$drone_log_dir/swarm_node.log" 2>&1 || true
+                kubectl logs "$pod" -n "$K8S_NAMESPACE" -c perception > "$drone_log_dir/perception_node.log" 2>&1 || true
+                kubectl logs "$pod" -n "$K8S_NAMESPACE" -c zenoh-bridge > "$drone_log_dir/zenoh_bridge.log" 2>&1 || true
+                kubectl logs "$pod" -n "$K8S_NAMESPACE" -c sitl > "$drone_log_dir/sitl_drone.log" 2>&1 || true
+            else
+                docker logs "${SERVICE_SWARM}_1" > "$drone_log_dir/swarm_node.log" 2>&1 || true
+                docker logs "${SERVICE_PERCEPTION}_1" > "$drone_log_dir/perception_node.log" 2>&1 || true
+                docker logs "${SERVICE_ZENOH}_1" > "$drone_log_dir/zenoh_bridge.log" 2>&1 || true
+                docker logs "${SERVICE_SITL}_1" > "$drone_log_dir/sitl_drone.log" 2>&1 || true
+            fi
             ok "Logs saved to $log_dir"
         fi
 
-        info "Stopping single-drone stack..."
-        cd "$ROOT_DIR"
-        local services
-        services=$(drone_services 1)
-        # shellcheck disable=SC2086
-        $COMPOSE_CMD --profile "$COMPOSE_PROFILE" stop $services 2>/dev/null || true
-        # shellcheck disable=SC2086
-        $COMPOSE_CMD --profile "$COMPOSE_PROFILE" rm -f $services 2>/dev/null || true
+        if [ "$backend" = "k8s" ]; then
+            k8s_swarm_down
+        else
+            info "Stopping single-drone stack..."
+            cd "$ROOT_DIR"
+            local services
+            services=$(drone_services 1)
+            # shellcheck disable=SC2086
+            $COMPOSE_CMD --profile "$COMPOSE_PROFILE" stop $services 2>/dev/null || true
+            # shellcheck disable=SC2086
+            $COMPOSE_CMD --profile "$COMPOSE_PROFILE" rm -f $services 2>/dev/null || true
+        fi
     fi
 }
 
@@ -442,7 +708,15 @@ run_single_mission() {
     # Capture flight logs
     local drone_log_dir="$log_dir/drone_1"
     mkdir -p "$drone_log_dir"
-    docker cp "${SERVICE_SITL}_1:/sitl/logs/." "$drone_log_dir/" 2>/dev/null || true
+    local backend
+    backend=$(detect_backend)
+    if [ "$backend" = "k8s" ]; then
+        local pod
+        pod=$(k8s_pod_name 0)
+        kubectl cp "$K8S_NAMESPACE/$pod:/sitl/logs/." "$drone_log_dir/" -c sitl 2>/dev/null || true
+    else
+        docker cp "${SERVICE_SITL}_1:/sitl/logs/." "$drone_log_dir/" 2>/dev/null || true
+    fi
 
     local newest_bin
     newest_bin=$(find "$drone_log_dir" -name "*.BIN" -type f 2>/dev/null | \
@@ -478,11 +752,15 @@ run_integration_tests() {
     if [ -n "$PYTEST_TIMEOUT" ]; then
         timeout_flag=(--timeout="$PYTEST_TIMEOUT")
     fi
-    python -m pytest "$ROOT_DIR/tests/test_integration_sitl.py" -v "${timeout_flag[@]}"
-    python -m pytest "$ROOT_DIR/tests/test_integration_swarm_node.py" -v "${timeout_flag[@]}"
-    python -m pytest "$ROOT_DIR/tests/test_integration_perception.py" -v "${timeout_flag[@]}"
-    python -m pytest "$ROOT_DIR/tests/test_integration_zenoh.py" -v "${timeout_flag[@]}"
-    python -m pytest "$ROOT_DIR/tests/test_integration_swarm_formation.py" -v "${timeout_flag[@]}"
+    local backend_flag=()
+    local backend
+    backend=$(detect_backend)
+    backend_flag=(--backend="$backend")
+    python -m pytest "$ROOT_DIR/tests/test_integration_sitl.py" -v "${timeout_flag[@]}" "${backend_flag[@]}"
+    python -m pytest "$ROOT_DIR/tests/test_integration_swarm_node.py" -v "${timeout_flag[@]}" "${backend_flag[@]}"
+    python -m pytest "$ROOT_DIR/tests/test_integration_perception.py" -v "${timeout_flag[@]}" "${backend_flag[@]}"
+    python -m pytest "$ROOT_DIR/tests/test_integration_zenoh.py" -v "${timeout_flag[@]}" "${backend_flag[@]}"
+    python -m pytest "$ROOT_DIR/tests/test_integration_swarm_formation.py" -v "${timeout_flag[@]}" "${backend_flag[@]}"
     ok "All integration tests passed"
 }
 
@@ -584,12 +862,16 @@ run_sitl_viz() {
 
 # ── Parse args ───────────────────────────────────────────────────────────────
 PYTEST_TIMEOUT=""
+BACKEND=""
 POSITIONAL=()
 
 for arg in "$@"; do
     case "$arg" in
         --timeout=*)
             PYTEST_TIMEOUT="${arg#--timeout=}"
+            ;;
+        --backend=*)
+            BACKEND="${arg#--backend=}"
             ;;
         *)
             POSITIONAL+=("$arg")
@@ -699,22 +981,25 @@ case "$MODE" in
 
     # ── Help ─────────────────────────────────────────────────────────────────
     --help|-h)
-        echo "Usage: $0 [MODE]"
+        echo "Usage: $0 [MODE] [OPTIONS]"
         echo ""
-        echo "Docker Compose per-drone stack (default — requires Docker):"
-        echo "  (default)       Run single-drone stack (4 containers) then visualize"
-        echo "  --single        Run single-drone stack (4 containers) then visualize"
-        echo "  --swarm [N]     Run N-drone formation flight (default: 6, max: 6) then visualize"
+        echo "Orchestration backend (default: k8s, uses current kubectl context):"
+        echo "  --backend=k8s      Use Kubernetes + Helm (default)"
+        echo "  --backend=docker   Use Docker Compose"
+        echo ""
+        echo "Per-drone stack modes (Docker or K8s):"
+        echo "  (default)       Run single-drone stack then visualize"
+        echo "  --single        Run single-drone stack then visualize"
+        echo "  --swarm [N]     Run N-drone formation flight (default: 6) then visualize"
         echo "                  Drones fly as swarm in ring formation, offboard-controlled via Zenoh"
-        echo "                  Each drone: sitl_drone_N + swarm_node_N + perception_node_N + zenoh_bridge_N"
         echo "  --sim-only      Run single-drone stack only (no GUI)"
         echo "  --swarm-only [N] Run N-drone stack only (no GUI)"
-        echo "  --status [N]    Show health status of running containers"
-        echo "  --down          Tear down all swarm containers"
+        echo "  --status [N]    Show health status of running containers/pods"
+        echo "  --down          Tear down all swarm containers/pods"
         echo "  --viz-only      Open visualization (uses existing data)"
         echo "  --sitl-viz [F]  Visualize newest SITL .BIN log (or specify path)"
         echo ""
-        echo "Legacy physics simulation (no Docker needed):"
+        echo "Legacy physics simulation (no Docker/K8s needed):"
         echo "  --physics-single     Run Python physics single-drone scenario + visualize"
         echo "  --physics-swarm [N]  Run Python physics swarm for N drones (default: 6)"
         echo "  --physics-sim-only   Run Python physics scenario only (no GUI)"
@@ -728,11 +1013,18 @@ case "$MODE" in
         echo "  --timeout=N     Set pytest timeout in seconds (default: no timeout)"
         echo "  --help          Show this help"
         echo ""
-        echo "Per-Drone Stack (6 drones × 4 services = 24 containers):"
+        echo "Docker backend — per-drone stack (6 drones x 4 services = 24 containers):"
         echo "  sitl_drone_N      — Pixhawk sim + Micro-XRCE-DDS Agent (ROS_DOMAIN_ID=N)"
         echo "  swarm_node_N      — Rust swarm control (restart: always, healthcheck)"
         echo "  perception_node_N — Python vision pipeline (restart: always, healthcheck)"
         echo "  zenoh_bridge_N    — Mesh networking router (restart: unless-stopped)"
+        echo ""
+        echo "K8s backend — StatefulSet with 4-container pods:"
+        echo "  sitl          — ArduPilot SITL (ardupilot-sitl:latest)"
+        echo "  swarm-node    — Rust swarm control (swarm_companion:latest)"
+        echo "  perception    — Python vision pipeline (swarm_companion:latest)"
+        echo "  zenoh-bridge  — Zenoh-ROS2-DDS bridge (eclipse/zenoh-bridge-ros2dds:latest)"
+        echo "  + zenoh-router Deployment for cross-pod Zenoh mesh"
         ;;
 
     # ── Default (no args) ────────────────────────────────────────────────────

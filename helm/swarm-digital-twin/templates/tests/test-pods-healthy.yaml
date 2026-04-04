@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "swarm.fullname" . }}-test
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "swarm.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: {{ .Values.images.initContainer.repository }}:{{ .Values.images.initContainer.tag }}
+      command: ["sh", "-c"]
+      args:
+        - |
+          set -e
+          echo "Checking StatefulSet readyReplicas..."
+
+          # Use kubernetes API via service account
+          TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          NS={{ .Values.namespace }}
+          STS_NAME={{ include "swarm.fullname" . }}
+
+          READY=$(wget -qO- \
+            --header "Authorization: Bearer $TOKEN" \
+            --ca-certificate "$CACERT" \
+            "https://kubernetes.default.svc/apis/apps/v1/namespaces/${NS}/statefulsets/${STS_NAME}" \
+            2>/dev/null | grep -o '"readyReplicas":[0-9]*' | cut -d: -f2)
+
+          EXPECTED={{ .Values.drones }}
+          echo "Ready: ${READY:-0} / Expected: $EXPECTED"
+
+          if [ "${READY:-0}" -ge "$EXPECTED" ]; then
+            echo "PASS: All $EXPECTED drone pods are ready"
+            exit 0
+          else
+            echo "FAIL: Only ${READY:-0} of $EXPECTED pods ready"
+            exit 1
+          fi

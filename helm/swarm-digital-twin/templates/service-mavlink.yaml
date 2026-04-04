@@ -1,0 +1,26 @@
+{{- $fullname := include "swarm.fullname" . }}
+{{- range $i := until (int .Values.drones) }}
+{{- $droneId := add1 $i }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-mavlink-{{ $droneId }}
+  namespace: {{ $.Values.namespace }}
+  labels:
+    {{- include "swarm.labels" $ | nindent 4 }}
+    app.marysia.drone/drone-id: {{ $droneId | quote }}
+spec:
+  type: {{ $.Values.service.mavlink.type }}
+  ports:
+    - name: mavlink
+      port: 5760
+      targetPort: mavlink
+      protocol: TCP
+      {{- if eq $.Values.service.mavlink.type "NodePort" }}
+      nodePort: {{ add $.Values.service.mavlink.baseNodePort (mul $i $.Values.service.mavlink.nodePortStep) }}
+      {{- end }}
+  selector:
+    {{- include "swarm.selectorLabels" $ | nindent 4 }}
+    statefulset.kubernetes.io/pod-name: {{ $fullname }}-{{ $i }}
+{{- end }}

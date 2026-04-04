@@ -1,0 +1,92 @@
+# Default values for swarm-digital-twin
+# Override with values-local.yaml (minikube/kind) or values-cloud.yaml (EKS/GKE/AKS)
+
+namespace: swarm
+
+drones: 6
+
+images:
+  sitl:
+    repository: ghcr.io/berecik/ardupilot-sitl
+    tag: latest
+    pullPolicy: IfNotPresent
+  companion:
+    repository: ghcr.io/berecik/swarm_companion
+    tag: latest
+    pullPolicy: IfNotPresent
+  zenohBridge:
+    repository: eclipse/zenoh-bridge-ros2dds
+    tag: latest
+    pullPolicy: IfNotPresent
+  zenohRouter:
+    repository: eclipse/zenoh
+    tag: latest
+    pullPolicy: IfNotPresent
+  initContainer:
+    repository: busybox
+    tag: "1.36"
+    pullPolicy: IfNotPresent
+
+# SITL simulation parameters
+sitl:
+  lat: "-0.508333"
+  lng: "-78.141667"
+  alt: "4500"
+  vehicle: copter
+
+# Formation mission config (can be overridden with --set-file missionConfig=path)
+missionConfig: "{}"
+
+# Resource limits per container
+resources:
+  sitl:
+    requests:
+      cpu: 500m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  swarmNode:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  perception:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  zenohBridge:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  zenohRouter:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# Service configuration
+service:
+  mavlink:
+    type: NodePort
+    baseNodePort: 30760
+    nodePortStep: 10
+
+# Node selector (SITL requires x86_64)
+nodeSelector:
+  kubernetes.io/arch: amd64
+
+# Zenoh router
+zenohRouter:
+  enabled: true
+  port: 7447

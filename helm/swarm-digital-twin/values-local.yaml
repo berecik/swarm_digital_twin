@@ -1,0 +1,41 @@
+# values-local.yaml — minikube / kind overrides
+# Usage: helm install swarm ./helm/swarm-digital-twin -f ./helm/swarm-digital-twin/values-local.yaml
+
+drones: 2
+
+images:
+  sitl:
+    repository: ardupilot-sitl
+    tag: latest
+    pullPolicy: Never
+  companion:
+    repository: swarm_companion
+    tag: latest
+    pullPolicy: Never
+
+resources:
+  sitl:
+    requests:
+      cpu: 250m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  swarmNode:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  perception:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+service:
+  mavlink:
+    type: NodePort

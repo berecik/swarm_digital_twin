@@ -18,7 +18,14 @@ pub struct ZenohManager {
 
 impl ZenohManager {
     pub async fn new(drone_id: String) -> Self {
-        let session = zenoh::open(zenoh::Config::default()).await.unwrap();
+        let config = match std::env::var("ZENOH_CONFIG") {
+            Ok(path) => zenoh::Config::from_file(&path).unwrap_or_else(|e| {
+                eprintln!("Failed to load zenoh config from {path}: {e}, using default");
+                zenoh::Config::default()
+            }),
+            Err(_) => zenoh::Config::default(),
+        };
+        let session = zenoh::open(config).await.unwrap();
         let neighbors = Arc::new(Mutex::new(HashMap::new()));
         let namespace = format!("swarm/{}/", drone_id);
 

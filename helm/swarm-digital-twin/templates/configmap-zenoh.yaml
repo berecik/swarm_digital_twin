@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "swarm.fullname" . }}-zenoh
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "swarm.labels" . | nindent 4 }}
+data:
+  {{- $routerService := include "swarm.zenohRouterServiceName" . }}
+  {{- $routerPort := .Values.zenohRouter.port }}
+  {{- range $i := until (int .Values.drones) }}
+  {{- $droneId := add1 $i }}
+  drone_{{ $droneId }}.json5: |
+    {
+      "mode": "peer",
+      "metadata": {
+        "author": "beret@hipisi.org.pl",
+        "company": "Marysia Software Limited",
+        "domain": "app.marysia.drone",
+        "website": "https://marysia.app"
+      },
+      "connect": {
+        "endpoints": ["tcp/{{ $routerService }}:{{ $routerPort }}"]
+      },
+      "scouting": {
+        "multicast": { "enabled": false }
+      },
+      "timestamping": {
+        "enabled": { "egress": true, "ingress": true }
+      },
+      "namespace": "/swarm/drone_{{ $droneId }}",
+      "allow": {
+        "publications": [
+          "/swarm/drone_{{ $droneId }}/state",
+          "/swarm/drone_{{ $droneId }}/consensus/propose",
+          "/swarm/drone_{{ $droneId }}/consensus/raft_tx"
+        ],
+        "subscriptions": [
+          "/swarm/*/state",
+          "/swarm/*/consensus/raft_tx",
+          "/fmu/in/offboard_control_mode",
+          "/fmu/in/trajectory_setpoint",
+          "/fmu/in/vehicle_command",
+          "/fmu/out/vehicle_status",
+          "/fmu/out/vehicle_odometry"
+        ]
+      },
+      "deny": {
+        "publications": ["/**"],
+        "subscriptions": [
+          "/rosout",
+          "/parameter_events",
+          "/tf",
+          "/tf_static",
+          "/camera/**",
+          "/lidar/**",
+          "/image/**",
+          "/diagnostics",
+          "/clock",
+          "/joint_states"
+        ]
+      }
+    }
+  bridge_drone_{{ $droneId }}.json5: |
+    {
+      "mode": "peer",
+      "connect": {
+        "endpoints": ["tcp/{{ $routerService }}:{{ $routerPort }}"]
+      },
+      "scouting": {
+        "multicast": { "enabled": false }
+      },
+      "timestamping": {
+        "enabled": { "router": true, "peer": true, "client": false }
+      },
+      "plugins": {
+        "ros2dds": {
+          "domain": {{ $droneId }},
+          "namespace": "/swarm/drone_{{ $droneId }}",
+          "allow": {
+            "publishers": [
+              "/fmu/out/vehicle_status",
+              "/fmu/out/vehicle_odometry",
+              "/fmu/out/vehicle_global_position",
+              "/fmu/out/sensor_combined"
+            ],
+            "subscribers": [
+              "/fmu/in/offboard_control_mode",
+              "/fmu/in/trajectory_setpoint",
+              "/fmu/in/vehicle_command"
+            ],
+            "service_servers": [],
+            "service_clients": [],
+            "action_servers": [],
+            "action_clients": []
+          }
+        }
+      }
+    }
+  {{- end }}

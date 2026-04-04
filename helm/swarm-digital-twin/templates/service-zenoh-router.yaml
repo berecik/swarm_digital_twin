@@ -1,0 +1,20 @@
+{{- if .Values.zenohRouter.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "swarm.zenohRouterServiceName" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "swarm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zenoh-router
+spec:
+  type: ClusterIP
+  ports:
+    - name: zenoh
+      port: {{ .Values.zenohRouter.port }}
+      targetPort: zenoh
+      protocol: TCP
+  selector:
+    app.kubernetes.io/component: zenoh-router
+    {{- include "swarm.selectorLabels" . | nindent 4 }}
+{{- end }}

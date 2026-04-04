@@ -1,0 +1,18 @@
+# values-cloud.yaml — EKS / GKE / AKS overrides
+# Usage: helm install swarm ./helm/swarm-digital-twin -f ./helm/swarm-digital-twin/values-cloud.yaml
+
+drones: 6
+
+images:
+  sitl:
+    repository: ghcr.io/berecik/ardupilot-sitl
+    tag: latest
+    pullPolicy: Always
+  companion:
+    repository: ghcr.io/berecik/swarm_companion
+    tag: latest
+    pullPolicy: Always
+
+service:
+  mavlink:
+    type: ClusterIP
