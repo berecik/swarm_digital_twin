@@ -134,8 +134,7 @@ mod tests {
         m.record(Duration::from_millis(12));
 
         assert_eq!(m.count(), 3);
-        assert_eq!(m.missed_deadlines(), 1); // 12ms > 100ms? No, 1/10Hz = 100ms. 12ms < 100ms.
-        // Actually: deadline = 1/10 = 100ms. 12ms < 100ms, so 0 missed.
+        assert_eq!(m.missed_deadlines(), 0); // deadline = 1/10Hz = 100ms; all samples < 100ms
     }
 
     #[test]

@@ -25,9 +25,7 @@ services:
     volumes:
     - sitl_logs:/sitl/logs
     healthcheck:
-      test:
-      - CMD-SHELL
-      - pgrep -x 'arducopter|arduplane' > /dev/null
+      test: ["CMD-SHELL", "pgrep -x 'arducopter|arduplane' > /dev/null"]
       interval: 5s
       timeout: 3s
       start_period: 15s
@@ -46,11 +44,9 @@ services:
     volumes:
     - ./swarm_control:/root/workspace/swarm_control
     - ./simulation:/root/workspace/simulation
-    command: bash -c "cd /root/workspace/swarm_control && cargo run --bin swarm_node -- 1"
+    command: bash -lc "cd /root/workspace/swarm_control && cargo run --bin swarm_node -- 1"
     healthcheck:
-      test:
-      - CMD-SHELL
-      - bash -lc 'pgrep -f cargo >/dev/null'
+      test: ["CMD-SHELL", "bash -lc 'pgrep -f swarm_node >/dev/null'"]
       interval: 15s
       timeout: 5s
       retries: 5

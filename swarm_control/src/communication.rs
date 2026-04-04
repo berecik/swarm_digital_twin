@@ -5,13 +5,13 @@ use zenoh::pubsub::Subscriber;
 use zenoh::sample::Sample;
 use zenoh::Session;
 use crate::boids::Boid;
-use crate::consensus_transport::{raft_tx_topic, raft_tx_subscribe_pattern, drone_id_from_key};
+use crate::consensus_transport::{raft_tx_topic, raft_tx_subscribe_pattern};
 use bincode;
 
 pub struct ZenohManager {
     session: Session,
     pub neighbors: Arc<Mutex<HashMap<String, Boid>>>,
-    drone_id: String,
+    _drone_id: String,
     drone_id_numeric: u64,
     namespace: String,
 }
@@ -44,7 +44,7 @@ impl ZenohManager {
         ZenohManager {
             session,
             neighbors,
-            drone_id,
+            _drone_id: drone_id,
             drone_id_numeric,
             namespace,
         }

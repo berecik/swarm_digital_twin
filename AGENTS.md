@@ -122,7 +122,7 @@ When an agent receives the "do tests" command, it must prioritize coverage and r
     -   **Module Testing Docs:** Update specific files like `swarm_control/TESTING.md` with detailed test descriptions.
     -   **Project Docs:** Ensure documentation reflects any changes in system behavior discovered during testing.
 
-*Last Maintenance: 2026-03-24 - Phase 3 complete: fixed-wing aerodynamics (`FixedWingAero` with AoA-dependent CL/CD and stall), MAVLink v2 bridge (`mavlink_bridge.py`). All 64 physics + MAVLink tests pass.*
+*Last Maintenance: 2026-04-04 - Fixed Raft consensus storage persistence, message deduplication, and PX4 safety communication logic. All 79 Rust tests and 255 Python/physics tests pass.*
 
 ### 3. Simulation First
 Always validate logic in simulation.
