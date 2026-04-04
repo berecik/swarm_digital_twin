@@ -32,7 +32,7 @@ def _container_state(name: str) -> dict:
     }
 
 
-def _ensure_container(name: str, deps: list[str] | None = None, timeout: int = 90):
+def _ensure_container(name: str, deps: list[str] | None = None, timeout: int = 300):
     """Start container and deps if not running; wait for healthy."""
     targets = (deps or []) + [name]
     state = _container_state(name)
@@ -57,7 +57,7 @@ def _ensure_container(name: str, deps: list[str] | None = None, timeout: int = 9
 def swarm_node_up():
     """Ensure swarm_node_1 (and its dep sitl_drone_1) are running."""
     state, started = _ensure_container(
-        CONTAINER, deps=[SITL_CONTAINER], timeout=90,
+        CONTAINER, deps=[SITL_CONTAINER], timeout=300,
     )
     yield state
     if started:

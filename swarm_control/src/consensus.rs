@@ -7,13 +7,30 @@
 use std::collections::VecDeque;
 
 use protobuf::Message as ProtobufMessage;
-use raft::eraftpb::{ConfChange, ConfChangeType, Entry, EntryType, Message};
+use raft::eraftpb::{ConfChange, ConfChangeType, Entry, EntryType, HardState, Message};
 use raft::{Config, RawNode, StateRole, Storage};
 use serde::{Deserialize, Serialize};
 use slog;
 
 fn discard_logger() -> slog::Logger {
     slog::Logger::root(slog::Discard, slog::o!())
+}
+
+/// Trait for storage backends that support persisting entries and hard state.
+/// Required by `MissionConsensus` to write entries returned from `Ready`.
+pub trait StoragePersist: Storage {
+    fn persist_entries(&self, entries: &[Entry]) -> Result<(), raft::Error>;
+    fn persist_hard_state(&self, hs: &HardState) -> Result<(), raft::Error>;
+}
+
+impl StoragePersist for raft::storage::MemStorage {
+    fn persist_entries(&self, entries: &[Entry]) -> Result<(), raft::Error> {
+        self.wl().append(entries)
+    }
+    fn persist_hard_state(&self, hs: &HardState) -> Result<(), raft::Error> {
+        self.wl().set_hardstate(hs.clone());
+        Ok(())
+    }
 }
 
 // ── Mission types ───────────────────────────────────────────────────────────
@@ -117,7 +134,7 @@ impl std::fmt::Display for ConsensusError {
 
 // ── Core consensus node ─────────────────────────────────────────────────────
 
-pub struct MissionConsensus<S: Storage> {
+pub struct MissionConsensus<S: StoragePersist> {
     node_id: u64,
     raft: RawNode<S>,
     outgoing_messages: VecDeque<Message>,
@@ -126,7 +143,7 @@ pub struct MissionConsensus<S: Storage> {
     applied_epoch: u64,
 }
 
-impl<S: Storage> MissionConsensus<S> {
+impl<S: StoragePersist> MissionConsensus<S> {
     /// Create with default configuration (election_tick=15, heartbeat_tick=3).
     pub fn new(node_id: u64, peers: &[u64], storage: S) -> Result<Self, ConsensusError> {
         Self::with_config(node_id, peers, storage, ConsensusConfig::default())
@@ -261,13 +278,29 @@ impl<S: Storage> MissionConsensus<S> {
         }
 
         let mut ready = self.raft.ready();
+
+        // Persist entries to storage before advancing
+        if !ready.entries().is_empty() {
+            let _ = self.raft.store().persist_entries(ready.entries());
+        }
+        if let Some(hs) = ready.hs() {
+            let _ = self.raft.store().persist_hard_state(hs);
+        }
+
         self.outgoing_messages.extend(ready.take_messages());
+        self.outgoing_messages.extend(ready.take_persisted_messages());
 
         for entry in ready.committed_entries() {
             self.apply_entry(entry);
         }
 
-        self.raft.advance(ready);
+        let mut light = self.raft.advance(ready);
+        // LightReady may contain additional committed entries and messages
+        self.outgoing_messages
+            .extend(light.messages().iter().cloned());
+        for entry in light.take_committed_entries() {
+            self.apply_entry(&entry);
+        }
     }
 
     fn apply_entry(&mut self, entry: &Entry) {
@@ -293,7 +326,7 @@ impl<S: Storage> MissionConsensus<S> {
 
 /// Route messages between N in-memory Raft nodes.
 /// Returns the number of messages delivered.
-pub fn route_messages<S: Storage>(nodes: &mut [MissionConsensus<S>]) -> usize {
+pub fn route_messages<S: StoragePersist>(nodes: &mut [MissionConsensus<S>]) -> usize {
     let mut pending: Vec<Message> = Vec::new();
     for node in nodes.iter_mut() {
         pending.extend(node.drain_outgoing());
@@ -308,9 +341,10 @@ pub fn route_messages<S: Storage>(nodes: &mut [MissionConsensus<S>]) -> usize {
     count
 }
 
-/// Tick all nodes and route messages until a leader is elected or max_rounds.
-/// Returns `Some(leader_id)` if a leader was elected.
-pub fn elect_leader<S: Storage>(
+/// Tick all nodes and route messages until a leader is elected and all nodes
+/// agree on it, or `max_rounds` is reached.
+/// Returns `Some(leader_id)` if a stable leader was elected.
+pub fn elect_leader<S: StoragePersist>(
     nodes: &mut [MissionConsensus<S>],
     max_rounds: usize,
 ) -> Option<u64> {
@@ -320,7 +354,11 @@ pub fn elect_leader<S: Storage>(
         }
         route_messages(nodes);
         if let Some(leader) = nodes.iter().find(|n| n.is_leader()) {
-            return Some(leader.node_id());
+            let lid = leader.node_id();
+            // Wait until all nodes agree on this leader (heartbeats propagated)
+            if nodes.iter().all(|n| n.leader_id() == Some(lid)) {
+                return Some(lid);
+            }
         }
     }
     None
@@ -333,14 +371,18 @@ mod tests {
     use super::*;
     use raft::storage::MemStorage;
 
+    /// Fast election config for tests: election_tick=10 gives enough
+    /// margin for heartbeat responses before the check_quorum deadline.
+    fn test_config() -> ConsensusConfig {
+        ConsensusConfig {
+            election_tick: 10,
+            heartbeat_tick: 1,
+            ..Default::default()
+        }
+    }
+
     fn make_cluster(peers: &[u64]) -> Vec<MissionConsensus<MemStorage>> {
-        peers
-            .iter()
-            .map(|&id| {
-                let storage = MemStorage::new_with_conf_state((peers.to_vec(), vec![]));
-                MissionConsensus::new(id, peers, storage).unwrap()
-            })
-            .collect()
+        make_cluster_with_config(peers, test_config())
     }
 
     fn make_cluster_with_config(
@@ -487,7 +529,7 @@ mod tests {
         let mut nodes = make_cluster(&peers);
 
         // Elect leader
-        let lid = elect_leader(&mut nodes, 50).expect("leader election");
+        let _lid = elect_leader(&mut nodes, 50).expect("leader election");
 
         // Partition: isolate 2 nodes (the minority)
         // Stable alternative to drain_filter (nightly-only)
@@ -566,4 +608,5 @@ mod tests {
         assert_eq!(nodes[0].current_state(), state_before);
         assert!(nodes[0].term() >= current_term);
     }
+
 }

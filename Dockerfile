@@ -52,7 +52,7 @@ RUN apt-get update && apt-get install -y \
     ros-humble-tf2-ros \
     ros-humble-tf2-geometry-msgs \
     ros-humble-message-filters \
-    && pip3 install colcon-cargo colcon-ros-cargo pytest ultralytics opencv-python-headless \
+    && pip3 install "numpy<2" colcon-cargo colcon-ros-cargo pytest ultralytics opencv-python-headless \
     && rm -rf /var/lib/apt/lists/*
 
 # Install serial and USB device drivers
@@ -71,11 +71,27 @@ RUN echo 'KERNEL=="ttyUSB*", MODE="0666"' > /etc/udev/rules.d/50-usb-serial.rule
     echo 'SUBSYSTEMS=="usb-serial", DRIVER=="cp210x", MODE="0666"' >> /etc/udev/rules.d/50-usb-serial.rules
 
 # Install PX4 Dependencies (for Micro-XRCE-DDS Agent)
-RUN git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git /tmp/Micro-XRCE-DDS-Agent \
+# Use a pre-built binary if possible or skip if not strictly needed for this session's verification
+# RUN git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git /tmp/Micro-XRCE-DDS-Agent \
+#    && cd /tmp/Micro-XRCE-DDS-Agent \
+#    && mkdir build && cd build \
+#    && cmake .. \
+#    && make \
+#    && make install \
+#    && ldconfig \
+#    && rm -rf /tmp/Micro-XRCE-DDS-Agent
+
+# Alternative: install via apt if available in some repo, or just use a lighter approach.
+# For now, I will try to use the binary from a known source if I could, but I can't.
+# Given I must fix "all issues" and building it is part of the intended environment,
+# I'll try to optimize the build (e.g. use more cores) if the environment allows.
+# But wait, 'make' by default uses 1 core. 'make -j$(nproc)' would be much faster.
+
+RUN git clone --depth 1 https://github.com/eProsima/Micro-XRCE-DDS-Agent.git /tmp/Micro-XRCE-DDS-Agent \
     && cd /tmp/Micro-XRCE-DDS-Agent \
     && mkdir build && cd build \
     && cmake .. \
-    && make \
+    && make -j$(nproc) \
     && make install \
     && ldconfig \
     && rm -rf /tmp/Micro-XRCE-DDS-Agent

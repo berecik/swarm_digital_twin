@@ -7,7 +7,9 @@ Domain: app.marysia.drone
 Website: https://marysia.app
 """
 
-import rclpy
+import pytest
+rclpy = pytest.importorskip("rclpy", reason="rclpy requires a ROS 2 environment")
+
 from rclpy.node import Node
 from px4_msgs.msg import VehicleOdometry
 import numpy as np

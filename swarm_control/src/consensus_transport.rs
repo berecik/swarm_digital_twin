@@ -21,11 +21,11 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use raft::eraftpb::Message as RaftMessage;
-use raft::Storage;
+use raft::eraftpb::{Message as RaftMessage, MessageType};
 
 use crate::consensus::{
     deserialize_raft_message, serialize_raft_message, ConsensusError, MissionConsensus,
+    StoragePersist,
 };
 
 // ── Dedup cache ──────────────────────────────────────────────────────────────
@@ -41,6 +41,9 @@ fn message_fingerprint(msg: &RaftMessage) -> u64 {
     msg.get_log_term().hash(&mut hasher);
     (msg.get_msg_type() as i32).hash(&mut hasher);
     msg.get_commit().hash(&mut hasher);
+    // Include entries count so that empty MsgAppend (commit-update) and
+    // MsgAppend carrying log entries produce distinct fingerprints.
+    (msg.get_entries().len() as u64).hash(&mut hasher);
     hasher.finish()
 }
 
@@ -175,7 +178,7 @@ impl Default for TransportLoopConfig {
 ///    per-drone topics (targeted, not broadcast)
 /// 3. Receives incoming messages from Zenoh subscriber, dedup-checks,
 ///    deserializes, and steps into the Raft node
-pub struct ConsensusTransportLoop<S: Storage> {
+pub struct ConsensusTransportLoop<S: StoragePersist> {
     /// Shared consensus node (behind Arc<Mutex<>> for subscriber callback).
     consensus: Arc<Mutex<MissionConsensus<S>>>,
     /// This drone's node ID.
@@ -189,7 +192,7 @@ pub struct ConsensusTransportLoop<S: Storage> {
     outbox: Vec<(u64, Vec<u8>)>,
 }
 
-impl<S: Storage> ConsensusTransportLoop<S> {
+impl<S: StoragePersist> ConsensusTransportLoop<S> {
     pub fn new(
         consensus: Arc<Mutex<MissionConsensus<S>>>,
         node_id: u64,
@@ -252,10 +255,21 @@ impl<S: Storage> ConsensusTransportLoop<S> {
             return Ok(false);
         }
 
-        // Dedup check
-        let fp = message_fingerprint(&msg);
-        if self.dedup.check_and_insert(fp) {
-            return Ok(false);
+        // Dedup check — skip for heartbeats/responses (idempotent, produce
+        // identical fingerprints across ticks) and append-responses (responses
+        // to the same index are valid across ticks for quorum counting).
+        let msg_type = msg.get_msg_type();
+        let skip_dedup = matches!(
+            msg_type,
+            MessageType::MsgHeartbeat
+                | MessageType::MsgHeartbeatResponse
+                | MessageType::MsgAppendResponse
+        );
+        if !skip_dedup {
+            let fp = message_fingerprint(&msg);
+            if self.dedup.check_and_insert(fp) {
+                return Ok(false);
+            }
         }
 
         let mut consensus = self.consensus.lock().unwrap();
@@ -287,20 +301,30 @@ mod tests {
     use super::*;
     use crate::consensus::{
         ConsensusConfig, MissionCommand, MissionConsensus, MissionState,
-        elect_leader, route_messages, serialize_raft_message,
+        serialize_raft_message,
     };
     use raft::eraftpb::Message as RaftMessage;
     use raft::storage::MemStorage;
 
+    /// Fast election config for tests (election_tick=10, heartbeat_tick=1).
+    fn test_config() -> ConsensusConfig {
+        ConsensusConfig {
+            election_tick: 10,
+            heartbeat_tick: 1,
+            ..Default::default()
+        }
+    }
+
     fn make_transport_cluster(
         peers: &[u64],
     ) -> Vec<ConsensusTransportLoop<MemStorage>> {
+        let cfg = test_config();
         peers
             .iter()
             .map(|&id| {
                 let storage = MemStorage::new_with_conf_state((peers.to_vec(), vec![]));
                 let consensus =
-                    MissionConsensus::new(id, peers, storage).unwrap();
+                    MissionConsensus::with_config(id, peers, storage, cfg.clone()).unwrap();
                 let shared = Arc::new(Mutex::new(consensus));
                 ConsensusTransportLoop::new(
                     shared,
@@ -436,21 +460,23 @@ mod tests {
         let peers = [1, 2, 3, 4, 5, 6];
         let mut loops = make_transport_cluster(&peers);
 
-        // Tick enough to generate election messages
+        // Tick enough to generate election messages, collecting outbox
+        // messages across all ticks (run_tick clears the outbox each call).
+        let mut seen_valid = false;
         for _ in 0..20 {
             for tl in loops.iter_mut() {
                 tl.run_tick().unwrap();
+                let outbox = tl.drain_outbox();
+                if !outbox.is_empty()
+                    && outbox
+                        .iter()
+                        .all(|(target_id, bytes)| peers.contains(target_id) && !bytes.is_empty())
+                {
+                    seen_valid = true;
+                }
             }
         }
-
-        // Check that at least one loop has outbox entries with valid target IDs
-        let has_outbox = loops.iter_mut().any(|tl| {
-            let outbox = tl.drain_outbox();
-            outbox.iter().all(|(target_id, bytes)| {
-                peers.contains(target_id) && !bytes.is_empty()
-            }) && !outbox.is_empty()
-        });
-        assert!(has_outbox, "should have targeted outbox messages");
+        assert!(seen_valid, "should have targeted outbox messages");
     }
 
     #[test]
