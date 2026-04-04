@@ -320,7 +320,7 @@ swarm_cleanup() {
 
 run_swarm_mission() {
     local n="${1:-$MAX_DRONES}"
-    local timeout="${2:-600}"
+    local timeout="${2:-}"
     local log_dir
 
     log_dir=$(swarm_up "$n")
@@ -331,22 +331,37 @@ run_swarm_mission() {
     _SWARM_CLEANUP_DONE=false
     trap swarm_cleanup EXIT
 
-    # Generate waypoint missions for each drone
-    info "Generating waypoint missions for $n drones..."
-    local mission_dir="$log_dir/missions"
-    python "$SIM_DIR/sitl_waypoints.py" \
-        --n "$n" --output-dir "$mission_dir" \
-        --ref-lat "-0.508333" --ref-lon "-78.141667" --ref-alt "4500"
+    # Generate formation mission config (shared by all swarm_nodes)
+    local mission_json="$log_dir/swarm_mission.json"
+    info "Generating formation mission for $n drones..."
+    python "$SIM_DIR/sitl_waypoints.py" formation \
+        --n "$n" \
+        --radius 8 \
+        --altitude 20 \
+        --patrol-size 40 \
+        --cruise-speed 4.0 \
+        --output "$mission_json"
 
-    # Run swarm orchestrator against the compose stack
-    info "Running swarm mission (${n} drones, timeout=${timeout}s)..."
-    info "  Orchestrator connects to swarm_node containers via ROS 2 domains 1-${n}"
-    python "$SIM_DIR/sitl_orchestrator.py" swarm \
+    # Copy mission config into each swarm_node container
+    for i in $(seq 1 "$n"); do
+        docker cp "$mission_json" "${SERVICE_SWARM}_${i}:/root/workspace/swarm_mission.json" 2>/dev/null || true
+    done
+    info "Formation config deployed to $n swarm_node containers"
+
+    # Run formation orchestrator (SITL GPS init + offboard monitoring)
+    local timeout_flag=()
+    if [ -n "$timeout" ]; then
+        timeout_flag=(--timeout "$timeout")
+        info "Running swarm formation flight (${n} drones, timeout=${timeout}s)..."
+    else
+        info "Running swarm formation flight (${n} drones, no timeout)..."
+    fi
+    info "  Drones fly as swarm in ring formation, offboard-controlled by swarm_nodes"
+    python "$SIM_DIR/sitl_orchestrator.py" swarm-formation \
         --n "$n" \
         --base-port 5760 \
         --port-step 10 \
-        --mission-dir "$mission_dir" \
-        --timeout "$timeout" || true
+        "${timeout_flag[@]}" || true
 
     # Merge logs into swarm_data.npz if BIN logs exist
     local log_dirs=()
@@ -367,7 +382,7 @@ run_swarm_mission() {
         python "$SIM_DIR/sitl_log_merger.py" swarm --log-dirs "${log_dirs[@]}"
     fi
 
-    ok "Swarm mission complete (${n} drones, log: $log_dir)"
+    ok "Swarm formation flight complete (${n} drones, log: $log_dir)"
 }
 
 _SINGLE_CLEANUP_DONE=false
@@ -467,6 +482,7 @@ run_integration_tests() {
     python -m pytest "$ROOT_DIR/tests/test_integration_swarm_node.py" -v "${timeout_flag[@]}"
     python -m pytest "$ROOT_DIR/tests/test_integration_perception.py" -v "${timeout_flag[@]}"
     python -m pytest "$ROOT_DIR/tests/test_integration_zenoh.py" -v "${timeout_flag[@]}"
+    python -m pytest "$ROOT_DIR/tests/test_integration_swarm_formation.py" -v "${timeout_flag[@]}"
     ok "All integration tests passed"
 }
 
@@ -596,7 +612,7 @@ case "$MODE" in
         if ! [[ "$SWARM_DRONES" =~ ^[1-6]$ ]]; then
             SWARM_DRONES=6
         fi
-        run_swarm_mission "$SWARM_DRONES" 600
+        run_swarm_mission "$SWARM_DRONES" "${PYTEST_TIMEOUT:-}"
         run_viz "$SIM_DIR/swarm_data.npz"
         ;;
     --sim-only)
@@ -608,7 +624,7 @@ case "$MODE" in
         if ! [[ "$SWARM_DRONES" =~ ^[1-6]$ ]]; then
             SWARM_DRONES=6
         fi
-        run_swarm_mission "$SWARM_DRONES" 600
+        run_swarm_mission "$SWARM_DRONES" "${PYTEST_TIMEOUT:-}"
         ;;
     --viz-only)
         ensure_venv
@@ -688,7 +704,8 @@ case "$MODE" in
         echo "Docker Compose per-drone stack (default — requires Docker):"
         echo "  (default)       Run single-drone stack (4 containers) then visualize"
         echo "  --single        Run single-drone stack (4 containers) then visualize"
-        echo "  --swarm [N]     Run N-drone stack (default: 6, max: 6) then visualize"
+        echo "  --swarm [N]     Run N-drone formation flight (default: 6, max: 6) then visualize"
+        echo "                  Drones fly as swarm in ring formation, offboard-controlled via Zenoh"
         echo "                  Each drone: sitl_drone_N + swarm_node_N + perception_node_N + zenoh_bridge_N"
         echo "  --sim-only      Run single-drone stack only (no GUI)"
         echo "  --swarm-only [N] Run N-drone stack only (no GUI)"

@@ -10,6 +10,7 @@ Usage:
     python sitl_waypoints.py --n 3 --radius 15 --altitude 30
 """
 
+import json
 import math
 import os
 import sys
@@ -156,26 +157,120 @@ def write_mission_files(missions, output_dir: str):
     return paths
 
 
+# ── Formation mission generation ─────────────────────────────────────────────
+
+def build_formation_patrol(n_drones: int, radius: float = 8.0,
+                           altitude: float = 20.0, patrol_size: float = 40.0,
+                           cruise_speed: float = 4.0):
+    """Generate a swarm_mission.json for formation flight.
+
+    The swarm center follows a rectangular patrol path while each drone
+    maintains its ring-formation slot offset.  The Rust swarm_nodes read
+    this file at startup and fly the mission cooperatively in offboard mode.
+
+    Patrol path (ENU, counter-clockwise rectangle centered on origin):
+        wp0: (0, 0, alt)  — form-up point
+        wp1: (S, 0, alt)  — east leg
+        wp2: (S, S, alt)  — north-east corner
+        wp3: (0, S, alt)  — north leg
+        wp4: (0, 0, alt)  — return to start
+
+    Args:
+        n_drones: Number of drones in the swarm.
+        radius: Ring formation radius [m].
+        altitude: Flight altitude AGL [m].
+        patrol_size: Length of each patrol leg [m].
+        cruise_speed: Swarm cruise speed [m/s].
+
+    Returns:
+        dict: Formation config ready for JSON serialization.
+    """
+    s = patrol_size
+    waypoints = [
+        [0.0, 0.0, altitude],
+        [s, 0.0, altitude],
+        [s, s, altitude],
+        [0.0, s, altitude],
+        [0.0, 0.0, altitude],
+    ]
+
+    return {
+        "pattern": {"type": "Ring", "radius": radius},
+        "altitude": altitude,
+        "waypoints": waypoints,
+        "waypoint_accept_radius": 3.0,
+        "cruise_speed": cruise_speed,
+        "n_drones": n_drones,
+    }
+
+
+def write_formation_config(config: dict, output_path: str):
+    """Write the formation config as swarm_mission.json."""
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    with open(output_path, "w") as f:
+        json.dump(config, f, indent=2)
+    print(f"  Formation config written to {output_path}")
+    print(f"    pattern: {config['pattern']['type']}, "
+          f"radius={config['pattern'].get('radius', '?')}m")
+    print(f"    altitude: {config['altitude']}m, "
+          f"speed: {config['cruise_speed']}m/s, "
+          f"drones: {config['n_drones']}")
+    print(f"    waypoints: {len(config['waypoints'])} "
+          f"(patrol {config['waypoints'][1][0]:.0f}m x "
+          f"{config['waypoints'][2][1]:.0f}m)")
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate SITL ring-formation missions")
-    parser.add_argument("--n", type=int, default=6, help="Number of drones")
-    parser.add_argument("--radius", type=float, default=10.0, help="Ring radius [m]")
-    parser.add_argument("--altitude", type=float, default=20.0, help="Flight altitude AGL [m]")
-    parser.add_argument("--ref-lat", type=float, default=DEFAULT_LAT)
-    parser.add_argument("--ref-lon", type=float, default=DEFAULT_LON)
-    parser.add_argument("--ref-alt", type=float, default=DEFAULT_ALT)
-    parser.add_argument("--output-dir", default="missions/swarm")
+    parser = argparse.ArgumentParser(description="Generate SITL missions")
+    sub = parser.add_subparsers(dest="mode")
+
+    # Legacy per-drone ring waypoints
+    sp_ring = sub.add_parser("ring", help="Per-drone ring waypoint files (legacy)")
+    sp_ring.add_argument("--n", type=int, default=6, help="Number of drones")
+    sp_ring.add_argument("--radius", type=float, default=10.0, help="Ring radius [m]")
+    sp_ring.add_argument("--altitude", type=float, default=20.0,
+                         help="Flight altitude AGL [m]")
+    sp_ring.add_argument("--ref-lat", type=float, default=DEFAULT_LAT)
+    sp_ring.add_argument("--ref-lon", type=float, default=DEFAULT_LON)
+    sp_ring.add_argument("--ref-alt", type=float, default=DEFAULT_ALT)
+    sp_ring.add_argument("--output-dir", default="missions/swarm")
+
+    # Formation mission (shared config for offboard swarm)
+    sp_form = sub.add_parser("formation",
+                             help="Swarm formation mission config (swarm_mission.json)")
+    sp_form.add_argument("--n", type=int, default=6, help="Number of drones")
+    sp_form.add_argument("--radius", type=float, default=8.0,
+                         help="Formation ring radius [m]")
+    sp_form.add_argument("--altitude", type=float, default=20.0,
+                         help="Flight altitude AGL [m]")
+    sp_form.add_argument("--patrol-size", type=float, default=40.0,
+                         help="Patrol leg length [m]")
+    sp_form.add_argument("--cruise-speed", type=float, default=4.0,
+                         help="Cruise speed [m/s]")
+    sp_form.add_argument("--output", default="swarm_mission.json",
+                         help="Output JSON path")
+
     args = parser.parse_args()
 
-    missions, enu_wps, home_gps = build_ring_missions(
-        args.n, args.ref_lat, args.ref_lon, args.ref_alt,
-        args.radius, args.altitude)
+    # Default to ring mode when called without subcommand (backwards compat)
+    if args.mode is None or args.mode == "ring":
+        # Support old-style invocation: sitl_waypoints.py --n 6 --output-dir ...
+        if not hasattr(args, "output_dir"):
+            # Re-parse with ring defaults
+            args = sp_ring.parse_args(sys.argv[1:])
+        missions, enu_wps, home_gps = build_ring_missions(
+            args.n, args.ref_lat, args.ref_lon, args.ref_alt,
+            args.radius, args.altitude)
+        paths = write_mission_files(missions, args.output_dir)
+        for drone_id in sorted(missions.keys()):
+            lat, lon, alt = home_gps[drone_id]
+            n_wps = len(enu_wps[drone_id])
+            print(f"  drone_{drone_id}: {n_wps} waypoints, "
+                  f"home=({lat:.6f}, {lon:.6f}), file={paths[drone_id]}")
+        print(f"Generated {len(missions)} mission files in {args.output_dir}/")
 
-    paths = write_mission_files(missions, args.output_dir)
-
-    for drone_id in sorted(missions.keys()):
-        lat, lon, alt = home_gps[drone_id]
-        n_wps = len(enu_wps[drone_id])
-        print(f"  drone_{drone_id}: {n_wps} waypoints, "
-              f"home=({lat:.6f}, {lon:.6f}), file={paths[drone_id]}")
-    print(f"Generated {len(missions)} mission files in {args.output_dir}/")
+    elif args.mode == "formation":
+        config = build_formation_patrol(
+            args.n, args.radius, args.altitude,
+            args.patrol_size, args.cruise_speed)
+        write_formation_config(config, args.output)

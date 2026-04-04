@@ -9,12 +9,14 @@ pub mod communication;
 pub mod consensus;
 pub mod consensus_transport;
 pub mod driver_core;
+pub mod formation;
 pub mod px4_safety;
 pub mod timing;
 pub mod transport;
 pub mod utils;
 pub mod search;
 pub use driver_core::{DriverAction, DriverCore, DriverStatus, FlightState};
+pub use formation::{FormationConfig, FormationPattern, FormationWaypointManager};
 pub use px4_safety::{
     ControlLoopWatchdog, Px4CommandKind, Px4SafetyBuilder, Px4SafetyError,
     SafetyLimits, SetpointRateLimiter,

@@ -1,4 +1,4 @@
-use px4_msgs::msg::{VehicleStatus};
+use px4_msgs::msg::{VehicleOdometry, VehicleStatus};
 use std::env;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -6,11 +6,16 @@ use nalgebra::Vector3;
 
 use raft::storage::MemStorage;
 
+use swarm_control_core::boids::Boid;
 use swarm_control_core::driver_core::{DriverAction, DriverCore, DriverStatus};
+use swarm_control_core::formation::{FormationConfig, FormationWaypointManager};
 use swarm_control_core::px4_safety::{Px4CommandKind, Px4SafetyBuilder};
 use swarm_control_core::consensus::MissionConsensus;
 use swarm_control_core::consensus_transport::{ConsensusTransportLoop, TransportLoopConfig};
 use swarm_control_core::communication::ZenohManager;
+
+const FORMATION_CONFIG_PATH: &str = "/root/workspace/swarm_mission.json";
+const DEFAULT_FORMATION_ALT: f32 = 20.0;
 
 /// Publishes a PX4 heartbeat (offboard control mode) via Zenoh.
 async fn publish_heartbeat(zenoh: &ZenohManager, drone_id: u64) -> Result<(), String> {
@@ -66,6 +71,22 @@ async fn execute_actions(zenoh: &ZenohManager, drone_id: u64, actions: Vec<Drive
     Ok(())
 }
 
+/// Try to load formation config from the well-known path.
+fn load_formation(drone_id: u64) -> Option<FormationWaypointManager> {
+    match FormationConfig::from_file(FORMATION_CONFIG_PATH) {
+        Ok(cfg) => {
+            let n_wp = cfg.waypoints.len();
+            let n_drones = cfg.n_drones;
+            println!("[swarm_node_{drone_id}] Formation loaded: {n_wp} waypoints, {n_drones} drones");
+            Some(FormationWaypointManager::new(cfg, drone_id))
+        }
+        Err(e) => {
+            println!("[swarm_node_{drone_id}] No formation config ({e}), using simple loiter mode");
+            None
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let drone_id: u64 = env::args()
@@ -79,7 +100,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let zenoh = Arc::new(ZenohManager::new(format!("drone_{drone_id}")).await);
     println!("[swarm_node_{drone_id}] Zenoh connected");
 
-    let core = Arc::new(Mutex::new(DriverCore::new(5.0)));
+    // ── Formation or simple mode ─────────────────────────────────────
+    let core = match load_formation(drone_id) {
+        Some(mgr) => {
+            let alt = mgr.config().altitude;
+            Arc::new(Mutex::new(DriverCore::with_formation(alt, mgr)))
+        }
+        None => Arc::new(Mutex::new(DriverCore::new(DEFAULT_FORMATION_ALT))),
+    };
 
     // ── Raft consensus ─────────────────────────────────────────────────
     let peers: Vec<u64> = (1..=6).collect();
@@ -124,6 +152,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Subscribe to vehicle odometry for position feedback
+    let odom_topic = format!("swarm/drone_{drone_id}/fmu/out/vehicle_odometry");
+    let odom_sub = zenoh.session().declare_subscriber(&odom_topic).await.unwrap();
+    let core_for_odom = Arc::clone(&core);
+    tokio::spawn(async move {
+        while let Ok(sample) = odom_sub.recv_async().await {
+            let payload = sample.payload().to_bytes();
+            if let Ok(msg) = bincode::deserialize::<VehicleOdometry>(&payload) {
+                // PX4 publishes NED; convert to ENU for internal use
+                let enu = Vector3::new(msg.position[1], msg.position[0], -msg.position[2]);
+                let mut c = core_for_odom.lock().unwrap();
+                c.update_position(enu);
+            }
+        }
+    });
+
     // Consensus tick + outbox publish loop (10Hz)
     let consensus_for_tick = Arc::clone(&consensus_shared);
     let zenoh_for_raft = Arc::clone(&zenoh);
@@ -156,19 +200,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Boid state broadcast loop (5Hz) — publish own position for neighbors
+    let zenoh_for_boid = Arc::clone(&zenoh);
+    let core_for_boid = Arc::clone(&core);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(200));
+        loop {
+            interval.tick().await;
+            let pos = {
+                let c = core_for_boid.lock().unwrap();
+                c.position()
+            };
+            let boid = Boid {
+                drone_id: format!("drone_{drone_id}"),
+                position: Vector3::new(pos.x as f64, pos.y as f64, pos.z as f64),
+                velocity: Vector3::zeros(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_micros() as u64,
+            };
+            zenoh_for_boid.publish_state(&boid).await;
+        }
+    });
+
     println!("[swarm_node_{drone_id}] Control loop running");
 
-    // Main Control Loop (10Hz) — collect actions under lock, execute async outside
+    // Main Control Loop (10Hz) — collect neighbors + tick + execute
     let zenoh_for_ctrl = Arc::clone(&zenoh);
     let mut interval = tokio::time::interval(Duration::from_millis(100));
+    let mut last_state_log = std::time::Instant::now();
+
     loop {
         interval.tick().await;
-        let actions = {
-            let mut c = core.lock().unwrap();
-            c.tick()
+
+        // Gather neighbor boid states
+        let neighbors: Vec<Boid> = {
+            let n = zenoh.neighbors.lock().unwrap();
+            n.values().cloned().collect()
         };
+
+        let (actions, state, wp_info) = {
+            let mut c = core.lock().unwrap();
+            let actions = c.tick(&neighbors);
+            let state = c.flight_state;
+            let wp_info = c.formation().map(|f| {
+                (f.current_waypoint_index(), f.total_waypoints())
+            });
+            (actions, state, wp_info)
+        };
+
         if let Err(e) = execute_actions(&zenoh_for_ctrl, drone_id, actions).await {
             eprintln!("[swarm_node_{drone_id}] control tick error: {e}");
+        }
+
+        // Periodic state logging (every 5s)
+        if last_state_log.elapsed() >= Duration::from_secs(5) {
+            last_state_log = std::time::Instant::now();
+            let wp_str = match wp_info {
+                Some((cur, total)) => format!(" wp={cur}/{total}"),
+                None => String::new(),
+            };
+            println!(
+                "[swarm_node_{drone_id}] state={:?} neighbors={}{wp_str}",
+                state,
+                neighbors.len(),
+            );
         }
     }
 }
