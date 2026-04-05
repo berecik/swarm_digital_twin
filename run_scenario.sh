@@ -97,7 +97,7 @@ k8s_ensure_images() {
 
     if [ "$need_build" = true ]; then
         info "Images not found in registry, building and pushing..."
-        "$ROOT_DIR/scripts/push_images.sh" --registry "$registry" --tag "$tag"
+        "$ROOT_DIR/scripts/push_images.sh" --registry "$registry" --tag "$tag" >&2
     else
         ok "Images already in registry: $registry"
     fi
@@ -695,7 +695,7 @@ run_single_mission() {
 
     # Generate mission
     local mission_dir="$log_dir/missions"
-    python "$SIM_DIR/sitl_waypoints.py" --n 1 --output-dir "$mission_dir"
+    python "$SIM_DIR/sitl_waypoints.py" ring --n 1 --output-dir "$mission_dir"
     local mission_file="$mission_dir/drone_0.waypoints"
 
     # Run orchestrator

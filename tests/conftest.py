@@ -15,6 +15,10 @@ def pytest_addoption(parser):
         choices=["docker", "k8s"],
         help="Orchestration backend (default: k8s)",
     )
+    parser.addoption(
+        "--run-flight", action="store_true", default=False,
+        help="Run active flight tests (requires mission orchestrator)",
+    )
 
 
 def _get_backend(request) -> str:

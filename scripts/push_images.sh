@@ -13,7 +13,7 @@
 #   ./scripts/push_images.sh --dry-run          # show commands without executing
 #
 # Prerequisites:
-#   docker login ghcr.io   (or your registry)
+#   docker login   (Docker Hub, or your registry)
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -21,7 +21,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
-REGISTRY="${SWARM_REGISTRY:-ghcr.io/berecik}"
+REGISTRY="${SWARM_REGISTRY:-beret}"
 TAG="${SWARM_IMAGE_TAG:-latest}"
 BUILD_SITL=true
 BUILD_COMPANION=true

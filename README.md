@@ -14,7 +14,7 @@ The framework enables:
 - **Swarm control algorithm development** using Boids, FSM, and distributed coordination
 - **AI perception pipeline testing** with mocked sensors and 3D localization
 - **Heavy-lift distributed control** simulation for 6-agent tethered payloads
-- **End-to-end mission validation** via Docker-based multi-drone environments
+- **End-to-end mission validation** via Kubernetes (default) or Docker Compose multi-drone environments
 
 ---
 
@@ -48,10 +48,20 @@ The framework enables:
 │   ├── launch/                 # ROS 2 launch files
 │   └── scripts/                # Wind perturbation ROS node
 ├── px4_msgs/                   # PX4-ROS 2 message definitions
-├── run_scenario.sh             # One-command scenario runner & visualizer
+├── helm/swarm-digital-twin/    # Helm chart for Kubernetes deployment
+│   ├── Chart.yaml              # Chart metadata
+│   ├── values.yaml             # Default values (6 drones, Docker Hub images)
+│   ├── values-local.yaml       # Minikube/kind overrides (2 drones, local images)
+│   ├── values-cloud.yaml       # EKS/GKE/AKS overrides
+│   └── templates/              # StatefulSet, Services, ConfigMaps, Zenoh router
+├── scripts/                    # Operational scripts
+│   ├── push_images.sh          # Build & push images to Docker Hub
+│   └── k3s_import_images.sh    # Import Docker images into k3s containerd
+├── run_scenario.sh             # One-command scenario runner (K8s default)
 ├── docker/                     # Zenoh configuration and Docker setups
-├── Dockerfile                  # Development environment container
-├── docker-compose.yml          # Multi-container swarm orchestration
+├── Dockerfile                  # Companion image (ROS 2 + Rust + perception)
+├── Dockerfile.sitl             # ArduPilot SITL image
+├── docker-compose.yml          # Docker Compose orchestration (legacy)
 ├── visualize_on_host.py        # Real-time swarm visualization (ROS 2)
 ├── AGENTS.md                   # Technical context & development guide
 ├── TESTING.md                  # Test catalog & verification status
@@ -61,6 +71,7 @@ The framework enables:
 ## Documentation
 
 Detailed documentation is available in the [docs/](docs/) directory:
+- [**Kubernetes Deployment**](docs/kubernetes.md) — K8s setup, Helm chart, and operations guide.
 - [**Architecture Overview**](docs/architecture.md) — System design, components, and communication.
 - [**Testing Guide**](docs/testing.md) — Test strategy, catalog, and protocols.
 - [**Development & Setup**](docs/development.md) — Environment setup and coding standards.
@@ -80,6 +91,8 @@ Detailed documentation is available in the [docs/](docs/) directory:
 | **MAVLink Bridge** | **Python** (custom MAVLink v2) — connects sim to QGroundControl |
 | **3D Visualization** | **Matplotlib** (terrain surface, wind indicator, AGL tracking) |
 | **Full Simulation** | Gazebo Harmonic / PX4 SITL / ArduPilot |
+| **Orchestration** | **Kubernetes + Helm** (default), Docker Compose (legacy) |
+| **Container Images** | Docker Hub (`beret/ardupilot-sitl`, `beret/swarm_companion`) |
 
 ## Quick Start — Standalone Physics Simulation
 
@@ -108,28 +121,41 @@ The scenario flies a drone through 7 waypoints over rolling-hill terrain with qu
 **Standalone simulation (no external deps):**
 - Python 3.10+ (NumPy, Matplotlib — installed automatically by `run_scenario.sh`)
 
-**Full swarm simulation (Docker):**
+**Full swarm simulation (Kubernetes — default):**
+- A Kubernetes cluster (k3s, minikube, kind, EKS, GKE, AKS)
+- `kubectl` configured for your cluster
+- `helm` 3.x
+
+**Full swarm simulation (Docker Compose — legacy):**
 - Docker & Docker Compose
-- Ubuntu 22.04 LTS (recommended)
-- ROS 2 Humble/Jazzy
-- Rust Toolchain
 
-### Running Full Swarm Simulation
+### Running Full Swarm Simulation (Kubernetes)
 
-1. **Build the Docker environment:**
-   ```bash
-   docker-compose build
-   ```
+Kubernetes is the default orchestration backend. Each drone runs as a pod with
+4 containers (sitl, swarm-node, perception, zenoh-bridge) managed by a StatefulSet.
 
-2. **Launch the swarm simulation:**
-   ```bash
-   docker-compose up
-   ```
+```bash
+# Deploy 2-drone swarm (uses current kubectl context)
+helm install swarm ./helm/swarm-digital-twin --set drones=2 -n swarm --create-namespace
 
-3. **Visualize on host:**
-   ```bash
-   python3 visualize_on_host.py
-   ```
+# Check status
+kubectl get pods -n swarm
+
+# Run integration tests
+pytest tests/ -v
+
+# Tear down
+helm uninstall swarm -n swarm
+```
+
+See [docs/kubernetes.md](docs/kubernetes.md) for the full guide.
+
+### Running Full Swarm Simulation (Docker Compose)
+
+```bash
+# Override backend to Docker
+./run_scenario.sh --swarm 2 --backend=docker
+```
 
 ## Testing
 

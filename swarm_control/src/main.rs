@@ -77,11 +77,11 @@ fn load_formation(drone_id: u64) -> Option<FormationWaypointManager> {
         Ok(cfg) => {
             let n_wp = cfg.waypoints.len();
             let n_drones = cfg.n_drones;
-            println!("[swarm_node_{drone_id}] Formation loaded: {n_wp} waypoints, {n_drones} drones");
+            eprintln!("[swarm_node_{drone_id}] Formation loaded: {n_wp} waypoints, {n_drones} drones");
             Some(FormationWaypointManager::new(cfg, drone_id))
         }
         Err(e) => {
-            println!("[swarm_node_{drone_id}] No formation config ({e}), using simple loiter mode");
+            eprintln!("[swarm_node_{drone_id}] No formation config ({e}), using simple loiter mode");
             None
         }
     }

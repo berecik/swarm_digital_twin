@@ -7,11 +7,11 @@ drones: 6
 
 images:
   sitl:
-    repository: ghcr.io/berecik/ardupilot-sitl
+    repository: beret/ardupilot-sitl
     tag: latest
     pullPolicy: IfNotPresent
   companion:
-    repository: ghcr.io/berecik/swarm_companion
+    repository: beret/swarm_companion
     tag: latest
     pullPolicy: IfNotPresent
   zenohBridge:
@@ -34,8 +34,9 @@ sitl:
   alt: "4500"
   vehicle: copter
 
-# Formation mission config (can be overridden with --set-file missionConfig=path)
-missionConfig: "{}"
+# Formation mission config (override with --set-file missionConfig=path)
+missionConfig: |
+  {"pattern":{"type":"Ring","radius":8.0},"altitude":20.0,"waypoints":[[0.0,0.0,20.0],[40.0,0.0,20.0],[40.0,40.0,20.0],[0.0,40.0,20.0],[0.0,0.0,20.0]],"waypoint_accept_radius":3.0,"cruise_speed":4.0,"n_drones":6}
 
 # Resource limits per container
 resources:
@@ -48,11 +49,11 @@ resources:
       memory: 1Gi
   swarmNode:
     requests:
-      cpu: 250m
-      memory: 256Mi
+      cpu: 500m
+      memory: 1Gi
     limits:
-      cpu: "1"
-      memory: 512Mi
+      cpu: "4"
+      memory: 4Gi
   perception:
     requests:
       cpu: 250m

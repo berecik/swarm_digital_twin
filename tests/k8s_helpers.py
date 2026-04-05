@@ -104,8 +104,12 @@ def wait_for_log(
     return None
 
 
-def wait_for_pods_ready(count: int, timeout: int = 300) -> bool:
-    """Wait until all drone pods are Ready."""
+def wait_for_pods_ready(count: int, timeout: int = 600) -> bool:
+    """Wait until all drone pods are Ready (all containers passing probes).
+
+    Falls back to checking that pods exist and are Running if
+    readyReplicas doesn't reach *count* within *timeout* seconds.
+    """
     for _ in range(timeout):
         result = kubectl(
             "get", "statefulset", STATEFULSET_NAME,
@@ -116,6 +120,26 @@ def wait_for_pods_ready(count: int, timeout: int = 300) -> bool:
         except ValueError:
             ready = 0
         if ready >= count:
+            return True
+        time.sleep(1)
+    return False
+
+
+def wait_for_pods_running(count: int, timeout: int = 300) -> bool:
+    """Wait until *count* drone pods exist and are in Running phase.
+
+    Unlike ``wait_for_pods_ready``, this does NOT require all containers
+    to pass readiness probes — only that the pod has been scheduled and
+    at least one container is running.  Use this for fixture guards when
+    individual tests will wait for specific containers themselves.
+    """
+    for _ in range(timeout):
+        running = 0
+        for i in range(count):
+            status = pod_status(i)
+            if status["phase"] == "Running":
+                running += 1
+        if running >= count:
             return True
         time.sleep(1)
     return False

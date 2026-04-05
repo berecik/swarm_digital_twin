@@ -5,11 +5,11 @@ drones: 6
 
 images:
   sitl:
-    repository: ghcr.io/berecik/ardupilot-sitl
+    repository: beret/ardupilot-sitl
     tag: latest
     pullPolicy: Always
   companion:
-    repository: ghcr.io/berecik/swarm_companion
+    repository: beret/swarm_companion
     tag: latest
     pullPolicy: Always
 

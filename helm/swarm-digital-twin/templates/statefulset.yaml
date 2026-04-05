@@ -106,6 +106,7 @@ spec:
           command: ["bash", "-lc"]
           args:
             - |
+              source /opt/ros/humble/setup.bash 2>/dev/null || true
               DRONE_ID=$(cat /config/drone-id)
               export ROS_DOMAIN_ID="$DRONE_ID"
               export ZENOH_CONFIG="/config/zenoh.json5"
@@ -116,19 +117,26 @@ spec:
             - name: drone-config
               mountPath: /config
               readOnly: true
+            - name: cargo-cache
+              mountPath: /root/workspace/swarm_control/target
           resources:
             {{- toYaml .Values.resources.swarmNode | nindent 12 }}
+          startupProbe:
+            exec:
+              command: ["bash", "-lc", "pgrep -f swarm_node >/dev/null || pgrep -f cargo >/dev/null"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 180
           livenessProbe:
             exec:
               command: ["bash", "-lc", "pgrep -f swarm_node >/dev/null || pgrep -f cargo >/dev/null"]
-            initialDelaySeconds: 30
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 5
           readinessProbe:
             exec:
               command: ["bash", "-lc", "pgrep -f swarm_node >/dev/null"]
-            initialDelaySeconds: 60
             periodSeconds: 15
             timeoutSeconds: 5
 
@@ -136,9 +144,10 @@ spec:
         - name: perception
           image: {{ include "swarm.companionImage" . }}
           imagePullPolicy: {{ .Values.images.companion.pullPolicy }}
-          command: ["bash", "-c"]
+          command: ["bash", "-lc"]
           args:
             - |
+              source /opt/ros/humble/setup.bash 2>/dev/null || true
               DRONE_ID=$(cat /config/drone-id)
               export ROS_DOMAIN_ID="$DRONE_ID"
               export PYTHONPATH="/root/workspace/perception:${PYTHONPATH}"
@@ -190,3 +199,11 @@ spec:
             name: {{ include "swarm.fullname" . }}-mission
         - name: sitl-logs
           emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: cargo-cache
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
