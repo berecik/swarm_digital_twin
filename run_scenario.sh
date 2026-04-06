@@ -197,9 +197,9 @@ k8s_wait_swarm_healthy() {
 k8s_swarm_status() {
     local n="${1:-$MAX_DRONES}"
 
-    echo -e "${BOLD}┌────────┬───────────┬───────────────┬───────────────┬────────────────┬───────────────┐${NC}" >&2
-    echo -e "${BOLD}│ Drone  │ Pod       │ sitl          │ swarm-node    │ perception     │ zenoh-bridge  │${NC}" >&2
-    echo -e "${BOLD}├────────┼───────────┼───────────────┼───────────────┼────────────────┼───────────────┤${NC}" >&2
+    echo -e "${BOLD}┌────────┬─────────────────────────────────┬───────────────┬───────────────┬────────────────┬───────────────┐${NC}" >&2
+    echo -e "${BOLD}│ Drone  │             Pod                 │ sitl          │ swarm-node    │ perception     │ zenoh-bridge  │${NC}" >&2
+    echo -e "${BOLD}├────────┼─────────────────────────────────┼───────────────┼───────────────┼────────────────┼───────────────┤${NC}" >&2
 
     for i in $(seq 0 $((n - 1))); do
         local drone_id=$((i + 1))
@@ -219,7 +219,7 @@ k8s_swarm_status() {
             "$drone_id" "$pod" "$sitl_status" "$swarm_status" "$percep_status" "$zenoh_status" >&2
     done
 
-    echo -e "${BOLD}└────────┴───────────┴───────────────┴───────────────┴────────────────┴───────────────┘${NC}" >&2
+    echo -e "${BOLD}└────────┴─────────────────────────────────┴───────────────┴───────────────┴────────────────┴───────────────┘${NC}" >&2
 
     local ready
     ready=$(kubectl get statefulset "$K8S_STS_NAME" \
@@ -578,7 +578,9 @@ run_swarm_mission() {
 
     # Generate formation mission config (shared by all swarm_nodes)
     local tmp_mission="$ROOT_DIR/logs/.swarm_mission_tmp.json"
+    local tmp_wp_dir="$ROOT_DIR/logs/.swarm_waypoints_tmp"
     mkdir -p "$ROOT_DIR/logs"
+    rm -rf "$tmp_wp_dir"
     info "Generating formation mission for $n drones..."
     python "$SIM_DIR/sitl_waypoints.py" formation \
         --n "$n" \
@@ -587,6 +589,16 @@ run_swarm_mission() {
         --patrol-size 40 \
         --cruise-speed 4.0 \
         --output "$tmp_mission"
+
+    # Also generate per-drone QGC waypoint files for the orchestrator
+    # to upload to ArduPilot SITL via MAVLink (Rust swarm_node speaks
+    # PX4 messages over Zenoh, which ArduPilot does not understand).
+    info "Generating per-drone ring waypoints for $n drones..."
+    python "$SIM_DIR/sitl_waypoints.py" ring \
+        --n "$n" \
+        --radius 8 \
+        --altitude 20 \
+        --output-dir "$tmp_wp_dir"
 
     local log_dir
     if [ "$backend" = "k8s" ]; then
@@ -635,6 +647,7 @@ run_swarm_mission() {
         --host "$mav_host" \
         --base-port "$mav_base_port" \
         --port-step "$mav_port_step" \
+        --mission-dir "$tmp_wp_dir" \
         "${timeout_flag[@]}" || true
 
     # Capture SITL logs
