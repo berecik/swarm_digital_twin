@@ -42,28 +42,42 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Custom image reference — prepends images.registry when non-empty.
+  registry="beret", name="ardupilot-sitl" → "beret/ardupilot-sitl"
+  registry="",      name="ardupilot-sitl" → "ardupilot-sitl"
+*/}}
+{{- define "swarm.customImage" -}}
+{{- $registry := .registry -}}
+{{- if $registry -}}
+{{ $registry }}/{{ .name }}:{{ .tag }}
+{{- else -}}
+{{ .name }}:{{ .tag }}
+{{- end -}}
+{{- end }}
+
+{{/*
 SITL image reference
 */}}
 {{- define "swarm.sitlImage" -}}
-{{ .Values.images.sitl.repository }}:{{ .Values.images.sitl.tag }}
+{{- include "swarm.customImage" (dict "registry" .Values.images.registry "name" .Values.images.sitl.name "tag" .Values.images.sitl.tag) }}
 {{- end }}
 
 {{/*
 Companion image reference (swarm-node + perception)
 */}}
 {{- define "swarm.companionImage" -}}
-{{ .Values.images.companion.repository }}:{{ .Values.images.companion.tag }}
+{{- include "swarm.customImage" (dict "registry" .Values.images.registry "name" .Values.images.companion.name "tag" .Values.images.companion.tag) }}
 {{- end }}
 
 {{/*
-Zenoh bridge image reference
+Zenoh bridge image reference (third-party, full repository path)
 */}}
 {{- define "swarm.zenohBridgeImage" -}}
 {{ .Values.images.zenohBridge.repository }}:{{ .Values.images.zenohBridge.tag }}
 {{- end }}
 
 {{/*
-Zenoh router image reference
+Zenoh router image reference (third-party, full repository path)
 */}}
 {{- define "swarm.zenohRouterImage" -}}
 {{ .Values.images.zenohRouter.repository }}:{{ .Values.images.zenohRouter.tag }}

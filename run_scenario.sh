@@ -80,7 +80,7 @@ k8s_pod_name() {
 }
 
 k8s_ensure_images() {
-    local registry="${SWARM_REGISTRY:-ghcr.io/berecik}"
+    local registry="${SWARM_REGISTRY:-beret}"
     local tag="${SWARM_IMAGE_TAG:-latest}"
 
     local sitl_remote="${registry}/ardupilot-sitl:${tag}"
@@ -111,12 +111,25 @@ k8s_swarm_up() {
 
     k8s_ensure_images
 
+    # Wait for namespace termination if it's being deleted
+    local ns_status
+    ns_status=$(kubectl get ns "$K8S_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+    if [ "$ns_status" = "Terminating" ]; then
+        info "Waiting for namespace '$K8S_NAMESPACE' to finish terminating..."
+        while kubectl get ns "$K8S_NAMESPACE" &>/dev/null; do
+            sleep 2
+        done
+    fi
+
     info "Deploying ${n}-drone Helm release..."
+
+    local registry="${SWARM_REGISTRY:-beret}"
 
     local helm_args=(
         upgrade --install "$HELM_RELEASE" "$HELM_CHART"
         -n "$K8S_NAMESPACE" --create-namespace
         --set "drones=$n"
+        --set "images.registry=$registry"
     )
 
     # Deploy mission config via --set-file if provided
@@ -131,7 +144,9 @@ k8s_swarm_up() {
         helm_args+=(-f "$HELM_CHART/values-local.yaml" --set "drones=$n")
     fi
 
-    helm "${helm_args[@]}" 2>&1 | tail -10 >&2
+    if ! helm "${helm_args[@]}" >&2; then
+        fail "Helm deploy failed"
+    fi
 
     k8s_wait_swarm_healthy "$n" 300
 
@@ -602,11 +617,33 @@ run_swarm_mission() {
         info "Running swarm formation flight (${n} drones, no timeout)..."
     fi
     info "  Drones fly as swarm in ring formation, offboard-controlled by swarm_nodes"
+
+    # K8s: port-forward MAVLink ports to localhost before running orchestrator
+    local _pf_pids=()
+    if [ "$backend" = "k8s" ]; then
+        local base_port=5760
+        local port_step=10
+        for i in $(seq 0 $((n - 1))); do
+            local local_port=$((base_port + i * port_step))
+            local pod
+            pod=$(k8s_pod_name "$i")
+            kubectl port-forward "$pod" -n "$K8S_NAMESPACE" "${local_port}:5760" &>/dev/null &
+            _pf_pids+=($!)
+        done
+        sleep 2  # let port-forwards establish
+        info "  Port-forwarding MAVLink for $n drones (localhost:5760..)"
+    fi
+
     python "$SIM_DIR/sitl_orchestrator.py" swarm-formation \
         --n "$n" \
         --base-port 5760 \
         --port-step 10 \
         "${timeout_flag[@]}" || true
+
+    # Clean up port-forwards
+    for pid in "${_pf_pids[@]}"; do
+        kill "$pid" 2>/dev/null || true
+    done
 
     # Capture SITL logs
     local log_dirs=()
@@ -700,16 +737,34 @@ run_single_mission() {
 
     # Run orchestrator
     info "Running single-drone mission (timeout=${timeout}s)..."
+
+    local backend
+    backend=$(detect_backend)
+
+    # K8s: port-forward MAVLink port to localhost
+    local _pf_pid=""
+    if [ "$backend" = "k8s" ]; then
+        local pod
+        pod=$(k8s_pod_name 0)
+        kubectl port-forward "$pod" -n "$K8S_NAMESPACE" "5760:5760" &>/dev/null &
+        _pf_pid=$!
+        sleep 2
+        info "  Port-forwarding MAVLink for drone 1 (localhost:5760)"
+    fi
+
     python "$SIM_DIR/sitl_orchestrator.py" single \
         --port 5760 \
         --mission "$mission_file" \
         --timeout "$timeout" || true
 
+    # Clean up port-forward
+    if [ -n "$_pf_pid" ]; then
+        kill "$_pf_pid" 2>/dev/null || true
+    fi
+
     # Capture flight logs
     local drone_log_dir="$log_dir/drone_1"
     mkdir -p "$drone_log_dir"
-    local backend
-    backend=$(detect_backend)
     if [ "$backend" = "k8s" ]; then
         local pod
         pod=$(k8s_pod_name 0)

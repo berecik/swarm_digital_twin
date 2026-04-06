@@ -73,12 +73,13 @@ helm uninstall swarm -n swarm
 
 ## Images
 
-The chart uses two custom images published on Docker Hub:
+The chart uses two custom images published on
+[Docker Hub](https://hub.docker.com/u/beret) (default):
 
 | Image | Description |
 |---|---|
-| `beret/ardupilot-sitl:latest` | ArduPilot Copter-4.5.7 SITL (amd64 only) |
-| `beret/swarm_companion:latest` | ROS 2 Humble + Rust + perception stack |
+| [`beret/ardupilot-sitl:latest`](https://hub.docker.com/r/beret/ardupilot-sitl) | ArduPilot Copter-4.5.7 SITL (amd64 only) |
+| [`beret/swarm_companion:latest`](https://hub.docker.com/r/beret/swarm_companion) | ROS 2 Humble + Rust + perception stack (CUDA 12.2 base) |
 
 Third-party images pulled automatically:
 
@@ -88,32 +89,164 @@ Third-party images pulled automatically:
 | `eclipse/zenoh:latest` | Zenoh router |
 | `busybox:1.36` | Init container |
 
+### Setting up Docker Hub
+
+Docker Hub is the default registry. A free account allows unlimited
+public repositories.
+
+1. **Create an account** at https://hub.docker.com/signup.
+
+2. **Log in from the command line:**
+   ```bash
+   docker login
+   ```
+   Enter your Docker Hub username and password (or a Personal Access Token).
+   Credentials are stored in `~/.docker/config.json`.
+
+3. **Verify:**
+   ```bash
+   docker info | grep Username
+   # Should show: Username: your-username
+   ```
+
+Repositories are created automatically on first push. No manual setup needed.
+
 ### Building and pushing images
 
-If you need to rebuild and push the custom images:
+After code changes, rebuild and push to Docker Hub:
 
 ```bash
-# From any machine with Docker and the source code
+# Build and push both images (default: beret/)
 ./scripts/push_images.sh
 
-# Or with a custom tag
+# Push with a version tag
 ./scripts/push_images.sh --tag v0.2.0
 
-# Or from a machine that already has the images built (e.g. paul)
+# Only rebuild one image
+./scripts/push_images.sh --sitl
+./scripts/push_images.sh --companion
+
+# Preview commands without executing
+./scripts/push_images.sh --dry-run
+```
+
+If you already have the images built locally (e.g. from `docker compose build`):
+
+```bash
 docker tag ardupilot-sitl:latest beret/ardupilot-sitl:latest
 docker tag swarm_companion:latest beret/swarm_companion:latest
 docker push beret/ardupilot-sitl:latest
 docker push beret/swarm_companion:latest
 ```
 
+### Using GitHub Container Registry (ghcr.io)
+
+ghcr.io is an alternative to Docker Hub, tied to your GitHub account. Every
+GitHub user can push images to `ghcr.io/<username>/` with a Personal Access
+Token. This is useful if you want images linked to your GitHub repository.
+
+**1. Create a GitHub Personal Access Token (classic):**
+
+Go to https://github.com/settings/tokens/new and create a token with
+these scopes:
+
+| Scope | Purpose |
+|---|---|
+| `write:packages` | Push images |
+| `read:packages` | Pull images (needed for private packages) |
+| `delete:packages` | Optional, delete old tags |
+
+Save the token — you will not be able to see it again.
+
+**2. Log in to ghcr.io:**
+
+```bash
+echo "YOUR_GITHUB_PAT" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+For example:
+
+```bash
+echo "ghp_xxxxxxxxxxxx" | docker login ghcr.io -u berecik --password-stdin
+```
+
+**3. Push images to ghcr.io:**
+
+```bash
+./scripts/push_images.sh --registry ghcr.io/berecik
+```
+
+Or manually:
+
+```bash
+docker tag ardupilot-sitl:latest ghcr.io/berecik/ardupilot-sitl:latest
+docker tag swarm_companion:latest ghcr.io/berecik/swarm_companion:latest
+docker push ghcr.io/berecik/ardupilot-sitl:latest
+docker push ghcr.io/berecik/swarm_companion:latest
+```
+
+**4. Make packages public** (recommended for open-source projects):
+
+After the first push, ghcr.io packages default to **private**. To make them
+public so anyone can pull without authentication:
+
+- Go to https://github.com/berecik/swarm_digital_twin/pkgs/container/ardupilot-sitl
+- Click "Package settings" (bottom of the right sidebar)
+- Under "Danger Zone", click "Change visibility" and select "Public"
+- Repeat for `swarm_companion`
+
+**5. Deploy with ghcr.io images:**
+
+```bash
+helm install swarm ./helm/swarm-digital-twin \
+  --set images.registry=ghcr.io/berecik \
+  -n swarm --create-namespace
+```
+
+Or set `SWARM_REGISTRY` when using `run_scenario.sh`:
+
+```bash
+SWARM_REGISTRY=ghcr.io/berecik ./run_scenario.sh --swarm 2
+```
+
+### Using other registries
+
+```bash
+# AWS ECR
+aws ecr get-login-password | docker login --username AWS --password-stdin 123456789.dkr.ecr.us-east-1.amazonaws.com
+./scripts/push_images.sh --registry 123456789.dkr.ecr.us-east-1.amazonaws.com
+
+# Google Artifact Registry
+gcloud auth configure-docker us-docker.pkg.dev
+./scripts/push_images.sh --registry us-docker.pkg.dev/my-project/swarm
+```
+
+For private registries, create an image pull secret:
+
+```bash
+kubectl create secret docker-registry regcred \
+  --docker-server=your-registry.example.com \
+  --docker-username=your-user \
+  --docker-password=your-token \
+  -n swarm
+
+helm install swarm ./helm/swarm-digital-twin \
+  --set imagePullSecrets[0].name=regcred \
+  -n swarm --create-namespace
+```
+
 ### Loading images into k3s
 
-If your k3s node has the images in its local Docker daemon but not in
-containerd, run on the node:
+k3s uses containerd, not Docker. If your k3s node has the images in its
+local Docker daemon but k3s can't see them, run **on the k3s node**:
 
 ```bash
 sudo ./scripts/k3s_import_images.sh
 ```
+
+This saves each image from Docker and imports it into k3s containerd.
+After import, set `pullPolicy: Never` in values or use `values-local.yaml`
+to prevent k3s from trying to pull from a registry.
 
 ## Helm Values
 
@@ -122,17 +255,31 @@ sudo ./scripts/k3s_import_images.sh
 ```yaml
 drones: 6                              # Number of drone pods
 images:
+  registry: beret                      # Docker Hub namespace (override with --set images.registry=...)
   sitl:
-    repository: beret/ardupilot-sitl   # Docker Hub
+    name: ardupilot-sitl               # → beret/ardupilot-sitl:latest
     tag: latest
   companion:
-    repository: beret/swarm_companion
+    name: swarm_companion              # → beret/swarm_companion:latest
     tag: latest
 sitl:
   lat: "-0.508333"                     # Quito, Ecuador
   lng: "-78.141667"
   alt: "4500"
   vehicle: copter
+```
+
+To switch all custom images to a different registry:
+
+```bash
+# ghcr.io
+helm install swarm ./helm/swarm-digital-twin --set images.registry=ghcr.io/berecik -n swarm --create-namespace
+
+# Your own Docker Hub namespace
+helm install swarm ./helm/swarm-digital-twin --set images.registry=your-username -n swarm --create-namespace
+
+# Local images (no registry)
+helm install swarm ./helm/swarm-digital-twin --set images.registry="" -n swarm --create-namespace
 ```
 
 ### Values profiles

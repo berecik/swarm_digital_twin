@@ -5,12 +5,8 @@ drones: 6
 
 images:
   sitl:
-    repository: beret/ardupilot-sitl
-    tag: latest
     pullPolicy: Always
   companion:
-    repository: beret/swarm_companion
-    tag: latest
     pullPolicy: Always
 
 service:

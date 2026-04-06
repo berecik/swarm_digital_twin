@@ -4,13 +4,10 @@
 drones: 2
 
 images:
+  registry: ""
   sitl:
-    repository: ardupilot-sitl
-    tag: latest
     pullPolicy: Never
   companion:
-    repository: swarm_companion
-    tag: latest
     pullPolicy: Never
 
 resources:

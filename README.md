@@ -187,6 +187,34 @@ python -m pytest test/
 
 See [TESTING.md](TESTING.md) for the full test catalog and [AGENTS.md](AGENTS.md) for development workflows.
 
+## Container Images
+
+The swarm simulation uses two custom Docker images published on
+[Docker Hub](https://hub.docker.com/u/beret) (default):
+
+| Image | Size | Description |
+|---|---|---|
+| [`beret/ardupilot-sitl`](https://hub.docker.com/r/beret/ardupilot-sitl) | ~130 MB | ArduPilot Copter-4.5.7 SITL (amd64 only) |
+| [`beret/swarm_companion`](https://hub.docker.com/r/beret/swarm_companion) | ~6 GB | ROS 2 Humble + Rust + perception stack (CUDA 12.2 base) |
+
+These are pulled automatically by Kubernetes when you deploy the Helm chart.
+To rebuild and push after code changes:
+
+```bash
+# Build and push both images to Docker Hub (requires: docker login)
+./scripts/push_images.sh
+
+# Push to GitHub Container Registry instead
+docker login ghcr.io -u berecik
+./scripts/push_images.sh --registry ghcr.io/berecik
+
+# Tag a release
+./scripts/push_images.sh --tag v0.2.0
+```
+
+See [docs/kubernetes.md](docs/kubernetes.md) for account setup (Docker Hub and
+ghcr.io), registry configuration, and image management.
+
 ## Related Projects
 
 - **[Vingilot Project](https://github.com/berecik/das_sar)** — Project documentation, architecture, safety case, and business analysis.

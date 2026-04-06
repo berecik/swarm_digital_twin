@@ -6,12 +6,17 @@ namespace: swarm
 drones: 6
 
 images:
+  # Registry prefix for custom images (sitl, companion).
+  # Override with: --set images.registry=ghcr.io/berecik
+  #                --set images.registry=your-dockerhub-user
+  # Set to "" for local images (pullPolicy: Never).
+  registry: beret
   sitl:
-    repository: beret/ardupilot-sitl
+    name: ardupilot-sitl
     tag: latest
     pullPolicy: IfNotPresent
   companion:
-    repository: beret/swarm_companion
+    name: swarm_companion
     tag: latest
     pullPolicy: IfNotPresent
   zenohBridge:
