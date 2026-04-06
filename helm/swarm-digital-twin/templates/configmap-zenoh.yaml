@@ -6,66 +6,34 @@ metadata:
   labels:
     {{- include "swarm.labels" . | nindent 4 }}
 data:
-  {{- $routerService := include "swarm.zenohRouterServiceName" . }}
-  {{- $routerPort := .Values.zenohRouter.port }}
+  {{- /* Pod-0 DNS via headless service — the seed peer for the zenoh mesh */}}
+  {{- $fullname := include "swarm.fullname" . }}
+  {{- $headless := include "swarm.headlessServiceName" . }}
+  {{- $ns := .Values.namespace }}
+  {{- $seedDns := printf "%s-0.%s.%s.svc.cluster.local" $fullname $headless $ns }}
   {{- range $i := until (int .Values.drones) }}
   {{- $droneId := add1 $i }}
   drone_{{ $droneId }}.json5: |
     {
       "mode": "peer",
-      "metadata": {
-        "author": "beret@hipisi.org.pl",
-        "company": "Marysia Software Limited",
-        "domain": "app.marysia.drone",
-        "website": "https://marysia.app"
+      "listen": {
+        "endpoints": ["tcp/[::]:7447"]
       },
       "connect": {
-        "endpoints": ["tcp/{{ $routerService }}:{{ $routerPort }}"]
+        "endpoints": ["tcp/{{ $seedDns }}:7447"]
       },
       "scouting": {
         "multicast": { "enabled": false }
       },
       "timestamping": {
-        "enabled": { "egress": true, "ingress": true }
-      },
-      "namespace": "/swarm/drone_{{ $droneId }}",
-      "allow": {
-        "publications": [
-          "/swarm/drone_{{ $droneId }}/state",
-          "/swarm/drone_{{ $droneId }}/consensus/propose",
-          "/swarm/drone_{{ $droneId }}/consensus/raft_tx"
-        ],
-        "subscriptions": [
-          "/swarm/*/state",
-          "/swarm/*/consensus/raft_tx",
-          "/fmu/in/offboard_control_mode",
-          "/fmu/in/trajectory_setpoint",
-          "/fmu/in/vehicle_command",
-          "/fmu/out/vehicle_status",
-          "/fmu/out/vehicle_odometry"
-        ]
-      },
-      "deny": {
-        "publications": ["/**"],
-        "subscriptions": [
-          "/rosout",
-          "/parameter_events",
-          "/tf",
-          "/tf_static",
-          "/camera/**",
-          "/lidar/**",
-          "/image/**",
-          "/diagnostics",
-          "/clock",
-          "/joint_states"
-        ]
+        "enabled": { "router": true, "peer": true, "client": true }
       }
     }
   bridge_drone_{{ $droneId }}.json5: |
     {
-      "mode": "peer",
+      "mode": "client",
       "connect": {
-        "endpoints": ["tcp/{{ $routerService }}:{{ $routerPort }}"]
+        "endpoints": ["tcp/localhost:7447"]
       },
       "scouting": {
         "multicast": { "enabled": false }

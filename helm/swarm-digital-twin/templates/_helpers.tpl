@@ -77,22 +77,9 @@ Zenoh bridge image reference (third-party, full repository path)
 {{- end }}
 
 {{/*
-Zenoh router image reference (third-party, full repository path)
-*/}}
-{{- define "swarm.zenohRouterImage" -}}
-{{ .Values.images.zenohRouter.repository }}:{{ .Values.images.zenohRouter.tag }}
-{{- end }}
-
-{{/*
 Headless service name for StatefulSet DNS
 */}}
 {{- define "swarm.headlessServiceName" -}}
 {{ include "swarm.fullname" . }}-headless
 {{- end }}
 
-{{/*
-Zenoh router service name
-*/}}
-{{- define "swarm.zenohRouterServiceName" -}}
-{{ include "swarm.fullname" . }}-zenoh-router
-{{- end }}

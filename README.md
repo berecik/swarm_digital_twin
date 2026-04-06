@@ -53,7 +53,7 @@ The framework enables:
 │   ├── values.yaml             # Default values (6 drones, Docker Hub images)
 │   ├── values-local.yaml       # Minikube/kind overrides (2 drones, local images)
 │   ├── values-cloud.yaml       # EKS/GKE/AKS overrides
-│   └── templates/              # StatefulSet, Services, ConfigMaps, Zenoh router
+│   └── templates/              # StatefulSet, Services, ConfigMaps (point-to-point Zenoh mesh)
 ├── scripts/                    # Operational scripts
 │   ├── push_images.sh          # Build & push images to Docker Hub
 │   └── k3s_import_images.sh    # Import Docker images into k3s containerd
@@ -133,6 +133,8 @@ The scenario flies a drone through 7 waypoints over rolling-hill terrain with qu
 
 Kubernetes is the default orchestration backend. Each drone runs as a pod with
 4 containers (sitl, swarm-node, perception, zenoh-bridge) managed by a StatefulSet.
+Drones communicate **point-to-point** via a Zenoh peer mesh — no central router,
+no single point of failure.
 
 ```bash
 # Deploy 2-drone swarm (uses current kubectl context)

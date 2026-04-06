@@ -36,7 +36,10 @@ class SITLDrone:
         from pymavlink import mavutil
         uri = f"tcp:{self.host}:{self.port}"
         print(f"  [drone_{self.drone_id}] Connecting to {uri}...")
-        self.conn = mavutil.mavlink_connection(uri)
+        # autoreconnect=False so a dropped connection raises instead of
+        # spamming "EOF on TCP socket" forever (e.g. when a kubectl
+        # port-forward dies).
+        self.conn = mavutil.mavlink_connection(uri, autoreconnect=False)
         self.conn.wait_heartbeat(timeout=timeout)
         print(f"  [drone_{self.drone_id}] Connected "
               f"(sys={self.conn.target_system})")
@@ -177,9 +180,12 @@ class SITLDrone:
         return True
 
     def poll_once(self) -> str:
-        """Non-blocking poll. Returns 'flying', 'complete', or 'timeout'."""
+        """Non-blocking poll. Returns 'flying', 'complete', or 'disconnected'."""
         from pymavlink import mavutil
-        msg = self.conn.recv_match(blocking=True, timeout=0.1)
+        try:
+            msg = self.conn.recv_match(blocking=True, timeout=0.1)
+        except (ConnectionError, OSError, EOFError):
+            return "disconnected"
         if msg is None:
             return "flying"
         mtype = msg.get_type()
@@ -357,6 +363,7 @@ def run_swarm_formation(n_drones: int, base_port: int, port_step: int,
         completed = {}
         last_status = 0
 
+        disconnected = {}
         while active and (time.time() - start) < timeout:
             for drone_id in list(active.keys()):
                 drone = active[drone_id]
@@ -366,6 +373,12 @@ def run_swarm_formation(n_drones: int, base_port: int, port_step: int,
                     print(f"  [drone_{drone_id}] Mission complete "
                           f"after {elapsed}s")
                     completed[drone_id] = True
+                    del active[drone_id]
+                elif result == "disconnected":
+                    elapsed = int(time.time() - start)
+                    print(f"  [drone_{drone_id}] MAVLink disconnected "
+                          f"after {elapsed}s (port-forward died?)")
+                    disconnected[drone_id] = True
                     del active[drone_id]
 
             elapsed = time.time() - start

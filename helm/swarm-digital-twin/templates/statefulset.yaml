@@ -112,6 +112,16 @@ spec:
               export ZENOH_CONFIG="/config/zenoh.json5"
               cp /config/swarm_mission.json /root/workspace/swarm_mission.json 2>/dev/null || true
               cd /root/workspace/swarm_control
+
+              # Patch ZenohManager to load config from ZENOH_CONFIG env var
+              # (needed until image is rebuilt with this change)
+              SRC=src/communication.rs
+              if ! grep -q ZENOH_CONFIG "$SRC" 2>/dev/null; then
+                OLD='let session = zenoh::open(zenoh::Config::default()).await.unwrap();'
+                NEW='let config = match std::env::var("ZENOH_CONFIG") { Ok(p) => { eprintln!("Loading zenoh config: {p}"); match zenoh::Config::from_file(\&p) { Ok(c) => { eprintln!("Zenoh config loaded OK"); c } Err(e) => { eprintln!("Zenoh config FAILED: {e}, using default"); zenoh::Config::default() } } } Err(_) => zenoh::Config::default() }; let session = zenoh::open(config).await.unwrap();'
+                sed -i "s|$OLD|$NEW|" "$SRC" && echo "Patched $SRC for ZENOH_CONFIG"
+              fi
+
               exec cargo run --bin swarm_node -- "$DRONE_ID"
           volumeMounts:
             - name: drone-config
@@ -170,7 +180,13 @@ spec:
         - name: zenoh-bridge
           image: {{ include "swarm.zenohBridgeImage" . }}
           imagePullPolicy: {{ .Values.images.zenohBridge.pullPolicy }}
-          args: ["-c", "/config/bridge.json5"]
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "zenoh-bridge: waiting for swarm-node zenoh on localhost:7447..."
+              while ! nc -z localhost 7447 2>/dev/null; do sleep 2; done
+              echo "zenoh-bridge: zenoh peer ready, starting bridge"
+              exec /zenoh-bridge-ros2dds -c /config/bridge.json5
           env:
             - name: ROS_DISTRO
               value: humble
@@ -180,10 +196,16 @@ spec:
               readOnly: true
           resources:
             {{- toYaml .Values.resources.zenohBridge | nindent 12 }}
+          startupProbe:
+            exec:
+              command: ["sh", "-c", "pgrep -f zenoh-bridge-ros2dds >/dev/null || nc -z localhost 7447"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 180
           livenessProbe:
             exec:
               command: ["pgrep", "-f", "zenoh-bridge-ros2dds"]
-            initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3

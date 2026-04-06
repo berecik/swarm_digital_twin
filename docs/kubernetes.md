@@ -1,26 +1,28 @@
 # Kubernetes Deployment Guide
 
 Kubernetes is the default orchestration backend for the Swarm Digital Twin.
-The system is packaged as a Helm chart that deploys a StatefulSet with one pod
-per drone, a Zenoh router for cross-pod messaging, and supporting services.
+The system is packaged as a Helm chart that deploys a StatefulSet with one
+pod per drone. Drones communicate **point-to-point** via a Zenoh peer mesh
+(no central router, no single point of failure).
 
 ## Architecture
 
 ```
-                   +-------------------+
-                   |   zenoh-router    |  Deployment (1 replica)
-                   |   ClusterIP:7447  |
-                   +--------+----------+
-                            |
-              +-------------+-------------+
-              |                           |
-   +----------+----------+    +-----------+---------+
-   | drone pod 0         |    | drone pod 1         |
-   |  sitl               |    |  sitl               |
-   |  swarm-node ------->|    |  swarm-node ------->|
-   |  perception         |    |  perception         |
-   |  zenoh-bridge       |    |  zenoh-bridge       |
-   +---------------------+    +---------------------+
+   +---------------------+        +---------------------+
+   | drone pod 0         |        | drone pod 1         |
+   |   (seed peer)       |<------>|                     |
+   |                     |        |                     |
+   |  sitl               |        |  sitl               |
+   |  swarm-node :7447   |<------>|  swarm-node :7447   |
+   |     ^               |        |     ^               |
+   |     | localhost     |        |     | localhost     |
+   |  zenoh-bridge       |        |  zenoh-bridge       |
+   |  perception         |        |  perception         |
+   +---------------------+        +---------------------+
+                ^
+                |
+       MAVLink NodePort (per drone)
+
    StatefulSet (N replicas, shared localhost per pod)
 ```
 
@@ -33,8 +35,19 @@ Each drone pod contains 4 containers sharing `localhost`:
 | `perception` | `beret/swarm_companion` | Python vision pipeline |
 | `zenoh-bridge` | `eclipse/zenoh-bridge-ros2dds` | ROS 2 DDS to Zenoh bridge |
 
-An init container derives the drone ID from the pod ordinal (pod-0 = drone 1)
-and copies the correct Zenoh config and mission file into a shared volume.
+**Zenoh peer mesh:**
+- Each `swarm-node` opens a Zenoh **peer** session listening on `tcp/[::]:7447`.
+- All swarm-nodes use pod-0 as the **seed peer** (via the StatefulSet's
+  headless service DNS: `{pod}-0.{headless-service}.{namespace}.svc`).
+- The Zenoh gossip protocol then forms a full peer mesh between all drones.
+- Each `zenoh-bridge` runs in **client** mode and connects to its local
+  swarm-node at `tcp/localhost:7447`.
+- No central router exists. If pod-0 is restarted, the existing peers stay
+  connected; new peers reconnect to pod-0 once it's back.
+
+**Per-drone init:** an init container derives the drone ID from the pod
+ordinal (pod-0 → drone 1, pod-1 → drone 2, ...) and copies the correct
+Zenoh config and mission file into a shared volume.
 
 ## Prerequisites
 
@@ -86,7 +99,6 @@ Third-party images pulled automatically:
 | Image | Description |
 |---|---|
 | `eclipse/zenoh-bridge-ros2dds:latest` | Zenoh ROS 2 DDS bridge |
-| `eclipse/zenoh:latest` | Zenoh router |
 | `busybox:1.36` | Init container |
 
 ### Setting up Docker Hub
@@ -436,16 +448,31 @@ commands work transparently:
 
 The chart creates these Kubernetes services:
 
-| Service | Type | Purpose |
-|---|---|---|
-| `swarm-swarm-digital-twin-headless` | ClusterIP (None) | StatefulSet DNS for pod discovery |
-| `swarm-swarm-digital-twin-zenoh-router` | ClusterIP | Zenoh message router (port 7447) |
-| `swarm-swarm-digital-twin-mavlink-N` | NodePort | Per-drone MAVLink TCP access (ports 30760, 30770, ...) |
+| Service | Type | Ports | Purpose |
+|---|---|---|---|
+| `swarm-swarm-digital-twin-headless` | ClusterIP (None) | 5760, 7447 | StatefulSet DNS for pod-to-pod Zenoh peer discovery |
+| `swarm-swarm-digital-twin-mavlink-N` | NodePort | 5760 → 30760+10*(N-1) | Per-drone MAVLink TCP access |
 
-### Connecting QGroundControl
+The headless service exposes both MAVLink (5760) and Zenoh (7447) ports.
+The Zenoh port is used by swarm-nodes to discover each other via stable
+DNS names (`{pod}-N.{headless-service}.{namespace}.svc`). The per-drone
+NodePort services give the host external access to each drone's MAVLink.
 
-With NodePort services, connect QGC to `<node-ip>:30760` for drone 1,
-`<node-ip>:30770` for drone 2, etc.
+### Connecting QGroundControl / orchestrator
+
+With NodePort services, connect to `<node-ip>:30760` for drone 1,
+`<node-ip>:30770` for drone 2, etc. The `run_scenario.sh` script auto-detects
+the node IP and NodePort and passes them to the orchestrator:
+
+```bash
+NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+PORT=$(kubectl get svc swarm-swarm-digital-twin-mavlink-1 -n swarm -o jsonpath='{.spec.ports[0].nodePort}')
+# Connect QGC or pymavlink to tcp://${NODE_IP}:${PORT}
+```
+
+NodePort is preferred over `kubectl port-forward` for long-lived MAVLink
+connections — the latter can drop intermittently and breaks pymavlink's
+TCP reader.
 
 ## Troubleshooting
 
@@ -479,10 +506,51 @@ First-time compilation takes several minutes. The startup probe allows up to
 
 ### Zenoh connectivity issues
 
-Check that the zenoh-router pod is running and the bridge can connect:
+The zenoh mesh is **point-to-point**: each swarm-node listens on `:7447`,
+the local bridge connects to it via `localhost:7447`, and pods discover
+each other via the headless service DNS.
+
+**1. Check the swarm-node is listening on 7447:**
+
+```bash
+kubectl exec swarm-swarm-digital-twin-0 -n swarm -c swarm-node -- \
+  ss -tlnp 2>/dev/null | grep 7447
+```
+
+The swarm-node loads its zenoh config from `ZENOH_CONFIG=/config/zenoh.json5`.
+On startup it logs `Loading zenoh config:` followed by `Zenoh connected`.
+
+**2. Check the bridge connected to the local swarm-node:**
 
 ```bash
 kubectl logs swarm-swarm-digital-twin-0 -n swarm -c zenoh-bridge | head -20
 ```
 
-The bridge should log `Successfully started plugin ros2dds`.
+The bridge first prints `zenoh-bridge: waiting for swarm-node zenoh on
+localhost:7447...` and then `Successfully started plugin ros2dds` once
+the local swarm-node is up.
+
+**3. Check peers are meshed across pods:**
+
+The bridge logs `New ROS 2 bridge detected: <ZID>` when it discovers
+another drone's bridge over the zenoh mesh — this confirms cross-pod
+connectivity via pod-0 as the seed peer.
+
+**4. Common pitfall — stale zenoh config schema:**
+
+If the swarm-node logs `Zenoh config FAILED: unknown field ...`, the
+`/config/zenoh.json5` file uses fields not supported by the current zenoh
+version. Valid fields for zenoh 1.8: `mode`, `listen`, `connect`,
+`scouting`, `timestamping` with `{router, peer, client}` keys.
+
+### Helm release fails to install (namespace Terminating)
+
+If a previous `helm uninstall` is still cleaning up:
+
+```bash
+# Wait for namespace to fully terminate
+while kubectl get ns swarm 2>/dev/null | grep -q Terminating; do sleep 2; done
+helm install swarm ./helm/swarm-digital-twin --set drones=2 -n swarm --create-namespace
+```
+
+`run_scenario.sh` does this wait automatically.

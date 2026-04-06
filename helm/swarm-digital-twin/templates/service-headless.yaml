@@ -12,5 +12,9 @@ spec:
       port: 5760
       targetPort: mavlink
       protocol: TCP
+    - name: zenoh
+      port: 7447
+      targetPort: 7447
+      protocol: TCP
   selector:
     {{- include "swarm.selectorLabels" . | nindent 4 }}

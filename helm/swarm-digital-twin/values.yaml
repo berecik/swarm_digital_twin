@@ -23,10 +23,6 @@ images:
     repository: eclipse/zenoh-bridge-ros2dds
     tag: latest
     pullPolicy: IfNotPresent
-  zenohRouter:
-    repository: eclipse/zenoh
-    tag: latest
-    pullPolicy: IfNotPresent
   initContainer:
     repository: busybox
     tag: "1.36"
@@ -73,13 +69,6 @@ resources:
     limits:
       cpu: 500m
       memory: 256Mi
-  zenohRouter:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 256Mi
 
 # Service configuration
 service:
@@ -92,7 +81,6 @@ service:
 nodeSelector:
   kubernetes.io/arch: amd64
 
-# Zenoh router
-zenohRouter:
-  enabled: true
+# Zenoh peer mesh (point-to-point, no router)
+zenoh:
   port: 7447

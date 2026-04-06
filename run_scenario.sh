@@ -618,32 +618,24 @@ run_swarm_mission() {
     fi
     info "  Drones fly as swarm in ring formation, offboard-controlled by swarm_nodes"
 
-    # K8s: port-forward MAVLink ports to localhost before running orchestrator
-    local _pf_pids=()
+    # K8s: use NodePort services to reach SITL MAVLink ports (more
+    # reliable than `kubectl port-forward` for long-lived connections).
+    local mav_host="127.0.0.1"
+    local mav_base_port=5760
+    local mav_port_step=10
     if [ "$backend" = "k8s" ]; then
-        local base_port=5760
-        local port_step=10
-        for i in $(seq 0 $((n - 1))); do
-            local local_port=$((base_port + i * port_step))
-            local pod
-            pod=$(k8s_pod_name "$i")
-            kubectl port-forward "$pod" -n "$K8S_NAMESPACE" "${local_port}:5760" &>/dev/null &
-            _pf_pids+=($!)
-        done
-        sleep 2  # let port-forwards establish
-        info "  Port-forwarding MAVLink for $n drones (localhost:5760..)"
+        mav_host=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+        mav_base_port=$(kubectl get svc "${K8S_STS_NAME}-mavlink-1" -n "$K8S_NAMESPACE" \
+            -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo 30760)
+        info "  MAVLink via NodePort ${mav_host}:${mav_base_port}.."
     fi
 
     python "$SIM_DIR/sitl_orchestrator.py" swarm-formation \
         --n "$n" \
-        --base-port 5760 \
-        --port-step 10 \
+        --host "$mav_host" \
+        --base-port "$mav_base_port" \
+        --port-step "$mav_port_step" \
         "${timeout_flag[@]}" || true
-
-    # Clean up port-forwards
-    for pid in "${_pf_pids[@]}"; do
-        kill "$pid" 2>/dev/null || true
-    done
 
     # Capture SITL logs
     local log_dirs=()
@@ -741,26 +733,21 @@ run_single_mission() {
     local backend
     backend=$(detect_backend)
 
-    # K8s: port-forward MAVLink port to localhost
-    local _pf_pid=""
+    # K8s: use NodePort to reach SITL MAVLink (more stable than port-forward)
+    local mav_host="127.0.0.1"
+    local mav_port=5760
     if [ "$backend" = "k8s" ]; then
-        local pod
-        pod=$(k8s_pod_name 0)
-        kubectl port-forward "$pod" -n "$K8S_NAMESPACE" "5760:5760" &>/dev/null &
-        _pf_pid=$!
-        sleep 2
-        info "  Port-forwarding MAVLink for drone 1 (localhost:5760)"
+        mav_host=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+        mav_port=$(kubectl get svc "${K8S_STS_NAME}-mavlink-1" -n "$K8S_NAMESPACE" \
+            -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo 30760)
+        info "  MAVLink via NodePort ${mav_host}:${mav_port}"
     fi
 
     python "$SIM_DIR/sitl_orchestrator.py" single \
-        --port 5760 \
+        --host "$mav_host" \
+        --port "$mav_port" \
         --mission "$mission_file" \
         --timeout "$timeout" || true
-
-    # Clean up port-forward
-    if [ -n "$_pf_pid" ]; then
-        kill "$_pf_pid" 2>/dev/null || true
-    fi
 
     # Capture flight logs
     local drone_log_dir="$log_dir/drone_1"
@@ -1079,7 +1066,7 @@ case "$MODE" in
         echo "  swarm-node    — Rust swarm control (swarm_companion:latest)"
         echo "  perception    — Python vision pipeline (swarm_companion:latest)"
         echo "  zenoh-bridge  — Zenoh-ROS2-DDS bridge (eclipse/zenoh-bridge-ros2dds:latest)"
-        echo "  + zenoh-router Deployment for cross-pod Zenoh mesh"
+        echo "  Point-to-point Zenoh peer mesh (no router, pod-0 = seed peer)"
         ;;
 
     # ── Default (no args) ────────────────────────────────────────────────────
