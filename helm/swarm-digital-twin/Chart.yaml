@@ -1,0 +1,18 @@
+apiVersion: v2
+name: swarm-digital-twin
+description: UAV swarm digital twin — ArduPilot SITL + Rust swarm control + Zenoh mesh
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: beret
+    email: beret@hipisi.org.pl
+    url: https://marysia.app
+home: https://marysia.app
+keywords:
+  - drone
+  - swarm
+  - digital-twin
+  - ardupilot
+  - px4
+  - zenoh

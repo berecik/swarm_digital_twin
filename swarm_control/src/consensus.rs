@@ -544,19 +544,18 @@ mod tests {
         }
         let mut nodes = majority;
 
-        // Majority can still elect and commit
-        for _ in 0..30 {
-            for node in nodes.iter_mut() {
-                node.tick();
-            }
-            route_messages(&mut nodes);
-        }
-
-        // Majority should have a leader
-        assert!(nodes.iter().any(|n| n.is_leader()));
+        // Majority must elect a (possibly new) leader.  Use the same
+        // helper as initial election so it waits until all majority
+        // nodes agree on the leader, with enough rounds to absorb
+        // randomized election timeouts (election_tick=10 + jitter, plus
+        // pre-vote round).
+        assert!(
+            elect_leader(&mut nodes, 200).is_some(),
+            "majority should elect a leader after partition"
+        );
 
         // Minority should not have a leader (check_quorum + pre_vote)
-        for _ in 0..30 {
+        for _ in 0..50 {
             for node in minority.iter_mut() {
                 node.tick();
             }

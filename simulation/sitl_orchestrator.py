@@ -36,7 +36,10 @@ class SITLDrone:
         from pymavlink import mavutil
         uri = f"tcp:{self.host}:{self.port}"
         print(f"  [drone_{self.drone_id}] Connecting to {uri}...")
-        self.conn = mavutil.mavlink_connection(uri)
+        # autoreconnect=False so a dropped connection raises instead of
+        # spamming "EOF on TCP socket" forever (e.g. when a kubectl
+        # port-forward dies).
+        self.conn = mavutil.mavlink_connection(uri, autoreconnect=False)
         self.conn.wait_heartbeat(timeout=timeout)
         print(f"  [drone_{self.drone_id}] Connected "
               f"(sys={self.conn.target_system})")
@@ -177,9 +180,12 @@ class SITLDrone:
         return True
 
     def poll_once(self) -> str:
-        """Non-blocking poll. Returns 'flying', 'complete', or 'timeout'."""
+        """Non-blocking poll. Returns 'flying', 'complete', or 'disconnected'."""
         from pymavlink import mavutil
-        msg = self.conn.recv_match(blocking=True, timeout=0.1)
+        try:
+            msg = self.conn.recv_match(blocking=True, timeout=0.1)
+        except (ConnectionError, OSError, EOFError):
+            return "disconnected"
         if msg is None:
             return "flying"
         mtype = msg.get_type()
@@ -321,14 +327,20 @@ def run_swarm(n_drones: int, base_port: int, port_step: int,
 
 def run_swarm_formation(n_drones: int, base_port: int, port_step: int,
                         timeout: float = 600,
-                        host: str = "127.0.0.1") -> bool:
-    """Run N SITL drones in offboard formation mode.
+                        host: str = "127.0.0.1",
+                        mission_dir: str = None) -> bool:
+    """Run N SITL drones in formation flight.
 
-    Unlike run_swarm(), this does NOT upload individual missions or switch to
-    AUTO.  The Rust swarm_node containers handle all flight control in offboard
-    mode using the shared swarm_mission.json.  This function only:
-      1. Connects to all SITL instances and waits for GPS/EKF
-      2. Monitors until all drones have disarmed (mission complete) or timeout
+    The Rust swarm_node containers run their formation FSM and broadcast
+    state via Zenoh, but ArduPilot SITL only speaks MAVLink, so this
+    orchestrator also uploads per-drone waypoint missions and switches the
+    SITL drones to AUTO so they actually fly.
+
+    Phases:
+      1. Connect to all SITL instances and wait for GPS/EKF
+      2. Upload per-drone ring waypoints (if mission_dir provided)
+      3. Arm all drones and switch to AUTO (with stagger)
+      4. Monitor until all drones disarm (mission complete) or timeout
     """
     drones = []
 
@@ -347,16 +359,44 @@ def run_swarm_formation(n_drones: int, base_port: int, port_step: int,
         for drone in drones:
             drone.wait_gps_ekf(timeout=90)
 
-        # Phase 3: Monitor — swarm_nodes handle offboard control
+        # Phase 3: Upload missions + arm + AUTO
+        # ArduPilot SITL only speaks MAVLink, so the orchestrator must
+        # actually fly the drones — the Rust swarm_node communicates via
+        # Zenoh/PX4 messages and cannot drive ArduPilot directly.
+        if mission_dir:
+            print(f"\n=== Uploading per-drone missions ===")
+            failed = set()
+            for drone in drones:
+                wp_path = os.path.join(
+                    mission_dir, f"drone_{drone.drone_id}.waypoints")
+                if not os.path.exists(wp_path):
+                    print(f"  [drone_{drone.drone_id}] mission file missing: "
+                          f"{wp_path}")
+                    failed.add(drone.drone_id)
+                    continue
+                if not drone.upload_mission_file(wp_path):
+                    failed.add(drone.drone_id)
+
+            print(f"\n=== Arming {n_drones - len(failed)} drones (1s stagger) ===")
+            for drone in drones:
+                if drone.drone_id in failed:
+                    continue
+                drone.arm_and_auto()
+                if drone.drone_id < n_drones - 1:
+                    time.sleep(1)
+        else:
+            print(f"\n=== No mission_dir provided — passive monitoring only ===")
+
+        # Phase 4: Monitor
         print(f"\n=== Formation flight active — monitoring "
               f"(timeout={timeout}s) ===")
-        print(f"  Offboard control by swarm_node containers via Zenoh")
 
         start = time.time()
         active = {d.drone_id: d for d in drones}
         completed = {}
         last_status = 0
 
+        disconnected = {}
         while active and (time.time() - start) < timeout:
             for drone_id in list(active.keys()):
                 drone = active[drone_id]
@@ -366,6 +406,12 @@ def run_swarm_formation(n_drones: int, base_port: int, port_step: int,
                     print(f"  [drone_{drone_id}] Mission complete "
                           f"after {elapsed}s")
                     completed[drone_id] = True
+                    del active[drone_id]
+                elif result == "disconnected":
+                    elapsed = int(time.time() - start)
+                    print(f"  [drone_{drone_id}] MAVLink disconnected "
+                          f"after {elapsed}s (port-forward died?)")
+                    disconnected[drone_id] = True
                     del active[drone_id]
 
             elapsed = time.time() - start
@@ -415,6 +461,10 @@ if __name__ == "__main__":
     sp.add_argument("--n", type=int, required=True, help="Number of drones")
     sp.add_argument("--base-port", type=int, default=5760)
     sp.add_argument("--port-step", type=int, default=10)
+    sp.add_argument("--mission-dir", default=None,
+                    help="Dir with drone_N.waypoints — orchestrator uploads "
+                         "and arms the drones. Without it, only passive "
+                         "monitoring (assumes external offboard controller).")
     sp.add_argument("--timeout", type=int, default=86400,
                     help="Timeout in seconds (default: 86400 = 24h, effectively no limit)")
 
@@ -432,5 +482,6 @@ if __name__ == "__main__":
         sys.exit(0 if n_ok == n_total else 4)
     elif args.mode == "swarm-formation":
         ok = run_swarm_formation(args.n, args.base_port, args.port_step,
-                                 args.timeout, args.host)
+                                 args.timeout, args.host,
+                                 mission_dir=args.mission_dir)
         sys.exit(0 if ok else 4)

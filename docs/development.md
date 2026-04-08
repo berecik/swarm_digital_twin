@@ -19,19 +19,44 @@ If you only want to develop and test algorithms using the physics engine (no ROS
 
 ---
 
-## 🐋 Full Swarm Development (Docker)
+## Full Swarm Development (Kubernetes — Default)
 
-To develop with the full stack (ROS 2, Zenoh, PX4 Messages):
+Kubernetes is the default orchestration backend. Each drone runs as a pod with
+4 containers (sitl, swarm-node, perception, zenoh-bridge) managed by a Helm chart.
+
+1. **Prerequisites:** `kubectl` configured for your cluster, `helm` 3.x.
+2. **Deploy:**
+   ```bash
+   helm install swarm ./helm/swarm-digital-twin --set drones=2 -n swarm --create-namespace
+   ```
+3. **Verify:**
+   ```bash
+   kubectl get pods -n swarm    # wait for 4/4 Ready
+   ```
+4. **Test:**
+   ```bash
+   pytest tests/ -v
+   ```
+5. **Teardown:**
+   ```bash
+   helm uninstall swarm -n swarm
+   ```
+
+See [kubernetes.md](kubernetes.md) for the full deployment guide, values profiles,
+image management, and troubleshooting.
+
+## Full Swarm Development (Docker Compose — Legacy)
+
+To develop with Docker Compose instead of Kubernetes:
 
 1. **Build Environment:**
    ```bash
-   docker-compose build
+   docker compose build
    ```
 2. **Launch Swarm:**
    ```bash
-   docker-compose up
+   ./run_scenario.sh --swarm 2 --backend=docker
    ```
-   *Note: This starts multiple drone containers and a Zenoh router.*
 3. **Visualize on Host:**
    ```bash
    python3 visualize_on_host.py

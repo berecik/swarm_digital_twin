@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "swarm.headlessServiceName" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "swarm.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  ports:
+    - name: mavlink
+      port: 5760
+      targetPort: mavlink
+      protocol: TCP
+    - name: zenoh
+      port: 7447
+      targetPort: 7447
+      protocol: TCP
+  selector:
+    {{- include "swarm.selectorLabels" . | nindent 4 }}

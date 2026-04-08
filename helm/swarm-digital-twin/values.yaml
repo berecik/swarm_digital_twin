@@ -1,0 +1,86 @@
+# Default values for swarm-digital-twin
+# Override with values-local.yaml (minikube/kind) or values-cloud.yaml (EKS/GKE/AKS)
+
+namespace: swarm
+
+drones: 6
+
+images:
+  # Registry prefix for custom images (sitl, companion).
+  # Override with: --set images.registry=ghcr.io/berecik
+  #                --set images.registry=your-dockerhub-user
+  # Set to "" for local images (pullPolicy: Never).
+  registry: beret
+  sitl:
+    name: ardupilot-sitl
+    tag: latest
+    pullPolicy: IfNotPresent
+  companion:
+    name: swarm_companion
+    tag: latest
+    pullPolicy: IfNotPresent
+  zenohBridge:
+    repository: eclipse/zenoh-bridge-ros2dds
+    tag: latest
+    pullPolicy: IfNotPresent
+  initContainer:
+    repository: busybox
+    tag: "1.36"
+    pullPolicy: IfNotPresent
+
+# SITL simulation parameters
+sitl:
+  lat: "-0.508333"
+  lng: "-78.141667"
+  alt: "4500"
+  vehicle: copter
+
+# Formation mission config (override with --set-file missionConfig=path)
+missionConfig: |
+  {"pattern":{"type":"Ring","radius":8.0},"altitude":20.0,"waypoints":[[0.0,0.0,20.0],[40.0,0.0,20.0],[40.0,40.0,20.0],[0.0,40.0,20.0],[0.0,0.0,20.0]],"waypoint_accept_radius":3.0,"cruise_speed":4.0,"n_drones":6}
+
+# Resource limits per container
+resources:
+  sitl:
+    requests:
+      cpu: 500m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  swarmNode:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  perception:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  zenohBridge:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# Service configuration
+service:
+  mavlink:
+    type: NodePort
+    baseNodePort: 30760
+    nodePortStep: 10
+
+# Node selector (SITL requires x86_64)
+nodeSelector:
+  kubernetes.io/arch: amd64
+
+# Zenoh peer mesh (point-to-point, no router)
+zenoh:
+  port: 7447

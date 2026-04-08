@@ -1,0 +1,231 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "swarm.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "swarm.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "swarm.headlessServiceName" . }}
+  replicas: {{ .Values.drones }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "swarm.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "swarm.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      # ── Init container: derive drone ID from pod ordinal ──────────────
+      initContainers:
+        - name: init-config
+          image: {{ .Values.images.initContainer.repository }}:{{ .Values.images.initContainer.tag }}
+          imagePullPolicy: {{ .Values.images.initContainer.pullPolicy }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              # Extract ordinal from hostname (e.g. swarm-digital-twin-0 → 0)
+              ORDINAL=$(echo "$HOSTNAME" | rev | cut -d'-' -f1 | rev)
+              DRONE_ID=$((ORDINAL + 1))
+
+              echo "$DRONE_ID" > /config/drone-id
+              echo "$ORDINAL" > /config/instance
+
+              # Copy the correct zenoh config for this drone
+              cp "/zenoh-configs/drone_${DRONE_ID}.json5" /config/zenoh.json5
+              cp "/zenoh-configs/bridge_drone_${DRONE_ID}.json5" /config/bridge.json5
+
+              # Copy mission config
+              cp /mission-config/swarm_mission.json /config/swarm_mission.json
+
+              echo "init-config: drone_id=$DRONE_ID instance=$ORDINAL"
+          volumeMounts:
+            - name: drone-config
+              mountPath: /config
+            - name: zenoh-configs
+              mountPath: /zenoh-configs
+              readOnly: true
+            - name: mission-config
+              mountPath: /mission-config
+              readOnly: true
+
+      containers:
+        # ── SITL: ArduPilot Software-in-the-Loop ────────────────────────
+        - name: sitl
+          image: {{ include "swarm.sitlImage" . }}
+          imagePullPolicy: {{ .Values.images.sitl.pullPolicy }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              INSTANCE=$(cat /config/instance)
+              export INSTANCE
+              exec /sitl/entrypoint.sh {{ .Values.sitl.vehicle }}
+          env:
+            - name: SIM_LAT
+              value: {{ .Values.sitl.lat | quote }}
+            - name: SIM_LNG
+              value: {{ .Values.sitl.lng | quote }}
+            - name: SIM_ALT
+              value: {{ .Values.sitl.alt | quote }}
+          ports:
+            - name: mavlink
+              containerPort: 5760
+              protocol: TCP
+          volumeMounts:
+            - name: drone-config
+              mountPath: /config
+              readOnly: true
+            - name: sitl-logs
+              mountPath: /sitl/logs
+          resources:
+            {{- toYaml .Values.resources.sitl | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["pgrep", "-x", "arducopter|arduplane"]
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["pgrep", "-x", "arducopter|arduplane"]
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+
+        # ── Swarm node: Rust control binary ─────────────────────────────
+        - name: swarm-node
+          image: {{ include "swarm.companionImage" . }}
+          imagePullPolicy: {{ .Values.images.companion.pullPolicy }}
+          command: ["bash", "-lc"]
+          args:
+            - |
+              source /opt/ros/humble/setup.bash 2>/dev/null || true
+              DRONE_ID=$(cat /config/drone-id)
+              export ROS_DOMAIN_ID="$DRONE_ID"
+              export ZENOH_CONFIG="/config/zenoh.json5"
+              cp /config/swarm_mission.json /root/workspace/swarm_mission.json 2>/dev/null || true
+              cd /root/workspace/swarm_control
+
+              # Patch ZenohManager to load config from ZENOH_CONFIG env var
+              # (needed until image is rebuilt with this change)
+              SRC=src/communication.rs
+              if ! grep -q ZENOH_CONFIG "$SRC" 2>/dev/null; then
+                OLD='let session = zenoh::open(zenoh::Config::default()).await.unwrap();'
+                NEW='let config = match std::env::var("ZENOH_CONFIG") { Ok(p) => { eprintln!("Loading zenoh config: {p}"); match zenoh::Config::from_file(\&p) { Ok(c) => { eprintln!("Zenoh config loaded OK"); c } Err(e) => { eprintln!("Zenoh config FAILED: {e}, using default"); zenoh::Config::default() } } } Err(_) => zenoh::Config::default() }; let session = zenoh::open(config).await.unwrap();'
+                sed -i "s|$OLD|$NEW|" "$SRC" && echo "Patched $SRC for ZENOH_CONFIG"
+              fi
+
+              exec cargo run --bin swarm_node -- "$DRONE_ID"
+          volumeMounts:
+            - name: drone-config
+              mountPath: /config
+              readOnly: true
+            - name: cargo-cache
+              mountPath: /root/workspace/swarm_control/target
+          resources:
+            {{- toYaml .Values.resources.swarmNode | nindent 12 }}
+          startupProbe:
+            exec:
+              command: ["bash", "-lc", "pgrep -f swarm_node >/dev/null || pgrep -f cargo >/dev/null"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 180
+          livenessProbe:
+            exec:
+              command: ["bash", "-lc", "pgrep -f swarm_node >/dev/null || pgrep -f cargo >/dev/null"]
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["bash", "-lc", "pgrep -f swarm_node >/dev/null"]
+            periodSeconds: 15
+            timeoutSeconds: 5
+
+        # ── Perception: Python vision pipeline ──────────────────────────
+        - name: perception
+          image: {{ include "swarm.companionImage" . }}
+          imagePullPolicy: {{ .Values.images.companion.pullPolicy }}
+          command: ["bash", "-lc"]
+          args:
+            - |
+              source /opt/ros/humble/setup.bash 2>/dev/null || true
+              DRONE_ID=$(cat /config/drone-id)
+              export ROS_DOMAIN_ID="$DRONE_ID"
+              export PYTHONPATH="/root/workspace/perception:${PYTHONPATH}"
+              exec python3 -m perception_core.detector
+          volumeMounts:
+            - name: drone-config
+              mountPath: /config
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources.perception | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["bash", "-lc", "pgrep -f detector >/dev/null"]
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+
+        # ── Zenoh bridge: ROS 2 DDS ↔ Zenoh ────────────────────────────
+        - name: zenoh-bridge
+          image: {{ include "swarm.zenohBridgeImage" . }}
+          imagePullPolicy: {{ .Values.images.zenohBridge.pullPolicy }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "zenoh-bridge: waiting for swarm-node zenoh on localhost:7447..."
+              while ! nc -z localhost 7447 2>/dev/null; do sleep 2; done
+              echo "zenoh-bridge: zenoh peer ready, starting bridge"
+              exec /zenoh-bridge-ros2dds -c /config/bridge.json5
+          env:
+            - name: ROS_DISTRO
+              value: humble
+          volumeMounts:
+            - name: drone-config
+              mountPath: /config
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources.zenohBridge | nindent 12 }}
+          startupProbe:
+            exec:
+              command: ["sh", "-c", "pgrep -f zenoh-bridge-ros2dds >/dev/null || nc -z localhost 7447"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 180
+          livenessProbe:
+            exec:
+              command: ["pgrep", "-f", "zenoh-bridge-ros2dds"]
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+      volumes:
+        - name: drone-config
+          emptyDir: {}
+        - name: zenoh-configs
+          configMap:
+            name: {{ include "swarm.fullname" . }}-zenoh
+        - name: mission-config
+          configMap:
+            name: {{ include "swarm.fullname" . }}-mission
+        - name: sitl-logs
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: cargo-cache
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
