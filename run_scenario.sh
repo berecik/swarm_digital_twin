@@ -984,6 +984,20 @@ case "$MODE" in
         ;;
 
     # ── Legacy modes (Python physics engine — no Docker needed) ──────────────
+    --viz-live)
+        ensure_venv
+        python3 simulation/runtime_view/server.py
+        ;;
+    --single-live)
+        ensure_venv
+        # Start server in background
+        python3 simulation/runtime_view/server.py &
+        SERVER_PID=$!
+        sleep 2
+        # Run single scenario (bridge will send to default 14550)
+        run_single_scenario
+        kill $SERVER_PID
+        ;;
     --physics-single)
         ensure_venv
         run_single_scenario
@@ -1067,6 +1081,10 @@ case "$MODE" in
         echo "  --all           Run tests, benchmarks, single-drone mission, integration tests, and viz"
         echo "  --timeout=N     Set pytest timeout in seconds (default: no timeout)"
         echo "  --help          Show this help"
+        echo ""
+        echo "Real-time Telemetry (Run-time View):"
+        echo "  --viz-live       Launch real-time telemetry dashboard (Run-time View)"
+        echo "  --single-live    Launch single drone sim with real-time telemetry"
         echo ""
         echo "Docker backend — per-drone stack (6 drones x 4 services = 24 containers):"
         echo "  sitl_drone_N      — Pixhawk sim + Micro-XRCE-DDS Agent (ROS_DOMAIN_ID=N)"

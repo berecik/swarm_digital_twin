@@ -1,0 +1,16 @@
+[
+  {
+    "id": "single_hover",
+    "name": "Single Drone Hover",
+    "description": "A single drone taking off and hovering at 10m AGL.",
+    "thumbnail": "/web/img/hover.png",
+    "command": "./run_scenario.sh --single-live"
+  },
+  {
+    "id": "swarm_search",
+    "name": "Swarm Area Search",
+    "description": "6 drones performing an autonomous search over terrain.",
+    "thumbnail": "/web/img/swarm.png",
+    "command": "./run_scenario.sh --viz-live"
+  }
+]
