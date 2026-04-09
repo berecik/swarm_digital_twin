@@ -4,6 +4,11 @@
 [![Language](https://img.shields.io/badge/Language-Rust-orange.svg)](https://www.rust-lang.org/)
 [![Language](https://img.shields.io/badge/Language-Python-blue.svg)](https://www.python.org/)
 [![Middleware](https://img.shields.io/badge/Middleware-Zenoh-green.svg)](https://zenoh.io/)
+[![Quick Start](https://img.shields.io/badge/docs-Quick%20Start-brightgreen)](docs/QUICKSTART.md)
+
+## 🚀 Getting Started
+
+If you're new to the project, start with our **[Quick Start Guide](docs/QUICKSTART.md)** to set up your environment on MacOS, Ubuntu, Arch, or Fedora.
 
 ## Overview
 

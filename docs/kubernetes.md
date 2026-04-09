@@ -54,6 +54,7 @@ Zenoh config and mission file into a shared volume.
 - A Kubernetes cluster (k3s, minikube, kind, EKS, GKE, AKS)
 - `kubectl` configured and pointed at your cluster
 - `helm` 3.x installed
+- Docker (for building images)
 - Docker images available (see [Images](#images) below)
 
 Verify connectivity:
@@ -83,6 +84,222 @@ pytest tests/ -v
 # Tear down
 helm uninstall swarm -n swarm
 ```
+
+## Local Cluster Setup
+
+For local development, **minikube** is recommended. It runs a single-node Kubernetes cluster inside a VM or container.
+
+### macOS
+
+1. **Install minikube and kubectl:**
+   ```bash
+   brew install minikube kubectl helm
+   ```
+
+2. **Start minikube:**
+   ```bash
+   minikube start --cpus 4 --memory 8192 --disk-size 40g
+   ```
+
+3. **Enable addons:**
+   ```bash
+   minikube addons enable dashboard
+   minikube addons enable metrics-server
+   ```
+
+### Linux
+
+Select your distribution below. Ensure you have a hypervisor (KVM/QEMU) or Docker installed first.
+
+#### Ubuntu / Debian
+
+1. **Install kubectl:**
+   ```bash
+   sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates curl
+   curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+   echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+   sudo apt-get update && sudo apt-get install -y kubectl
+   ```
+
+2. **Install minikube:**
+   ```bash
+   curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+   sudo install minikube-linux-amd64 /usr/local/bin/minikube
+   ```
+
+3. **Start minikube:**
+   ```bash
+   minikube start --driver=docker --cpus 4 --memory 8192
+   ```
+
+#### Arch Linux
+
+1. **Install via Pacman:**
+   ```bash
+   sudo pacman -S minikube kubectl helm
+   ```
+
+2. **Start minikube:**
+   ```bash
+   minikube start --driver=kvm2 --cpus 4 --memory 8192
+   ```
+
+#### Fedora
+
+1. **Install kubectl:**
+   ```bash
+   sudo dnf install -y kubernetes-client
+   ```
+
+2. **Install minikube:**
+   ```bash
+   curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+   sudo install minikube-linux-amd64 /usr/local/bin/minikube
+   ```
+
+3. **Start minikube:**
+   ```bash
+   minikube start --driver=kvm2 --cpus 4 --memory 8192
+   ```
+
+### Using Local Images (No Registry)
+
+If you don't want to push images to a registry, you can load them directly into minikube's image cache.
+
+1. **Point your shell to minikube's Docker daemon:**
+   ```bash
+   eval $(minikube docker-env)
+   ```
+
+2. **Build images:**
+   ```bash
+   docker build -t ardupilot-sitl:latest -f Dockerfile.sitl .
+   docker build -t swarm_companion:latest .
+   ```
+
+3. **Deploy with local images:**
+   ```bash
+   helm install swarm ./helm/swarm-digital-twin \
+     -f ./helm/swarm-digital-twin/values-local.yaml \
+     -n swarm --create-namespace
+   ```
+   *Note: `values-local.yaml` sets `pullPolicy: Never` so Kubernetes uses the local cache.*
+
+## Environment Configuration
+
+The `run_scenario.sh` script and the Helm chart can be configured using environment variables. For convenience, you can create a `.env` file in the project root and source it before running commands.
+
+### Using a `.env` file
+
+1. **Create the file:**
+   ```bash
+   touch .env
+   ```
+
+2. **Add your configuration** (see [Scenarios](#configuration-scenarios) below).
+
+3. **Source it in your shell:**
+   ```bash
+   # Manual source
+   export $(grep -v '^#' .env | xargs)
+   
+   # Or add to your ~/.zshrc or ~/.bashrc for automatic loading with direnv
+   ```
+
+### Key Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `BACKEND` | `k8s` | Orchestration backend: `k8s` or `docker`. |
+| `SWARM_REGISTRY` | `beret` | Container registry namespace (e.g., `ghcr.io/username`). |
+| `SWARM_IMAGE_TAG` | `latest` | Tag for the drone images. |
+| `KUBECONFIG` | `~/.kube/config` | Path to your Kubernetes cluster configuration. |
+| `KUBECONTEXT` | (current) | The kubectl context to use (e.g., `minikube` or `remote-cluster`). |
+| `SWARM_DRONES` | `6` | Number of drones to deploy (used by tests). |
+| `PYTEST_TIMEOUT` | (none) | Timeout for integration tests in seconds. |
+
+---
+
+## Configuration Scenarios
+
+### 1. Local Development (minikube)
+
+Use local images built directly into minikube's Docker daemon. This avoids the need for an external registry.
+
+**`.env` file:**
+```bash
+BACKEND=k8s
+SWARM_REGISTRY=""
+SWARM_IMAGE_TAG=latest
+```
+
+**Deployment:**
+```bash
+eval $(minikube docker-env)
+./run_scenario.sh --swarm 2
+```
+
+### 2. Remote Cluster with Docker Hub
+
+Deploy to a remote cluster (e.g., EKS/GKE) using images hosted on Docker Hub.
+
+**`.env` file:**
+```bash
+BACKEND=k8s
+SWARM_REGISTRY="your-dockerhub-username"
+SWARM_IMAGE_TAG=v1.0.0
+KUBECONFIG="/path/to/your/remote-cluster.conf"
+```
+
+**Deployment:**
+```bash
+./run_scenario.sh --swarm 6
+```
+
+### 3. Remote Cluster with GitHub Registry (ghcr.io)
+
+Using GitHub's container registry for image hosting.
+
+**`.env` file:**
+```bash
+BACKEND=k8s
+SWARM_REGISTRY="ghcr.io/your-github-username"
+SWARM_IMAGE_TAG=latest
+KUBECONFIG="/path/to/your/remote-cluster.conf"
+```
+
+**Deployment:**
+```bash
+./run_scenario.sh --swarm 6
+```
+
+### 4. Switching between Local and Remote Clusters
+
+If you frequently switch between clusters, you can use multiple `.env` files and source the one you need.
+
+**`.env.local`**
+```bash
+BACKEND=k8s
+SWARM_REGISTRY=""
+KUBECONTEXT=minikube
+```
+
+**`.env.prod`**
+```bash
+BACKEND=k8s
+SWARM_REGISTRY="ghcr.io/your-github-username"
+KUBECONTEXT=prod-cluster
+KUBECONFIG="/path/to/prod.conf"
+```
+
+**Usage:**
+```bash
+# To work on minikube
+source .env.local
+./run_scenario.sh --status
+```
+
+---
 
 ## Images
 
