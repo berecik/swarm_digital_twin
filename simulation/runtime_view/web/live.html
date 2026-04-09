@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Simulation Environment — Swarm Digital Twin</title>
+  <link rel="stylesheet" href="/web/styles.css" />
+</head>
+<body class="live-body">
+  <a class="back-btn" href="/" aria-label="Back to launcher">&#8592;</a>
+
+  <div id="viewport-container">
+    <canvas id="viewport"></canvas>
+  </div>
+
+  <div class="live-status-chip">
+    <span class="chip-label">STATUS</span>
+    <span class="chip-value" id="status">CONNECTING…</span>
+  </div>
+
+  <div class="live-caption">
+    <span class="status-dot"></span>
+    <span>LIVE SIMULATION ENVIRONMENT</span>
+  </div>
+
+  <div class="hud-panel" id="hud-panel">
+    <dl class="hud-kv"><dt>AGL</dt><dd id="hud-agl">—</dd></dl>
+    <dl class="hud-kv"><dt>ALT MSL</dt><dd id="hud-alt">—</dd></dl>
+    <dl class="hud-kv"><dt>SPEED</dt><dd id="hud-speed">—</dd></dl>
+    <dl class="hud-kv"><dt>HEADING</dt><dd id="hud-heading">—</dd></dl>
+    <dl class="hud-kv"><dt>THROTTLE</dt><dd id="hud-throttle">—</dd></dl>
+    <dl class="hud-kv"><dt>BATTERY V</dt><dd id="hud-batt-v">—</dd></dl>
+    <dl class="hud-kv"><dt>BATTERY %</dt><dd id="hud-batt-pct">—</dd></dl>
+    <dl class="hud-kv"><dt>MODE</dt><dd id="hud-mode">—</dd></dl>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/web/vendor/three.module.js",
+        "three/addons/controls/OrbitControls.js": "/web/vendor/OrbitControls.js"
+      }
+    }
+  </script>
+  <script type="module" src="/web/live.js"></script>
+</body>
+</html>

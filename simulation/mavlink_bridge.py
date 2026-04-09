@@ -582,7 +582,7 @@ class MAVLinkBridge:
 
             with self._lock:
                 if isinstance(parsed, MAVCommand):
-                    self._received_commands.append(parsed)
+                    self._commands.append(parsed)
                 elif isinstance(parsed, PositionTarget):
                     self._position_targets.append(parsed)
 
