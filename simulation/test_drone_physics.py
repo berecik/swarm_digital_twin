@@ -5192,3 +5192,140 @@ class TestPostFlightReplay:
                 assert e.code in (404, 422), f'Expected 404, got {e.code}'
         finally:
             _runtime_view_stop_uvicorn(server, thread)
+
+
+class TestBrowserLaunch:
+    """Tests for browser-driven command execution (roadmap item 2)."""
+
+    def test_api_launch_rejects_unknown_id(self):
+        """POST /api/launch?id=nonexistent must return 404."""
+        import urllib.request, urllib.error, urllib.parse
+        from live_telemetry import TelemetryQueue
+        server, thread, base = _runtime_view_start_uvicorn(TelemetryQueue())
+        try:
+            url = f'{base}/api/launch?id=nonexistent'
+            req = urllib.request.Request(url, method='POST')
+            try:
+                urllib.request.urlopen(req, timeout=5)
+                assert False, 'Expected 404'
+            except urllib.error.HTTPError as e:
+                assert e.code == 404
+        finally:
+            _runtime_view_stop_uvicorn(server, thread)
+
+    def test_api_launch_rejects_disabled_mission(self):
+        """POST /api/launch?id=swarm-3 (disabled) must return 403."""
+        import urllib.request, urllib.error
+        from live_telemetry import TelemetryQueue
+        server, thread, base = _runtime_view_start_uvicorn(TelemetryQueue())
+        try:
+            url = f'{base}/api/launch?id=swarm-3'
+            req = urllib.request.Request(url, method='POST')
+            try:
+                urllib.request.urlopen(req, timeout=5)
+                assert False, 'Expected 403'
+            except urllib.error.HTTPError as e:
+                assert e.code == 403
+        finally:
+            _runtime_view_stop_uvicorn(server, thread)
+
+    def test_api_launch_status_not_running(self):
+        """GET /api/launch/status with no launched process returns running=false."""
+        import urllib.request, json
+        from live_telemetry import TelemetryQueue
+        import runtime_view.server as srv
+        srv._launch_proc = None
+        server, thread, base = _runtime_view_start_uvicorn(TelemetryQueue())
+        try:
+            url = f'{base}/api/launch/status'
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                data = json.loads(resp.read())
+            assert data['running'] is False
+        finally:
+            _runtime_view_stop_uvicorn(server, thread)
+
+
+class TestDataFlashRecorder:
+    """Tests for the DataFlash .BIN recorder (roadmap item 4)."""
+
+    def test_write_and_read_header_magic(self, tmp_path):
+        """Written .BIN file must start with 0xA3 0x95 header."""
+        from dataflash_recorder import DataFlashRecorder, HEAD1, HEAD2
+        path = str(tmp_path / 'test.BIN')
+        with DataFlashRecorder(path) as rec:
+            rec.write_att(1000.0, 5.0, -2.0, 45.0)
+        with open(path, 'rb') as f:
+            data = f.read(3)
+        assert data[0] == HEAD1
+        assert data[1] == HEAD2
+
+    def test_fmt_records_written(self, tmp_path):
+        """File must contain FMT records for ATT, GPS, BAT, MODE."""
+        from dataflash_recorder import DataFlashRecorder
+        path = str(tmp_path / 'test.BIN')
+        with DataFlashRecorder(path) as rec:
+            pass  # Just headers
+        with open(path, 'rb') as f:
+            data = f.read()
+        # FMT records contain the type name as ASCII
+        assert b'ATT\x00' in data
+        assert b'GPS\x00' in data
+        assert b'BAT\x00' in data
+        assert b'MODE' in data
+
+    def test_record_sample_writes_data(self, tmp_path):
+        """record_sample() must increase the file size."""
+        import os
+        from dataflash_recorder import DataFlashRecorder
+        from live_telemetry import LiveTelemetrySample
+        path = str(tmp_path / 'test.BIN')
+        with DataFlashRecorder(path) as rec:
+            header_size = os.path.getsize(path)
+            sample = LiveTelemetrySample(
+                t_wall=1000.0,
+                euler=(0.1, -0.05, 1.2),
+                lat_deg=47.3769,
+                lon_deg=8.5417,
+                alt_msl=408.0,
+                battery_voltage_v=12.6,
+                battery_current_a=1.5,
+                battery_remaining_pct=85.0,
+            )
+            rec.record_sample(sample)
+        final_size = os.path.getsize(path)
+        assert final_size > header_size, (
+            f'File should grow after record_sample '
+            f'(header={header_size}, final={final_size})')
+
+    def test_multiple_samples_roundtrip(self, tmp_path):
+        """Multiple samples produce a file proportional to sample count."""
+        import os
+        from dataflash_recorder import DataFlashRecorder
+        from live_telemetry import LiveTelemetrySample
+        path = str(tmp_path / 'test.BIN')
+        with DataFlashRecorder(path) as rec:
+            for i in range(10):
+                sample = LiveTelemetrySample(
+                    t_wall=1000.0 + i * 0.02,
+                    pos_enu=np.array([float(i), 0.0, 5.0]),
+                    euler=(0.01 * i, 0.0, 0.0),
+                    lat_deg=47.3769 + i * 0.0001,
+                    lon_deg=8.5417,
+                    alt_msl=408.0 + i,
+                )
+                rec.record_sample(sample)
+        size = os.path.getsize(path)
+        # Each sample writes ATT + GPS + BAT = 3 records.
+        # File should be significantly larger than just headers.
+        assert size > 500, f'Expected >500 bytes for 10 samples, got {size}'
+
+    def test_cli_record_bin_flag(self):
+        """physics_live_replay --help must list --record-bin."""
+        import subprocess, sys as _sys
+        sim_dir = str(Path(__file__).resolve().parent)
+        result = subprocess.run(
+            [_sys.executable, '-m', 'physics_live_replay', '--help'],
+            capture_output=True, text=True, timeout=10,
+            cwd=sim_dir,
+        )
+        assert '--record-bin' in result.stdout

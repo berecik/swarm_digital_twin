@@ -45,7 +45,7 @@ function renderCard(m) {
     <div class="mission-footer">
       ${disabled
         ? `<button class="btn btn-blue">GET PRO</button>`
-        : `<button class="btn btn-green" data-cmd="${escapeHtml(m.start_command || '')}" data-title="${escapeHtml(m.title || '')}">
+        : `<button class="btn btn-green" data-cmd="${escapeHtml(m.start_command || '')}" data-title="${escapeHtml(m.title || '')}" data-mission-id="${escapeHtml(m.id || '')}">
               <span>&#9658;</span> START
            </button>`}
     </div>
@@ -55,15 +55,22 @@ function renderCard(m) {
   if (startBtn) {
     startBtn.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      openLaunchModal(startBtn.dataset.title || '', startBtn.dataset.cmd || '');
+      openLaunchModal(
+        startBtn.dataset.title || '',
+        startBtn.dataset.cmd || '',
+        startBtn.dataset.missionId || '',
+      );
     });
   }
   return card;
 }
 
-function openLaunchModal(title, cmd) {
+let _currentMissionId = '';
+
+function openLaunchModal(title, cmd, missionId) {
   modalTitle.textContent = title ? `Launch: ${title}` : 'Launch mission';
   modalCmd.textContent = cmd;
+  _currentMissionId = missionId;
   modal.classList.remove('hidden');
 }
 
@@ -84,6 +91,35 @@ modalCopy.addEventListener('click', () => {
     setTimeout(() => (modalCopy.textContent = 'Copy command'), 1400);
   });
 });
+
+// Launch button — executes the command on the server.
+const modalLaunch = document.getElementById('launch-execute');
+if (modalLaunch) {
+  modalLaunch.addEventListener('click', async () => {
+    if (!_currentMissionId) return;
+    modalLaunch.textContent = 'Launching\u2026';
+    modalLaunch.disabled = true;
+    try {
+      const res = await fetch(
+        `/api/launch?id=${encodeURIComponent(_currentMissionId)}`,
+        { method: 'POST' },
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`Launch failed: ${data.detail || res.statusText}`);
+        return;
+      }
+      closeLaunchModal();
+      // Navigate to live view after a short delay.
+      setTimeout(() => { window.location.href = '/live'; }, 500);
+    } catch (err) {
+      alert(`Launch error: ${err}`);
+    } finally {
+      modalLaunch.textContent = '\u25B6 Launch';
+      modalLaunch.disabled = false;
+    }
+  });
+}
 
 async function loadMissions() {
   try {

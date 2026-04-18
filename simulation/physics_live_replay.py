@@ -138,6 +138,7 @@ def run_physics_live(
     waypoints: Optional[List[np.ndarray]] = None,
     swarm_records_per_drone: Optional[Dict[int, List[SimRecord]]] = None,
     waypoints_per_drone: Optional[Dict[int, List[np.ndarray]]] = None,
+    record_bin: Optional[str] = None,
 ) -> None:
     """
     Stream pre-computed SimRecords to the live viewer.
@@ -166,7 +167,24 @@ def run_physics_live(
         _srv.mission_waypoints = {"1": [wp.tolist() for wp in waypoints]}
 
     # 1. Bind the MAVLink UDP receiver FIRST so no replay packets are lost.
-    _srv.start_telemetry(listen_port=mav_port)
+    # Optionally attach a DataFlash .BIN recorder via the sample hook.
+    bin_recorder = None
+    if record_bin:
+        from dataflash_recorder import DataFlashRecorder
+        bin_recorder = DataFlashRecorder(record_bin)
+        print(f"  Recording to: {record_bin}")
+
+        from live_telemetry import MAVLinkLiveSource  # noqa: E402
+        _orig_start = _srv.start_telemetry
+
+        def _start_with_hook(listen_port=14550, listen_ip="0.0.0.0"):
+            _orig_start(listen_port=listen_port, listen_ip=listen_ip)
+            if _srv.live_source is not None:
+                _srv.live_source._sample_hook = bin_recorder.record_sample
+
+        _start_with_hook(listen_port=mav_port)
+    else:
+        _srv.start_telemetry(listen_port=mav_port)
 
     # 2. Create bridge(s).  For multi-drone, one bridge per drone with
     #    a unique system_id so the receiver can demultiplex.
@@ -265,6 +283,9 @@ def run_physics_live(
         for b in bridges:
             b.stop()
         _srv.stop_telemetry()
+        if bin_recorder is not None:
+            bin_recorder.close()
+            print(f"  .BIN saved: {record_bin}")
         print("Physics Live Replay: shutdown complete")
 
 
@@ -313,6 +334,10 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument(
         "--max-time", type=float, default=60.0,
         help="Max simulation time in seconds (default: 60)",
+    )
+    parser.add_argument(
+        "--record-bin", metavar="FILE",
+        help="Record telemetry to an ArduPilot-compatible .BIN file",
     )
 
     args = parser.parse_args(argv)
@@ -412,6 +437,7 @@ def main(argv: Optional[list] = None) -> int:
             open_browser=not args.no_browser,
             swarm_records_per_drone=swarm_records_per_drone,
             waypoints_per_drone=wp_per_drone,
+            record_bin=args.record_bin,
         )
     else:
         if not records:
@@ -425,6 +451,7 @@ def main(argv: Optional[list] = None) -> int:
             mav_port=args.mav_port,
             open_browser=not args.no_browser,
             waypoints=waypoints,
+            record_bin=args.record_bin,
         )
     return 0
 

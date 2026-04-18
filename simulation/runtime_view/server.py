@@ -23,8 +23,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime
 import glob as _glob_mod
 import json
+import logging
+import subprocess
 import sys
 import threading
 import time
@@ -89,6 +92,10 @@ mission_waypoints: dict = {}
 # Background replay thread (for /api/load file replay).
 _replay_bridge: Optional[object] = None
 _replay_thread: Optional[threading.Thread] = None
+
+# Background mission process (for /api/launch).
+_launch_proc: Optional["subprocess.Popen"] = None
+_launch_log_path: Optional[Path] = None
 
 
 # ── HTML page helpers ───────────────────────────────────────────────────
@@ -313,6 +320,116 @@ def api_load(path: str = Query(...)) -> JSONResponse:
         "type": file_type,
         "records": len(records),
     })
+
+
+# ── Launch endpoint ─────────────────────────────────────────────────────
+
+
+def _allowed_commands() -> set:
+    """Return the set of start_command strings from the mission catalogue."""
+    missions = _load_missions()
+    return {m.get("start_command", "") for m in missions if m.get("start_command")}
+
+
+def _log_launch(action: str, command: str, detail: str = "") -> None:
+    """Append a timestamped entry to the launch audit log."""
+    log_dir = _SIM_DIR.parent / ".ai"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "launch.log"
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    entry = f"[{ts}] {action}: {command}"
+    if detail:
+        entry += f" — {detail}"
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(entry + "\n")
+
+
+@app.post("/api/launch")
+def api_launch(id: str = Query(...)) -> JSONResponse:
+    """Execute a mission's start_command by mission id.
+
+    Security model:
+    - Only commands listed in missions.json are allowed (allowlist).
+    - The command runs as a subprocess of the server process.
+    - Each launch is recorded in .ai/launch.log.
+    - Any previously running launch is stopped first.
+    """
+    global _launch_proc
+
+    missions = _load_missions()
+    mission = next((m for m in missions if m.get("id") == id), None)
+    if mission is None:
+        raise HTTPException(status_code=404, detail=f"Mission '{id}' not found")
+    if mission.get("disabled"):
+        raise HTTPException(status_code=403, detail=f"Mission '{id}' is disabled")
+
+    cmd = mission.get("start_command", "")
+    if not cmd:
+        raise HTTPException(status_code=400, detail="Mission has no start_command")
+
+    # Verify command is in the allowlist.
+    if cmd not in _allowed_commands():
+        raise HTTPException(status_code=403, detail="Command not in allowlist")
+
+    # Stop any previously running mission.
+    if _launch_proc is not None and _launch_proc.poll() is None:
+        _log_launch("STOP", "(previous)", f"pid={_launch_proc.pid}")
+        _launch_proc.terminate()
+        try:
+            _launch_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _launch_proc.kill()
+        _launch_proc = None
+
+    # Execute from the project root.
+    project_root = _SIM_DIR.parent
+    _log_launch("START", cmd, f"mission={id}")
+    try:
+        _launch_proc = subprocess.Popen(
+            cmd,
+            shell=True,
+            cwd=str(project_root),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        _log_launch("ERROR", cmd, str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return JSONResponse({
+        "status": "launched",
+        "mission_id": id,
+        "command": cmd,
+        "pid": _launch_proc.pid,
+    })
+
+
+@app.post("/api/launch/stop")
+def api_launch_stop() -> JSONResponse:
+    """Stop the currently running launched mission."""
+    global _launch_proc
+    if _launch_proc is None or _launch_proc.poll() is not None:
+        return JSONResponse({"status": "not_running"})
+    pid = _launch_proc.pid
+    _log_launch("STOP", "(user request)", f"pid={pid}")
+    _launch_proc.terminate()
+    try:
+        _launch_proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        _launch_proc.kill()
+    _launch_proc = None
+    return JSONResponse({"status": "stopped", "pid": pid})
+
+
+@app.get("/api/launch/status")
+def api_launch_status() -> JSONResponse:
+    """Check if a launched mission is still running."""
+    if _launch_proc is None:
+        return JSONResponse({"running": False})
+    rc = _launch_proc.poll()
+    if rc is None:
+        return JSONResponse({"running": True, "pid": _launch_proc.pid})
+    return JSONResponse({"running": False, "exit_code": rc})
 
 
 # ── WebSocket route ─────────────────────────────────────────────────────

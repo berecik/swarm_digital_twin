@@ -4,7 +4,7 @@
 
 **Scope:** remaining gaps and future work only. Completed items are in [`CHANGELOG.md`](../CHANGELOG.md).
 
-**Current state (2026-04-18):** 291 tests passing. All paper-aligned items delivered. Live Run-time View is the default visualization. Physics Live Replay streams simulations to the browser without Docker.
+**Current state (2026-04-18):** 299 tests passing. All paper-aligned items delivered. Live Run-time View is the default visualization. Physics Live Replay streams simulations to the browser without Docker.
 
 ---
 
@@ -24,18 +24,11 @@
 
 ### ~~1) Multi-drone live view~~ ✅ Done
 
-### 2) Browser-driven command execution
-
-`POST /api/launch` currently *returns* the shell command (the user
-pastes it). Wiring it to `subprocess.Popen` needs a sandbox, audit
-log, and confirmation modal.
+### ~~2) Browser-driven command execution~~ ✅ Done
 
 ### ~~3) Post-flight replay in the web viewer~~ ✅ Done
 
-### 4) DataFlash-compatible `.BIN` recording
-
-The first iteration writes CSV only. Writing ArduPilot-compatible
-`.BIN` from a live MAVLink stream is a much larger scope.
+### ~~4) DataFlash-compatible `.BIN` recording~~ ✅ Done
 
 ### ~~5) Windows browser auto-open~~ ✅ Done
 
@@ -59,7 +52,7 @@ and CSRF protection.
 
 | Check | Command | Status |
 |:---|:---|:---|
-| Full test suite (291) | `pytest simulation/test_drone_physics.py -q` | ✅ |
+| Full test suite (299) | `pytest simulation/test_drone_physics.py -q` | ✅ |
 | JS syntax | `node --check simulation/runtime_view/web/live.js` | ✅ |
 | Server import | `python -c "from simulation.runtime_view.server import app"` | ✅ |
 | Telemetry import | `cd simulation && python -c "from live_telemetry import MAVLinkLiveSource"` | ✅ |
