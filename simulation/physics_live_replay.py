@@ -79,14 +79,13 @@ def run_physics_simulation(
     )
 
 
-def load_npz_records(path: str) -> List[SimRecord]:
+def load_npz_records(path: str, data=None) -> List[SimRecord]:
     """Load SimRecord list from a scenario_data.npz file.
 
-    Gracefully handles missing optional keys (euler, thrust, ang_vel,
-    euler_rates) so older .npz files can still be replayed.
+    Pass *data* (an already-loaded NpzFile) to avoid re-reading the file.
     """
-    # allow_pickle needed for .npz files with object arrays (drone_ids)
-    data = np.load(path, allow_pickle=True)  # noqa: S301
+    if data is None:
+        data = np.load(path, allow_pickle=True)  # noqa: S301
     t = data["t"]
     pos = data["pos"]
     vel = data["vel"]
@@ -109,9 +108,10 @@ def load_npz_records(path: str) -> List[SimRecord]:
     return records
 
 
-def load_swarm_npz_records(path: str, drone_index: int = 0) -> List[SimRecord]:
+def load_swarm_npz_records(path: str, drone_index: int = 0, data=None) -> List[SimRecord]:
     """Load one drone's trajectory from a swarm_data.npz file."""
-    data = np.load(path, allow_pickle=True)
+    if data is None:
+        data = np.load(path, allow_pickle=True)
     t = data["t"]
     positions = data["positions"]  # shape: (timesteps, num_drones, 3)
     velocities = data["velocities"]

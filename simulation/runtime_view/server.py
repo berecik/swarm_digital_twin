@@ -24,9 +24,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
-import glob as _glob_mod
 import json
-import logging
 import subprocess
 import sys
 import threading
@@ -95,7 +93,29 @@ _replay_thread: Optional[threading.Thread] = None
 
 # Background mission process (for /api/launch).
 _launch_proc: Optional["subprocess.Popen"] = None
-_launch_log_path: Optional[Path] = None
+
+
+def _stop_replay() -> None:
+    """Stop any running file replay (bridge + thread)."""
+    global _replay_bridge, _replay_thread
+    if _replay_bridge is not None:
+        try:
+            _replay_bridge.stop()
+        except Exception:
+            pass
+        _replay_bridge = None
+    if _replay_thread is not None and _replay_thread.is_alive():
+        _replay_thread.join(timeout=2.0)
+        _replay_thread = None
+
+
+def _kill_proc(proc: "subprocess.Popen") -> None:
+    """Terminate a subprocess, escalating to kill after 5 s."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
 
 
 # ── HTML page helpers ───────────────────────────────────────────────────
@@ -228,16 +248,6 @@ def api_files() -> JSONResponse:
     return JSONResponse(files)
 
 
-def _load_npz_safe(path: str):
-    """Load .npz, trying without pickle first (safe), falling back only
-    for files that contain object arrays (e.g. drone_ids)."""
-    import numpy as np
-    try:
-        return np.load(path, allow_pickle=False)
-    except ValueError:
-        return np.load(path, allow_pickle=True)
-
-
 @app.post("/api/load")
 def api_load(path: str = Query(...)) -> JSONResponse:
     """Load an .npz file and start replaying it to the live viewer.
@@ -246,35 +256,32 @@ def api_load(path: str = Query(...)) -> JSONResponse:
     stopped first.
     """
     global _replay_bridge, _replay_thread, mission_waypoints
+    import numpy as np
     from mavlink_bridge import MAVLinkBridge
 
     file_path = Path(path)
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    if file_path.suffix.lower() not in ('.npz',):
+    if file_path.suffix.lower() != '.npz':
         raise HTTPException(status_code=400, detail="Only .npz files supported")
 
     # Stop any existing replay.
-    if _replay_bridge is not None:
-        try:
-            _replay_bridge.stop()
-        except Exception:
-            pass
-        _replay_bridge = None
-    if _replay_thread is not None and _replay_thread.is_alive():
-        _replay_thread.join(timeout=2.0)
-        _replay_thread = None
-
+    _stop_replay()
     telemetry_queue.clear()
 
     try:
         from physics_live_replay import load_npz_records, load_swarm_npz_records
-        data = _load_npz_safe(str(file_path))
+        # Load once and pass the data through to avoid double I/O.
+        try:
+            data = np.load(str(file_path), allow_pickle=False)
+        except ValueError:
+            data = np.load(str(file_path), allow_pickle=True)
+
         if "positions" in data:
-            records = load_swarm_npz_records(str(file_path), drone_index=0)
+            records = load_swarm_npz_records(str(file_path), drone_index=0, data=data)
             file_type = "swarm_npz"
         elif "pos" in data:
-            records = load_npz_records(str(file_path))
+            records = load_npz_records(str(file_path), data=data)
             file_type = "npz"
             if "waypoints" in data:
                 mission_waypoints = {
@@ -325,12 +332,6 @@ def api_load(path: str = Query(...)) -> JSONResponse:
 # ── Launch endpoint ─────────────────────────────────────────────────────
 
 
-def _allowed_commands() -> set:
-    """Return the set of start_command strings from the mission catalogue."""
-    missions = _load_missions()
-    return {m.get("start_command", "") for m in missions if m.get("start_command")}
-
-
 def _log_launch(action: str, command: str, detail: str = "") -> None:
     """Append a timestamped entry to the launch audit log."""
     log_dir = _SIM_DIR.parent / ".ai"
@@ -367,18 +368,10 @@ def api_launch(id: str = Query(...)) -> JSONResponse:
     if not cmd:
         raise HTTPException(status_code=400, detail="Mission has no start_command")
 
-    # Verify command is in the allowlist.
-    if cmd not in _allowed_commands():
-        raise HTTPException(status_code=403, detail="Command not in allowlist")
-
     # Stop any previously running mission.
     if _launch_proc is not None and _launch_proc.poll() is None:
         _log_launch("STOP", "(previous)", f"pid={_launch_proc.pid}")
-        _launch_proc.terminate()
-        try:
-            _launch_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            _launch_proc.kill()
+        _kill_proc(_launch_proc)
         _launch_proc = None
 
     # Execute from the project root.
@@ -412,11 +405,7 @@ def api_launch_stop() -> JSONResponse:
         return JSONResponse({"status": "not_running"})
     pid = _launch_proc.pid
     _log_launch("STOP", "(user request)", f"pid={pid}")
-    _launch_proc.terminate()
-    try:
-        _launch_proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        _launch_proc.kill()
+    _kill_proc(_launch_proc)
     _launch_proc = None
     return JSONResponse({"status": "stopped", "pid": pid})
 
@@ -461,15 +450,13 @@ async def telemetry_stream(ws: WebSocket) -> None:
             # loop below doesn't immediately re-send the same samples.
             last_t = max(s.t_wall for s in initial)
         while True:
-            # Drain every unseen sample in chronological order so the JS
-            # trail buffer gets every position update, not just the last.
-            for sample in telemetry_queue.snapshot():
-                if sample.t_wall > last_t:
-                    await ws.send_text(json.dumps({
-                        "type": "sample",
-                        "data": sample.to_dict(),
-                    }))
-                    last_t = sample.t_wall
+            # Drain only new samples (avoids copying the full 4096-entry buffer).
+            for sample in telemetry_queue.since(last_t):
+                await ws.send_text(json.dumps({
+                    "type": "sample",
+                    "data": sample.to_dict(),
+                }))
+                last_t = sample.t_wall
             now = time.time()
             if now - last_heartbeat >= 5.0:
                 await ws.send_text(json.dumps({"type": "ping", "t": now}))

@@ -14,6 +14,7 @@ Every .BIN file starts with FMT records (msg_type=128) that describe
 the schema of each subsequent message type.
 """
 
+import math
 import struct
 import threading
 import time
@@ -150,13 +151,16 @@ class DataFlashRecorder:
 
         self._fh.flush()
 
-    def _write_record(self, msg_type: int, fmt_str: str, values: tuple) -> None:
+    def _build_record(self, msg_type: int, fmt_str: str, values: tuple) -> bytes:
         payload = _pack_payload(fmt_str, values)
-        header = struct.pack('BBB', HEAD1, HEAD2, msg_type)
+        return struct.pack('BBB', HEAD1, HEAD2, msg_type) + payload
+
+    def _write_record(self, msg_type: int, fmt_str: str, values: tuple) -> None:
+        data = self._build_record(msg_type, fmt_str, values)
         with self._lock:
             if self._closed:
                 return
-            self._fh.write(header + payload)
+            self._fh.write(data)
 
     def _time_us(self, t_wall: float) -> int:
         """Convert wall time to microseconds since recording start."""
@@ -199,19 +203,31 @@ class DataFlashRecorder:
                            (t_us, mode_num, mode_num, 0))
 
     def record_sample(self, sample) -> None:
-        """Write ATT + GPS + BAT records from a LiveTelemetrySample."""
-        import math
+        """Write ATT + GPS + BAT as a single batched write (one lock acquire)."""
         t = sample.t_wall
+        t_us = self._time_us(t)
         r, p, y = sample.euler
-        self.write_att(t, math.degrees(r), math.degrees(p), math.degrees(y))
         spd = float((sample.vel_enu[0]**2 + sample.vel_enu[1]**2 +
                       sample.vel_enu[2]**2) ** 0.5)
-        self.write_gps(t, sample.lat_deg, sample.lon_deg,
-                       sample.alt_msl, speed=spd,
-                       vz=float(sample.vel_enu[2]))
-        self.write_bat(t, sample.battery_voltage_v,
-                       sample.battery_current_a,
-                       sample.battery_remaining_pct)
+        gms = int((t % 604800) * 1000)
+        buf = b''.join([
+            self._build_record(MSG_ATT, 'Qfffffff',
+                               (t_us, math.degrees(r), math.degrees(p),
+                                math.degrees(y), 0.0, 0.0, 0.0, 0.0)),
+            self._build_record(MSG_GPS, 'QBILLfffffB',
+                               (t_us, 3, gms, sample.lat_deg, sample.lon_deg,
+                                sample.alt_msl, spd, 0.0,
+                                float(sample.vel_enu[2]), 0.5, 10)),
+            self._build_record(MSG_BAT, 'QfffffffB',
+                               (t_us, sample.battery_voltage_v,
+                                sample.battery_voltage_v,
+                                sample.battery_current_a,
+                                0.0, 0.0, 25.0, 0.0,
+                                int(sample.battery_remaining_pct))),
+        ])
+        with self._lock:
+            if not self._closed:
+                self._fh.write(buf)
 
     def close(self) -> None:
         with self._lock:

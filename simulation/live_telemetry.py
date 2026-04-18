@@ -41,6 +41,14 @@ from mavlink_bridge import (
     CUSTOM_MODE_RTL,
 )
 
+_MODE_MAP = {
+    CUSTOM_MODE_STABILIZE: "STABILIZE",
+    CUSTOM_MODE_GUIDED: "GUIDED",
+    CUSTOM_MODE_AUTO: "AUTO",
+    CUSTOM_MODE_LAND: "LAND",
+    CUSTOM_MODE_RTL: "RTL",
+}
+
 
 # ── Sample type ───────────────────────────────────────────────────────────
 
@@ -96,8 +104,6 @@ class LiveTelemetrySample:
             "lon_deg": float(self.lon_deg),
         }
 
-    # Alias requested by the plan; the tests use ``to_dict`` so keep both.
-    to_json = to_dict
 
 
 # ── Queue ─────────────────────────────────────────────────────────────────
@@ -125,6 +131,20 @@ class TelemetryQueue:
             if n <= 0:
                 return []
             return list(self._buffer)[-n:]
+
+    def since(self, t_wall: float) -> List[LiveTelemetrySample]:
+        """Return only samples with ``t_wall`` strictly greater than *t_wall*.
+
+        Much cheaper than ``snapshot()`` when only a few new samples have
+        arrived since the last call — avoids copying the entire buffer.
+        """
+        with self._lock:
+            # Walk backwards to find the insertion point, then slice.
+            buf = self._buffer
+            i = len(buf)
+            while i > 0 and buf[i - 1].t_wall > t_wall:
+                i -= 1
+            return list(buf)[i:]
 
     def __len__(self) -> int:
         with self._lock:
@@ -228,15 +248,8 @@ def parse_telemetry_payload(msg_id: int, payload: bytes) -> Dict[str, Any]:
         fields = struct.unpack_from("<IBBBBB", payload)
         custom_mode = int(fields[0])
         base_mode = int(fields[3])
-        mode_map = {
-            CUSTOM_MODE_STABILIZE: "STABILIZE",
-            CUSTOM_MODE_GUIDED: "GUIDED",
-            CUSTOM_MODE_AUTO: "AUTO",
-            CUSTOM_MODE_LAND: "LAND",
-            CUSTOM_MODE_RTL: "RTL",
-        }
         return {
-            "flight_mode": mode_map.get(custom_mode, f"MODE_{custom_mode}"),
+            "flight_mode": _MODE_MAP.get(custom_mode, f"MODE_{custom_mode}"),
             "armed": bool(base_mode & 0x80),
         }
 
@@ -370,10 +383,6 @@ class MAVLinkLiveSource:
         self._drones: Dict[int, LiveTelemetrySample] = {}
         self._have_any_per_drone: Dict[int, bool] = {}
 
-        # Legacy single-drone aliases (used by tests that inspect _current).
-        self._current = LiveTelemetrySample()
-        self._have_any = False
-
     # ── lifecycle ─────────────────────────────────────────────────────
 
     def start(self) -> None:
@@ -462,7 +471,6 @@ class MAVLinkLiveSource:
             self._finalize_drone(system_id)
             cur = self._get_drone_state(system_id)
 
-        # Apply updates.
         if "time_boot_ms" in updates:
             cur.time_boot_ms = int(updates["time_boot_ms"])
             self._have_any_per_drone[system_id] = True
@@ -510,11 +518,6 @@ class MAVLinkLiveSource:
         if "lat_deg" in updates and self._have_any_per_drone.get(system_id):
             self._finalize_drone(system_id)
 
-        # Keep legacy _current alias in sync with drone 1.
-        if system_id == 1:
-            self._current = self._drones.get(1, self._current)
-            self._have_any = self._have_any_per_drone.get(1, False)
-
     def _finalize_drone(self, drone_id: int) -> None:
         """Push the sample for *drone_id* and start a fresh one."""
         if not self._have_any_per_drone.get(drone_id):
@@ -550,12 +553,6 @@ class MAVLinkLiveSource:
         self._drones[drone_id] = fresh
         self._have_any_per_drone[drone_id] = False
 
-    # Legacy alias — old tests call _finalize_current().
-    def _finalize_current(self) -> None:
-        """Finalize all drones that have pending data."""
-        for did in list(self._drones):
-            self._finalize_drone(did)
-
     # ── test hooks ───────────────────────────────────────────────────
 
     def inject_frame(self, frame: bytes) -> None:
@@ -563,5 +560,6 @@ class MAVLinkLiveSource:
         self._consume_datagram(frame)
 
     def flush(self) -> None:
-        """Force-push the pending sample regardless of tick advancement."""
-        self._finalize_current()
+        """Force-push pending samples for all drones."""
+        for did in list(self._drones):
+            self._finalize_drone(did)

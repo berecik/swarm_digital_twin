@@ -53,6 +53,9 @@ scene.add(ground);
 // ── Multi-drone state ─────────────────────────────────────────────
 
 // Per-drone colour palette (up to 8; wraps for more).
+// Reusable scratch vector — avoids per-frame allocation in camera follow.
+const _tmpVec = new THREE.Vector3();
+
 const DRONE_COLORS = [
   0x22d3ee, // cyan
   0x2ed47a, // green
@@ -166,7 +169,8 @@ function pushDroneTrail(state, x, y, z) {
   }
   trailGeom.setDrawRange(0, state.trailCount);
   trailGeom.attributes.position.needsUpdate = true;
-  trailGeom.computeBoundingSphere();
+  // Skip computeBoundingSphere() — the camera follows the drones so
+  // trails are always in view; the default infinite sphere suffices.
 }
 
 // ── Waypoint markers ──────────────────────────────────────────────
@@ -176,6 +180,15 @@ scene.add(waypointGroup);
 let waypointPaths = [];
 
 let originEnu = null;
+
+/** Convert ENU (East, North, Up) to Three.js (X=East, Y=Up, Z=-North). */
+function enuToScene(ex, ny, uz, origin) {
+  return {
+    x: ex - origin[0],
+    y: uz - origin[2],
+    z: -(ny - origin[1]),
+  };
+}
 let rawWaypointsData = null;  // dict or legacy list
 
 function renderAllWaypoints(wpData) {
@@ -214,10 +227,7 @@ function renderAllWaypoints(wpData) {
     const pathPoints = [];
 
     waypoints.forEach((wp, i) => {
-      const [ex, ny, uz] = wp;
-      const rx = ex - origin[0];
-      const ry = uz - origin[2];
-      const rz = -(ny - origin[1]);
+      const { x: rx, y: ry, z: rz } = enuToScene(wp[0], wp[1], wp[2], origin);
 
       const sphere = new THREE.Mesh(
         new THREE.SphereGeometry(0.35, 12, 8),
@@ -315,9 +325,7 @@ function applySample(s) {
     if (rawWaypointsData) renderAllWaypoints(rawWaypointsData);
   }
 
-  const x = ex - originEnu[0];
-  const y = uz - originEnu[2];
-  const z = -(ny - originEnu[1]);
+  const { x, y, z } = enuToScene(ex, ny, uz, originEnu);
 
   const ds = getDrone(droneId);
   ds.group.position.set(x, y, z);
@@ -329,12 +337,12 @@ function applySample(s) {
 
   // Camera follow — lerp toward centroid of all drones.
   if (drones.size === 1) {
-    controls.target.lerp(new THREE.Vector3(x, y, z), 0.05);
+    controls.target.lerp(_tmpVec.set(x, y, z), 0.05);
   } else {
-    const centroid = new THREE.Vector3();
-    for (const d of drones.values()) centroid.add(d.group.position);
-    centroid.divideScalar(drones.size);
-    controls.target.lerp(centroid, 0.03);
+    _tmpVec.set(0, 0, 0);
+    for (const d of drones.values()) _tmpVec.add(d.group.position);
+    _tmpVec.divideScalar(drones.size);
+    controls.target.lerp(_tmpVec, 0.03);
   }
 
   // HUD updates (show the latest sample regardless of drone).
