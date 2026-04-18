@@ -101,6 +101,7 @@ const trailMat = new THREE.LineBasicMaterial({
 const trail = new THREE.Line(trailGeom, trailMat);
 scene.add(trail);
 let trailCount = 0;
+let originEnu = null;
 
 function pushTrail(x, y, z) {
   if (trailCount < TRAIL_MAX) {
@@ -119,6 +120,132 @@ function pushTrail(x, y, z) {
   trailGeom.attributes.position.needsUpdate = true;
   trailGeom.computeBoundingSphere();
 }
+
+// ── Waypoint markers ──────────────────────────────────────────────
+
+const waypointGroup = new THREE.Group();
+scene.add(waypointGroup);
+
+// Dashed line connecting waypoints (flight plan path)
+let waypointPath = null;
+
+// Raw ENU waypoints — kept so we can re-render once originEnu is known.
+let rawWaypoints = null;
+
+function renderWaypoints(waypoints) {
+  // Clear previous markers
+  while (waypointGroup.children.length) {
+    waypointGroup.remove(waypointGroup.children[0]);
+  }
+  if (waypointPath) {
+    scene.remove(waypointPath);
+    waypointPath = null;
+  }
+  if (!waypoints || waypoints.length === 0) return;
+
+  // Use the same origin as the drone (set by the first telemetry sample).
+  // Fall back to the first waypoint if telemetry hasn't arrived yet.
+  const origin = originEnu || waypoints[0];
+
+  const wpMat = new THREE.MeshStandardMaterial({
+    color: 0xfacc15,
+    emissive: 0x6b5a00,
+    metalness: 0.3,
+    roughness: 0.5,
+  });
+  const poleMat = new THREE.MeshStandardMaterial({
+    color: 0xfacc15,
+    transparent: true,
+    opacity: 0.35,
+  });
+
+  const pathPoints = [];
+
+  waypoints.forEach((wp, i) => {
+    // ENU → Three.js (same mapping as applySample)
+    const [ex, ny, uz] = wp;
+    const rx = ex - origin[0];
+    const ry = uz - origin[2];
+    const rz = -(ny - origin[1]);
+
+    // Sphere marker at waypoint position
+    const sphere = new THREE.Mesh(
+      new THREE.SphereGeometry(0.4, 16, 12),
+      wpMat,
+    );
+    sphere.position.set(rx, ry, rz);
+    waypointGroup.add(sphere);
+
+    // Thin vertical pole from ground to waypoint
+    if (ry > 0.2) {
+      const poleHeight = ry;
+      const pole = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.04, 0.04, poleHeight, 6),
+        poleMat,
+      );
+      pole.position.set(rx, poleHeight / 2, rz);
+      waypointGroup.add(pole);
+    }
+
+    // Small ground ring
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.3, 0.5, 16),
+      new THREE.MeshStandardMaterial({
+        color: 0xfacc15,
+        transparent: true,
+        opacity: 0.25,
+        side: THREE.DoubleSide,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(rx, 0.01, rz);
+    waypointGroup.add(ring);
+
+    // Label (sprite)
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#facc15';
+    ctx.font = 'bold 36px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`WP${i + 1}`, 64, 42);
+    const tex = new THREE.CanvasTexture(canvas);
+    const spriteMat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.position.set(rx, ry + 1.2, rz);
+    sprite.scale.set(2.5, 1.25, 1);
+    waypointGroup.add(sprite);
+
+    pathPoints.push(new THREE.Vector3(rx, ry, rz));
+  });
+
+  // Dashed line connecting all waypoints
+  if (pathPoints.length >= 2) {
+    const pathGeom = new THREE.BufferGeometry().setFromPoints(pathPoints);
+    const pathMat = new THREE.LineDashedMaterial({
+      color: 0xfacc15,
+      dashSize: 1.0,
+      gapSize: 0.5,
+      transparent: true,
+      opacity: 0.6,
+    });
+    waypointPath = new THREE.Line(pathGeom, pathMat);
+    waypointPath.computeLineDistances();
+    scene.add(waypointPath);
+  }
+}
+
+// Fetch waypoints from the server
+fetch('/api/waypoints')
+  .then(r => r.json())
+  .then(wps => {
+    if (Array.isArray(wps) && wps.length > 0) {
+      rawWaypoints = wps;
+      renderWaypoints(wps);
+    }
+  })
+  .catch(() => {});  // No waypoints available — that's fine
 
 // ── HUD ────────────────────────────────────────────────────────────
 
@@ -145,11 +272,22 @@ setStatus('connecting');
 
 function applySample(s) {
   const [ex, ny, uz] = s.pos_enu || [0, 0, 0];
+  // Recenter to the first valid telemetry fix so the drone remains in-view
+  // even if the backend reference geodetic origin differs from the vehicle's
+  // absolute location (e.g. SITL at a different latitude/longitude).
+  if (originEnu === null) {
+    originEnu = [ex, ny, uz];
+    // Re-render waypoints now that we know the telemetry origin.
+    if (rawWaypoints) renderWaypoints(rawWaypoints);
+  }
+  const relEx = ex - originEnu[0];
+  const relNy = ny - originEnu[1];
+  const relUz = uz - originEnu[2];
   // ENU (East, North, Up) → Three.js (X=East, Y=Up, Z=-North) so the
   // default OrbitControls camera sees a familiar orientation.
-  const x = ex;
-  const y = uz;
-  const z = -ny;
+  const x = relEx;
+  const y = relUz;
+  const z = -relNy;
 
   drone.position.set(x, y, z);
 
@@ -163,7 +301,7 @@ function applySample(s) {
   controls.target.lerp(new THREE.Vector3(x, y, z), 0.05);
 
   // HUD updates
-  hud.agl.textContent = `${uz.toFixed(1)} m`;
+  hud.agl.textContent = `${relUz.toFixed(1)} m`;
   hud.alt.textContent = `${(s.alt_msl || 0).toFixed(1)} m`;
   const spd = Math.hypot(s.vel_enu?.[0] || 0, s.vel_enu?.[1] || 0, s.vel_enu?.[2] || 0);
   hud.speed.textContent = `${spd.toFixed(1)} m/s`;

@@ -120,12 +120,12 @@ Agents receiving the "do tests" or "do maintenance" commands must:
 
 ---
 
-## 📈 Verification Status (Last Update: 2026-03-27)
+## 📈 Verification Status (Last Update: 2026-04-18)
 
 | Module | Unit Tests | Integration | SITL |
 | :--- | :---: | :---: | :---: |
 | Swarm Control | ✅ 17 Pass | ⏳ Pending | ✅ Pass |
 | Perception | ✅ 13 Pass | ⏳ Pending | ✅ Pass |
 | Heavy Lift | ✅ 1 Pass | ⏳ Pending | ⏳ Pending |
-| Physics Engine | ✅ 221 Pass | ✅ Pass | N/A |
-| **Total** | **252+ Pass** | **Green** | **Green** |
+| Physics Engine + Run-time View | ✅ 282 Pass | ✅ Pass | N/A |
+| **Total** | **313+ Pass** | **Green** | **Green** |

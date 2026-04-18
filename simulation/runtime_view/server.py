@@ -79,6 +79,10 @@ app.template_folder = str(WEB_DIR)
 telemetry_queue: TelemetryQueue = TelemetryQueue(maxlen=4096)
 live_source: Optional[MAVLinkLiveSource] = None
 
+# Waypoints for the current simulation (set by physics_live_replay).
+# Each entry is a list [x, y, z] in ENU metres.
+mission_waypoints: list = []
+
 
 # ── HTML page helpers ───────────────────────────────────────────────────
 
@@ -170,6 +174,12 @@ def api_snapshot(n: int = Query(default=100)) -> JSONResponse:
     n = max(1, min(1000, n))
     samples = telemetry_queue.snapshot(n=n)
     return JSONResponse([s.to_dict() for s in samples])
+
+
+@app.get("/api/waypoints")
+def api_waypoints() -> JSONResponse:
+    """Return the active mission waypoints (ENU metres)."""
+    return JSONResponse(mission_waypoints)
 
 
 # ── WebSocket route ─────────────────────────────────────────────────────

@@ -937,7 +937,7 @@ run_sitl_viz() {
     python "$SIM_DIR/visualize_drone_3d.py" "$bin_file"
 }
 
-# ── Run-time View (Flask + Three.js web app) ────────────────────────────────
+# ── Run-time View (FastAPI + Three.js web app) ───────────────────────────────
 # Default browser landing path. The third positional argument lets callers
 # pick the launcher (`/`) or the live HUD (`/live`) — `--single-live` and
 # the default flow open `/live` so the user lands on the HUD directly.
@@ -972,7 +972,7 @@ run_live_viz() {
 }
 
 # Run a single SITL mission in the background while serving the live
-# Run-time View (Flask + Three.js) in the foreground. The orchestrator
+# Run-time View (FastAPI + Three.js) in the foreground. The orchestrator
 # (sitl_orchestrator.py) is the only host process that actually receives
 # MAVLink from the SITL container (over TCP 5760), so we tell it to relay
 # every received frame to UDP 14550 where MAVLinkLiveSource is listening.
@@ -993,6 +993,19 @@ run_single_mission_live() {
     run_live_viz 14550 8765 /live
 
     wait "$mission_pid" 2>/dev/null || true
+}
+
+# Run a Python physics simulation and stream the results through the
+# live Run-time View in real time — no Docker, no SITL container needed.
+# The pipeline: run_simulation() → MAVLinkBridge.run_replay() → UDP
+# → MAVLinkLiveSource → FastAPI /ws/telemetry → Three.js browser.
+run_physics_live() {
+    local extra_args=("$@")
+    info "Launching physics simulation with the live Run-time View"
+    (
+        cd "$SIM_DIR"
+        python -m physics_live_replay "${extra_args[@]}"
+    )
 }
 
 # ── Parse args ───────────────────────────────────────────────────────────────
@@ -1097,6 +1110,21 @@ case "$MODE" in
         run_single_scenario
         ;;
 
+    # ── Physics + live viewer (no Docker needed) ────────────────────────────
+    --physics-live)
+        NEED_RUNTIME_VIEW=1 ensure_venv
+        local extra=()
+        [[ "${POSITIONAL[1]:-}" == "--loop" ]] && extra+=(--loop)
+        run_physics_live "${extra[@]}"
+        ;;
+    --physics-swarm-live)
+        NEED_RUNTIME_VIEW=1 ensure_venv
+        if ! [[ "$SWARM_DRONES" =~ ^[1-9][0-9]*$ ]]; then
+            SWARM_DRONES=6
+        fi
+        run_physics_live --swarm --drones "$SWARM_DRONES" --loop
+        ;;
+
     # ── Testing & validation ─────────────────────────────────────────────────
     --test)
         RUN_TESTS=1 ensure_venv
@@ -1138,10 +1166,9 @@ case "$MODE" in
         echo "  --backend=docker   Use Docker Compose"
         echo ""
         echo "Per-drone stack modes (Docker or K8s):"
-        echo "  (default)        Start ONLY the live web Run-time View (Flask + Three.js)"
-        echo "                   at http://127.0.0.1:8765/live, listening for MAVLink"
-        echo "                   on UDP 14550. Bring up the SITL stack separately with"
-        echo "                   --single-live to feed it telemetry."
+        echo "  (default)        Run a physics simulation and stream it to the live"
+        echo "                   Three.js viewer at http://127.0.0.1:8765/live (looping)."
+        echo "                   No Docker or SITL needed."
         echo "  --single         Run the single-drone SITL stack and open the live HUD"
         echo "  --single-live    Same as --single — explicit live-view alias"
         echo "  --single-static  Run the single-drone SITL stack and open the legacy"
@@ -1163,9 +1190,16 @@ case "$MODE" in
         echo "                   (default 14550)."
         echo ""
         echo "Legacy physics simulation (no Docker/K8s needed):"
-        echo "  --physics-single     Run Python physics single-drone scenario + visualize"
-        echo "  --physics-swarm [N]  Run Python physics swarm for N drones (default: 6)"
-        echo "  --physics-sim-only   Run Python physics scenario only (no GUI)"
+        echo "  --physics-single       Run Python physics scenario + matplotlib post-flight"
+        echo "  --physics-swarm [N]    Run Python physics swarm (default: 6) + matplotlib"
+        echo "  --physics-sim-only     Run Python physics scenario only (no GUI)"
+        echo "  --physics-live [--loop]"
+        echo "                         Run Python physics single-drone scenario and stream"
+        echo "                         to the live Three.js viewer in real time. No Docker"
+        echo "                         or SITL needed. Pass --loop to replay indefinitely."
+        echo "  --physics-swarm-live [N]"
+        echo "                         Run Python physics swarm (default: 6) and stream the"
+        echo "                         first drone to the live viewer (looping)."
         echo ""
         echo "Testing & validation:"
         echo "  --test          Run physics + integration tests"
@@ -1177,11 +1211,10 @@ case "$MODE" in
         echo "  --help          Show this help"
         echo ""
         echo "Real-time Telemetry (Run-time View):"
-        echo "  The default mode (no args) now boots ONLY the Flask + Three.js HUD"
-        echo "  on http://127.0.0.1:8765/live; pair it with a separately-running SITL"
-        echo "  stack, a real vehicle, or a MAVLink replay. Use --single-live to bring"
-        echo "  the SITL stack up alongside the HUD in a single command, or"
-        echo "  --single-static for the legacy post-flight matplotlib viewer."
+        echo "  The default mode (no args) runs a looping physics simulation and"
+        echo "  streams it to the live Three.js viewer. Use --viz-live for a bare"
+        echo "  server waiting for external MAVLink, --single-live for SITL + live"
+        echo "  HUD, or --single-static for the legacy matplotlib viewer."
         echo ""
         echo "Docker backend — per-drone stack (6 drones x 4 services = 24 containers):"
         echo "  sitl_drone_N      — Pixhawk sim + Micro-XRCE-DDS Agent (ROS_DOMAIN_ID=N)"
@@ -1198,14 +1231,14 @@ case "$MODE" in
         ;;
 
     # ── Default (no args) ────────────────────────────────────────────────────
-    # Default flow boots only the live web Run-time View (Flask +
-    # Three.js). It listens on UDP 14550 for MAVLink and serves
-    # http://127.0.0.1:8765/live in the browser. Bring up the SITL
-    # stack separately with `--single-live` (live HUD + SITL mission)
-    # or `--single-static` (legacy matplotlib post-flight viewer).
+    # Default flow runs a physics simulation and streams it to the live
+    # Run-time View (FastAPI + Three.js).  The drone flies the default
+    # waypoint pattern and loops so the viewer always has something to
+    # show.  Use --viz-live for a bare server waiting for external
+    # telemetry, or --single-live for SITL + live HUD.
     --default)
         NEED_RUNTIME_VIEW=1 ensure_venv
-        run_live_viz "${POSITIONAL[1]:-14550}" "${POSITIONAL[2]:-8765}" /live
+        run_physics_live --loop
         ;;
     *)
         fail "Unknown option: $MODE (use --help)"

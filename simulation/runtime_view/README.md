@@ -7,15 +7,21 @@ mission launcher.
 ## Quick start
 
 ```bash
-# 1. Default mode boots ONLY the live view server (no SITL stack):
-./run_scenario.sh                 # opens http://127.0.0.1:8765/live
-./run_scenario.sh --viz-live      # same thing, explicit alias
+# 1. Default — runs a physics simulation and streams to the viewer:
+./run_scenario.sh                     # opens http://127.0.0.1:8765/live
 
-# 2. Or run the server directly (no MAVLink listener for tests/dev):
-python -m runtime_view.server --no-source --port 8765
+# 2. Physics-live variants:
+./run_scenario.sh --physics-live      # single-shot sim + live viewer
+./run_scenario.sh --physics-swarm-live  # swarm sim (first drone, looping)
 
-# 3. Or pair the live view with the SITL stack:
+# 3. Bare server (no sim, waiting for external MAVLink):
+./run_scenario.sh --viz-live
+
+# 4. SITL stack + live viewer (requires Docker/K8s):
 ./run_scenario.sh --single-live
+
+# 5. Server directly (no MAVLink listener, for tests/dev):
+python -m runtime_view.server --no-source --port 8765
 ```
 
 The server is FastAPI on uvicorn; the WebSocket route is Starlette's
@@ -46,6 +52,7 @@ native ``WebSocket`` API. There is no Flask in the runtime view.
 | `/api/missions` | GET | Mission catalogue (JSON list) |
 | `/api/status` | GET | `{connected, sample_count, latest_sample}` |
 | `/api/snapshot?n=N` | GET | Last `N` samples (max 1000) |
+| `/api/waypoints` | GET | Active mission waypoints (ENU metres) |
 | `/ws/telemetry` | WS | 50 Hz `LiveTelemetrySample` push |
 
 ## Architecture

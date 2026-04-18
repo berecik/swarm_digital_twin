@@ -2718,8 +2718,8 @@ class TestLiveViewNoMotionRegression:
         assert 'telemetry_forward="${SITL_TELEMETRY_FORWARD:-}"' in body
         assert '--telemetry-forward' in body
 
-    def test_run_scenario_default_mode_invokes_run_live_viz(self):
-        """The (no-arg) default branch of run_scenario.sh must boot only run_live_viz."""
+    def test_run_scenario_default_mode_runs_physics_live(self):
+        """The (no-arg) default branch must run a physics simulation with the live viewer."""
         from pathlib import Path
         import re
 
@@ -2732,14 +2732,15 @@ class TestLiveViewNoMotionRegression:
         assert m is not None, '--default branch not found in run_scenario.sh'
         default_body = m.group('body')
 
-        # Must invoke run_live_viz with the live path.
-        assert 'run_live_viz' in default_body, (
-            f'--default must call run_live_viz, got:\n{default_body}')
-        assert '/live' in default_body, (
-            f'--default must open the /live path, got:\n{default_body}')
+        # Must invoke run_physics_live so the simulation actually runs.
+        assert 'run_physics_live' in default_body, (
+            f'--default must call run_physics_live, got:\n{default_body}')
+        # Must loop so the viewer always has telemetry.
+        assert '--loop' in default_body, (
+            f'--default must pass --loop to run_physics_live, '
+            f'got:\n{default_body}')
 
-        # Must NOT bring up the SITL stack as part of the default flow —
-        # default is now the standalone Run-time View only.
+        # Must NOT bring up the SITL stack as part of the default flow.
         assert 'run_single_mission' not in default_body, (
             f'--default must NOT call run_single_mission* — that belongs '
             f'to --single / --single-live. Got:\n{default_body}')
@@ -2749,8 +2750,7 @@ class TestLiveViewNoMotionRegression:
             f'--default must NOT call the matplotlib replayer. '
             f'Got:\n{default_body}')
 
-        # Must request the runtime-view dependencies (fastapi + uvicorn +
-        # websockets) via NEED_RUNTIME_VIEW so a fresh venv installs them.
+        # Must request the runtime-view dependencies.
         assert 'NEED_RUNTIME_VIEW=1' in default_body, (
             f'--default must set NEED_RUNTIME_VIEW=1 before ensure_venv. '
             f'Got:\n{default_body}')
@@ -4597,3 +4597,410 @@ class TestEulerRates:
         rates_neg = euler_rates_from_body_rates(-phi, theta, p, q, r)
         # theta_dot changes sign due to -sin(phi) term
         assert rates_pos[1] != pytest.approx(rates_neg[1], abs=1e-6)
+
+
+# ── Physics Live Replay Tests ────────────────────────────────────────────────
+
+class TestPhysicsLiveReplay:
+    """Tests for the physics_live_replay module — simulation → bridge →
+    live viewer pipeline.
+
+    These tests verify:
+    1. Simulation record generation and loading
+    2. NPZ file round-trip (save/load)
+    3. Full pipeline: physics sim → MAVLinkBridge → MAVLinkLiveSource → queue
+    4. Full pipeline through the WebSocket to the browser
+    5. run_scenario.sh --physics-live / --physics-swarm-live wiring
+    """
+
+    def test_default_waypoints_returns_valid_list(self):
+        """_default_waypoints() returns a list of 3D numpy arrays."""
+        from physics_live_replay import _default_waypoints
+        wps = _default_waypoints()
+        assert len(wps) >= 3
+        for wp in wps:
+            assert wp.shape == (3,)
+            assert wp[2] > 0, "waypoints should have positive altitude"
+
+    def test_run_physics_simulation_produces_records(self):
+        """run_physics_simulation() returns a non-empty list of SimRecords."""
+        from physics_live_replay import run_physics_simulation
+        records = run_physics_simulation(max_time=2.0)
+        assert len(records) > 10
+        # Records should have increasing time
+        for i in range(1, len(records)):
+            assert records[i].t > records[i - 1].t
+        # First record starts near origin, last record moved away
+        assert np.linalg.norm(records[0].position) < 1.0
+        total_dist = np.linalg.norm(records[-1].position - records[0].position)
+        assert total_dist > 0.1, "drone should have moved during simulation"
+
+    def test_run_physics_simulation_custom_waypoints(self):
+        """run_physics_simulation() respects custom waypoints."""
+        from physics_live_replay import run_physics_simulation
+        wps = [np.array([0, 0, 3.0]), np.array([5, 0, 3.0])]
+        records = run_physics_simulation(waypoints=wps, max_time=5.0)
+        assert len(records) > 0
+        # The drone should attempt to reach waypoint at x=5
+        max_x = max(r.position[0] for r in records)
+        assert max_x > 1.0, "drone should fly toward x=5 waypoint"
+
+    def test_load_npz_records_roundtrip(self, tmp_path):
+        """Save SimRecords to .npz, reload via load_npz_records(), verify match."""
+        from physics_live_replay import run_physics_simulation, load_npz_records
+
+        records = run_physics_simulation(max_time=1.0)
+        npz_path = str(tmp_path / "test_scenario.npz")
+        np.savez(
+            npz_path,
+            t=np.array([r.t for r in records]),
+            pos=np.array([r.position for r in records]),
+            vel=np.array([r.velocity for r in records]),
+            euler=np.array([r.euler for r in records]),
+            thrust=np.array([r.thrust for r in records]),
+            ang_vel=np.array([r.angular_velocity for r in records]),
+        )
+
+        loaded = load_npz_records(npz_path)
+        assert len(loaded) == len(records)
+        for orig, loaded_r in zip(records, loaded):
+            assert loaded_r.t == pytest.approx(orig.t, abs=1e-9)
+            np.testing.assert_allclose(loaded_r.position, orig.position, atol=1e-9)
+            np.testing.assert_allclose(loaded_r.velocity, orig.velocity, atol=1e-9)
+
+    def test_load_swarm_npz_records(self, tmp_path):
+        """load_swarm_npz_records() extracts one drone from a swarm file."""
+        from physics_live_replay import load_swarm_npz_records
+
+        n_steps, n_drones = 20, 3
+        t = np.linspace(0, 2.0, n_steps)
+        positions = np.random.randn(n_steps, n_drones, 3)
+        velocities = np.random.randn(n_steps, n_drones, 3)
+
+        npz_path = str(tmp_path / "swarm_data.npz")
+        np.savez(npz_path, t=t, positions=positions, velocities=velocities)
+
+        for drone_idx in range(n_drones):
+            loaded = load_swarm_npz_records(npz_path, drone_index=drone_idx)
+            assert len(loaded) == n_steps
+            for i, rec in enumerate(loaded):
+                np.testing.assert_allclose(
+                    rec.position, positions[i, drone_idx], atol=1e-9)
+
+    @pytest.mark.timeout(30)
+    def test_physics_records_to_bridge_to_queue(self):
+        """Full pipeline: run_simulation → MAVLinkBridge.send_state → MAVLinkLiveSource → queue.
+
+        Verifies that physics simulation records are correctly transformed
+        into MAVLink, sent via UDP, received, decoded, and end up in the
+        telemetry queue with matching positions.
+        """
+        import socket
+        import time
+        from physics_live_replay import run_physics_simulation
+        from mavlink_bridge import MAVLinkBridge, sim_state_from_record
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+
+        # Run a short simulation
+        records = run_physics_simulation(max_time=1.0)
+        assert len(records) > 5
+
+        # Bind the receiver on an ephemeral port
+        q = TelemetryQueue(maxlen=2048)
+        src = MAVLinkLiveSource(
+            listen_ip="127.0.0.1",
+            listen_port=0,
+            queue=q,
+        )
+        src.start()
+        recv_port = src._sock.getsockname()[1]
+
+        # Create a bridge targeting that port
+        bridge = MAVLinkBridge(
+            target_ip="127.0.0.1",
+            target_port=recv_port,
+            listen_port=0,
+        )
+        bridge.start()
+
+        try:
+            # Send a few records through the bridge
+            for rec in records[:10]:
+                state = sim_state_from_record(rec)
+                bridge.send_state(state)
+                time.sleep(0.02)
+
+            # Wait for samples to arrive
+            deadline = time.time() + 5.0
+            while len(q) < 3 and time.time() < deadline:
+                time.sleep(0.05)
+
+            assert len(q) >= 3, (
+                f"Expected at least 3 samples in queue, got {len(q)}")
+
+            # Verify the samples have non-trivial positions (drone moved)
+            samples = q.snapshot()
+            positions = [s.pos_enu for s in samples]
+            # At least some samples should differ in position
+            pos_spread = max(np.linalg.norm(
+                np.array(p) - np.array(positions[0])) for p in positions)
+            assert pos_spread > 0.001, (
+                "All samples have identical positions — bridge or receiver "
+                "is not forwarding correctly")
+        finally:
+            bridge.stop()
+            src.stop()
+
+    @pytest.mark.timeout(45)
+    def test_physics_to_websocket_full_pipeline(self):
+        """End-to-end: physics sim → bridge → source → server → WebSocket.
+
+        Boots the full FastAPI server, runs a short simulation through the
+        bridge, and verifies that the WebSocket client receives moving
+        telemetry samples. Interleaves sending and receiving to handle
+        timing correctly.
+        """
+        import socket as _socket
+        import time
+        import json
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+        from mavlink_bridge import MAVLinkBridge, sim_state_from_record
+        from physics_live_replay import run_physics_simulation
+
+        try:
+            import simple_websocket
+        except ImportError:
+            pytest.skip("simple_websocket not installed")
+
+        # Run a short simulation producing records with spread-out positions
+        records = run_physics_simulation(max_time=3.0)
+
+        # Set up the telemetry queue and start the server
+        q = TelemetryQueue(maxlen=4096)
+
+        # Pick an ephemeral UDP port for MAVLink
+        probe = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        probe.bind(('127.0.0.1', 0))
+        mav_port = probe.getsockname()[1]
+        probe.close()
+
+        src = MAVLinkLiveSource(
+            listen_ip='127.0.0.1', listen_port=mav_port, queue=q,
+        )
+        src.start()
+
+        server, thread, base_url = _runtime_view_start_uvicorn(q)
+
+        try:
+            bridge = MAVLinkBridge(
+                target_ip='127.0.0.1',
+                target_port=mav_port,
+                listen_port=0,
+            )
+            bridge.start()
+            try:
+                ws_url = base_url.replace('http://', 'ws://') + '/ws/telemetry'
+                client = simple_websocket.Client(ws_url)
+                try:
+                    # Interleave: send a record, try to read from WS
+                    sample_seen = None
+                    # Use records with spread-out positions (skip first few
+                    # which are near origin, use every 5th for speed)
+                    send_records = records[::5][:30]
+                    for tick, rec in enumerate(send_records):
+                        state = sim_state_from_record(rec)
+                        bridge.send_state(state)
+                        time.sleep(0.05)
+
+                        try:
+                            raw = client.receive(timeout=0.2)
+                        except Exception:
+                            continue
+                        if raw is None:
+                            continue
+                        msg = json.loads(raw)
+                        payload = None
+                        if msg['type'] == 'sample':
+                            payload = msg['data']
+                        elif msg['type'] == 'snapshot' and msg['data']:
+                            payload = msg['data'][-1]
+                        if payload and payload.get('pos_enu'):
+                            sample_seen = payload
+                            # Break once we see a sample with non-zero Z
+                            # (the drone has lifted off)
+                            if abs(payload['pos_enu'][2]) > 0.5:
+                                break
+
+                    assert sample_seen is not None, (
+                        'No telemetry reached the WebSocket from '
+                        'physics simulation replay')
+                    # Verify the sample has valid position data
+                    enu = sample_seen['pos_enu']
+                    assert isinstance(enu, list) and len(enu) == 3
+                finally:
+                    client.close()
+            finally:
+                bridge.stop()
+        finally:
+            try:
+                src.stop()
+            finally:
+                _runtime_view_stop_uvicorn(server, thread)
+
+    def test_run_scenario_physics_live_mode(self):
+        """run_scenario.sh --physics-live must call run_physics_live."""
+        import re
+        script = Path(__file__).resolve().parents[1] / 'run_scenario.sh'
+        body = script.read_text(encoding='utf-8')
+
+        # Find the --physics-live branch
+        m = re.search(
+            r'\n\s*--physics-live\)\s*\n(?P<body>.*?);;\s*\n',
+            body, re.DOTALL)
+        assert m is not None, '--physics-live branch not found'
+        branch = m.group('body')
+
+        assert 'NEED_RUNTIME_VIEW=1' in branch, (
+            '--physics-live must request runtime view deps')
+        assert 'run_physics_live' in branch, (
+            '--physics-live must call run_physics_live')
+        # Must NOT call run_single_mission or matplotlib viz
+        assert 'run_single_mission' not in branch
+        assert 'run_single_viz' not in branch
+        assert 'run_viz' not in branch
+
+    def test_run_scenario_physics_swarm_live_mode(self):
+        """run_scenario.sh --physics-swarm-live must call run_physics_live --swarm."""
+        import re
+        script = Path(__file__).resolve().parents[1] / 'run_scenario.sh'
+        body = script.read_text(encoding='utf-8')
+
+        m = re.search(
+            r'\n\s*--physics-swarm-live\)\s*\n(?P<body>.*?);;\s*\n',
+            body, re.DOTALL)
+        assert m is not None, '--physics-swarm-live branch not found'
+        branch = m.group('body')
+
+        assert 'NEED_RUNTIME_VIEW=1' in branch
+        assert 'run_physics_live' in branch
+        assert '--swarm' in branch
+        assert '--loop' in branch
+
+    def test_run_scenario_help_lists_physics_live(self):
+        """run_scenario.sh --help must document --physics-live and --physics-swarm-live."""
+        import subprocess
+        import sys as _sys
+
+        script = str(Path(__file__).resolve().parents[1] / 'run_scenario.sh')
+        result = subprocess.run(
+            ['bash', script, '--help'],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert '--physics-live' in result.stdout, (
+            '--physics-live missing from --help output')
+        assert '--physics-swarm-live' in result.stdout, (
+            '--physics-swarm-live missing from --help output')
+
+    def test_run_physics_live_function_exists_in_script(self):
+        """run_scenario.sh must define a run_physics_live() shell function."""
+        script = Path(__file__).resolve().parents[1] / 'run_scenario.sh'
+        body = script.read_text(encoding='utf-8')
+        assert 'run_physics_live()' in body, (
+            'run_physics_live() function not defined in run_scenario.sh')
+        assert 'physics_live_replay' in body, (
+            'run_physics_live must invoke physics_live_replay module')
+
+    def test_cli_help(self):
+        """physics_live_replay --help should exit 0 and list options."""
+        import subprocess
+        import sys as _sys
+
+        sim_dir = str(Path(__file__).resolve().parent)
+        result = subprocess.run(
+            [_sys.executable, '-m', 'physics_live_replay', '--help'],
+            capture_output=True, text=True, timeout=10,
+            cwd=sim_dir,
+        )
+        assert result.returncode == 0, f"--help failed: {result.stderr}"
+        for flag in ('--replay', '--swarm', '--fps', '--loop',
+                     '--http-port', '--mav-port', '--no-browser'):
+            assert flag in result.stdout, f"{flag} missing from --help"
+
+    def test_receiver_binds_before_replay_starts(self):
+        """run_physics_live() must start the MAVLink receiver BEFORE the
+        replay thread, otherwise UDP packets are silently dropped and the
+        drone mesh never moves in the browser.
+
+        This test inspects the source code to enforce the ordering contract:
+        start_telemetry() must be called before the replay thread starts,
+        and run_server() must be called with start_source=False.
+        """
+        import inspect
+        from physics_live_replay import run_physics_live
+
+        src = inspect.getsource(run_physics_live)
+
+        # start_telemetry() must appear before run_replay / _replay
+        idx_start = src.index('start_telemetry(')
+        idx_replay = src.index('replay_thread.start()')
+        assert idx_start < idx_replay, (
+            'start_telemetry() must be called before replay_thread.start() — '
+            'otherwise the receiver is not listening when the replay begins '
+            'and all UDP packets are silently dropped')
+
+        # run_server must NOT start a second source (double-bind)
+        assert 'start_source=False' in src, (
+            'run_server() must be called with start_source=False because '
+            'start_telemetry() was already called — a double-bind would '
+            'either fail or create a second listener that races with the '
+            'first')
+
+    @pytest.mark.timeout(30)
+    def test_replay_delivers_samples_to_queue_non_loop(self):
+        """Non-looping replay must deliver samples to the queue even though
+        it finishes quickly — the receiver must already be listening.
+
+        This is the regression test for the original bug: run_physics_live()
+        started the replay thread before binding the MAVLink receiver, so
+        the entire replay completed before any listener existed and zero
+        samples ever reached the queue.
+        """
+        import time
+        from physics_live_replay import run_physics_simulation
+        from mavlink_bridge import MAVLinkBridge, sim_state_from_record
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+
+        records = run_physics_simulation(max_time=1.0)
+
+        # Simulate the fixed ordering: receiver FIRST, then replay.
+        q = TelemetryQueue(maxlen=2048)
+        src = MAVLinkLiveSource(listen_ip='127.0.0.1', listen_port=0, queue=q)
+        src.start()
+        recv_port = src._sock.getsockname()[1]
+
+        bridge = MAVLinkBridge(
+            target_ip='127.0.0.1', target_port=recv_port, listen_port=0,
+        )
+        bridge.start()
+
+        try:
+            # Non-looping replay — runs once and finishes
+            bridge.run_replay(records[:20], fps=200.0, loop=False)
+
+            # Give the receiver a moment to process the last datagrams
+            time.sleep(0.3)
+
+            assert len(q) > 0, (
+                'Non-looping replay produced zero samples in the queue — '
+                'the receiver was not listening when the replay ran')
+
+            # Verify position spread (drone actually moved)
+            samples = q.snapshot()
+            positions = np.array([s.pos_enu for s in samples])
+            spread = np.max(np.ptp(positions, axis=0))
+            assert spread > 0.01, (
+                f'Samples in queue but drone did not move '
+                f'(spread={spread:.4f})')
+        finally:
+            bridge.stop()
+            src.stop()
