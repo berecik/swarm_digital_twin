@@ -136,7 +136,15 @@ Clear it with:
 ## 🤖 AI Agent Protocols
 
 Autonomous agents working on this repository MUST follow the protocols defined in `AGENTS.md`:
-1. **"do maintenance":** Run all tests, fix issues, update `ROADMAP.md` and `AGENTS.md`.
+1. **"do maintenance" / "do test-fix loop":** Run the MAINTENANCE scenario loop in full order:
+   - finish current scenario,
+   - test code,
+   - test safety behavior,
+   - simplify/cleanup code,
+   - run all tests,
+   - fix issues,
+   - repeat until no issues remain,
+   - update and synchronize documentation.
 2. **"do tests":** Expand coverage, update `TESTING.md`, and verify green status.
 
 ---

@@ -58,14 +58,15 @@ and [`todo/gazebo_k8s_playground.md`](todo/gazebo_k8s_playground.md)
 
 **Instructions:** [`todo/collision_detection.md`](todo/collision_detection.md)
 
-- [ ] Inter-drone collision detection — `SeparationMonitor` with near-miss
-      (< 3.0 m) and collision (< 1.5 m) events at control loop rate.
-- [ ] Drone-terrain collision detection — AGL-based terrain/obstacle contact
-      detection with clearance violation events.
+- [x] Inter-drone collision detection — `SeparationMonitor` with near-miss
+      (< 3.0 m) and collision (< 1.5 m) events. 10 tests.
+- [x] Drone-terrain collision detection — `TerrainMonitor` with AGL-based
+      terrain collision and clearance violation events.
+- [x] Safety KPIs — `SafetyReport` with collision count, near-miss count,
+      min separation, terrain collisions, clearance violations, `is_safe()`,
+      `summary()`, `to_dict()`.
 - [ ] Safety response playbook — Warning → HOVER → RTL / emergency stop
-      with configurable thresholds and logged incidents.
-- [ ] Safety KPIs — collision count, near-miss count, min separation,
-      recovery latency. All tracked per mission.
+      with configurable thresholds and logged incidents (requires PX4 integration).
 
 ## Phase 5 — Wind Simulation in Kubernetes
 

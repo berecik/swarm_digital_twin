@@ -2,9 +2,13 @@
 
 This document provides a comprehensive technical overview and context for autonomous agents (AI) and developers working on the **Swarm Digital Twin** project. It serves as a "brain dump" of architectural decisions, system constraints, and development patterns.
 
+**IMPORTANT RULES:**
+1. **Never commit or push automatically.** The user manages the git repository. Only stage/commit/push when explicitly asked.
+2. **After finishing any scenario**, always run the MAINTENANCE scenario (see below).
+
 ---
 
-## 👥 Authors & Context
+## Authors & Context
 
 - **Author:** beret ([beret@hipisi.org.pl](mailto:beret@hipisi.org.pl))
 - **Company:** Marysia Software Limited ([ceo@marysia.app](mailto:ceo@marysia.app))
@@ -13,152 +17,213 @@ This document provides a comprehensive technical overview and context for autono
 
 ---
 
-## 🚁 Project Essence
+## Project Essence
+
 **Swarm Digital Twin** is a dual-phase autonomous mission system:
-1.  **Phase 1 (Scout Swarm):** Agile, man-portable drones (Holybro X500 V2) for autonomous area search and human detection.
-2.  **Phase 2 (Heavy Lift):** A **Distributed Lift System (DLS)** using a minimum of **6 heavy-lift agents** (coaxial X8) to evacuate human casualties (100kg+ payload).
+1. **Phase 1 (Scout Swarm):** Agile, man-portable drones (Holybro X500 V2) for autonomous area search and human detection.
+2. **Phase 2 (Heavy Lift):** A **Distributed Lift System (DLS)** using a minimum of **6 heavy-lift agents** (coaxial X8) to evacuate human casualties (100kg+ payload).
 
 **Core Philosophy:** Decentralization, Determinism (via Rust), and Fail-Operational Redundancy (6 agents for 6-DOF payload control).
 
 ---
 
-## 🏗 System Architecture
+## System Architecture
 
 ### 1. The Autonomous Agent (Individual Drone)
 Each drone is an independent ROS 2 entity.
--   **Low-Level (Firmware):** PX4 Autopilot on Pixhawk 6C/X. Handles real-time stabilization.
--   **High-Level (Compute):** NVIDIA Jetson Orin Nano/AGX. Runs the ROS 2 workspace.
--   **Middleware:** `zenoh-bridge-ros2dds` bridges local ROS 2 topics to the global swarm mesh.
+- **Low-Level (Firmware):** PX4 Autopilot on Pixhawk 6C/X. Handles real-time stabilization.
+- **High-Level (Compute):** NVIDIA Jetson Orin Nano/AGX. Runs the ROS 2 workspace.
+- **Middleware:** `zenoh-bridge-ros2dds` bridges local ROS 2 topics to the global swarm mesh.
 
 ### 2. Software Stack & Language Choice
--   **Rust (`rclrs`):** Used for `swarm_control` and `heavy_lift_core`. **Why?** Memory safety, zero-cost abstractions, and predictable performance. Essential for safety-critical coordination and the Distributed Control Allocation (DCA) layer.
--   **Python (`rclpy`):** Used for `perception` and `simulation`. **Why?** AI ecosystem (PyTorch, YOLOv8/11).
--   **Zenoh:** Used for Inter-Drone (swarm) and Ground-to-Swarm comms. **Why?** Low-latency mesh networking; avoids DDS discovery overhead in wireless environments.
+- **Rust (`rclrs`):** Used for `swarm_control` and `heavy_lift_core`. Memory safety, zero-cost abstractions. Essential for safety-critical coordination.
+- **Python (`rclpy`):** Used for `perception` and `simulation`. AI ecosystem (PyTorch, YOLOv8/11).
+- **Zenoh:** Inter-drone and ground-to-swarm comms. Low-latency mesh networking.
+
+### 3. Live Run-time View
+- **FastAPI + Three.js** web app at `http://127.0.0.1:8765/live`
+- Multi-drone support with per-drone demux, colours, trails, labels
+- WebSocket telemetry at 50 Hz from MAVLink bridge
+- Post-flight replay from `.npz` files via launcher file picker
+- Browser-driven mission launch from mission catalogue
+- DataFlash `.BIN` recording for ArduPilot compatibility
 
 ---
 
-## 🛠 Repository & Workspace Structure
+## Repository & Workspace Structure
 
--   `/swarm_control`: The Rust swarm logic (Boids, FSM, formation).
--   `/heavy_lift_core`: Phase 2 core logic (DCA, Admittance Control, 6-agent redundancy).
--   `/perception`: Python nodes for vision and 3D localization.
--   `/simulation`: Mock simulators, standalone physics engine, and test runners.
-    -   `drone_physics.py`: Full physics engine — rigid-body dynamics with two modes: legacy linear drag (world-frame) or quadratic drag with body-frame dynamics (Valencia et al. Eq. 3/5). ISA atmosphere, airframe presets (quad + fixed-wing), AoA-dependent lift with stall model, terrain-aware ground collision.
-    -   `wind_model.py`: Wind perturbation model (constant, Dryden turbulence, flight-log replay) following paper Eq. 5-7.
-    -   `terrain.py`: Terrain elevation model (flat, grid, STL, analytical function) with bilinear interpolation and collision detection.
-    -   `flight_log.py`: Ardupilot flight log parser (CSV) for validation against real data.
-    -   `validation.py`: RMSE metrics and comparison plots (paper Table 5, Fig. 13 style).
-    -   `drone_scenario.py`: Full-featured scenario over terrain with wind and quadratic drag. 7 AGL-relative waypoints with terrain clearance verification.
-    -   `visualize_drone_3d.py`: 3D animated visualization with terrain surface, wind indicator, AGL tracking, ground shadow projected onto terrain, and telemetry panels.
-    -   `mavlink_bridge.py`: MAVLink v2 UDP bridge connecting the standalone sim to QGroundControl. Sends heartbeat, attitude, GPS, HUD, SYS_STATUS. Receives COMMAND_LONG and position targets.
-    -   `test_drone_physics.py`: 64 pytest tests covering rotation math, gravity, hover, drag (linear + quadratic), PID, position control, simulation, energy conservation, atmosphere, wind, inertia, body-frame dynamics, validation, terrain, fixed-wing aerodynamics (AoA, stall, lift), and MAVLink bridge.
--   `/gazebo`: Gazebo SITL integration (worlds, models, launch files, wind ROS node).
--   `/docs`: Detailed project documentation.
-    -   [`docs/architecture.md`](docs/architecture.md): System design and components.
-    -   [`docs/testing.md`](docs/testing.md): Test strategy and catalog.
-    -   [`docs/development.md`](docs/development.md): Setup & coding standards.
-    -   [`docs/physics.md`](docs/physics.md): Physics engine overview.
-    -   [`docs/physics_details.md`](docs/physics_details.md): Full equations, derivations, and parameter tables.
-    -   [`ROADMAP.md`](ROADMAP.md): Unified roadmap (includes migrated items from the former refactor plan).
-    -   [`TODO.md`](TODO.md): Execution backlog derived from roadmap phases.
-    -   [`todo/gazebo_k8s_playground.md`](todo/gazebo_k8s_playground.md): Kubernetes Gazebo operational scenario.
+- `/swarm_control`: Rust swarm logic (Boids, FSM, formation, Raft consensus).
+- `/heavy_lift_core`: Phase 2 core logic (DCA, Admittance Control, 6-agent redundancy).
+- `/perception`: Python nodes for vision and 3D localization.
+- `/simulation`: Physics engine, live viewer, and test runners.
+  - `drone_physics.py`: Full physics engine — rigid-body dynamics, quadratic drag, ISA atmosphere, wind, terrain, motor dynamics, battery model. 242+ physics tests.
+  - `live_telemetry.py`: MAVLink v2 receiver, per-drone demux by system_id, `TelemetryQueue`, `LiveTelemetrySample`.
+  - `physics_live_replay.py`: Runs physics simulation and streams to the live viewer. Supports single/swarm/replay modes.
+  - `dataflash_recorder.py`: ArduPilot-compatible `.BIN` file writer.
+  - `runtime_view/server.py`: FastAPI server — REST API, WebSocket telemetry, mission launch, file replay.
+  - `runtime_view/web/live.js`: Three.js multi-drone scene with dynamic meshes, trails, waypoints.
+  - `mavlink_bridge.py`: MAVLink v2 UDP bridge with per-drone system_id support.
+  - `test_drone_physics.py`: **299 tests** covering physics, RTV, multi-drone, replay, launch, recorder.
+- `/gazebo`: Gazebo SITL integration (worlds, models, launch files).
+- `/docs`: Project documentation.
+- [`ROADMAP.md`](ROADMAP.md): Strategic roadmap (K8s Gazebo phases).
+- [`TODO.md`](TODO.md): Execution backlog with links to detailed `/todo` instructions.
+- [`todo/`](todo/): Detailed per-phase instruction files.
 
 ---
 
-## 🧩 Key Integration Points (How to Develop)
+## MAINTENANCE Scenario
+
+This is the most important workflow. It must be run after finishing any implementation, feature, or bug fix. It can be triggered with:
+
+- **"do maintenance"**
+- **"do test-fix loop"**
+- **"let do maintenance"**
+
+### The Protocol (follow in order, do not skip steps)
+
+#### Step 1 — Finish the current task
+Complete the requested implementation or fix before entering maintenance.
+
+#### Step 2 — Run all tests
+```bash
+# Python physics + RTV (must show 299+ passed, 0 warnings)
+.venv/bin/python -m pytest simulation/test_drone_physics.py -q
+
+# Rust (if swarm_control was modified)
+cd swarm_control && cargo test
+
+# Perception (if perception was modified)
+.venv/bin/python -m pytest perception/test/
+
+# Shell syntax
+bash -n run_scenario.sh
+
+# JS syntax
+node --check simulation/runtime_view/web/live.js
+```
+
+#### Step 3 — Test code safety
+- Verify safety-critical behavior: `HOVER`/`RTL` fallbacks, finite setpoints, collision/clearance protections.
+- Check for security issues: no command injection, no XSS in web UI, no unbounded inputs.
+
+#### Step 4 — Simplify and clean up
+- Remove dead code, unused imports, legacy aliases.
+- Reduce duplication — extract shared helpers.
+- Fix linter warnings (`clippy`/PEP8).
+- Do NOT add speculative abstractions or unnecessary comments.
+
+#### Step 5 — Run all tests again
+Re-run the full test set after cleanup changes.
+
+#### Step 6 — Fix issues
+Analyze any failures and apply minimal, surgical fixes.
+
+#### Step 7 — Iterate (test-fix loop)
+Repeat steps 2–6 until **all tests pass with 0 failures and 0 warnings**.
+
+#### Step 8 — Update and synchronize documentation
+Update **all** of the following to match the current state:
+- **`AGENTS.md`**: This file — test counts, file list, architecture changes.
+- **`ROADMAP.md`**: Phase status checkboxes, test coverage percentages.
+- **`TODO.md`**: Mark completed items, add discovered tasks.
+- **`CHANGELOG.md`**: Add entries for new features/fixes.
+- **`MAINTENANCE.log`**: Record date, summary, and test count.
+- **`TESTING.md`**: Update test counts and verification status.
+- **`README.md`**: Update quick-start, test counts, feature list.
+- **`docs/architecture.md`**, **`docs/testing.md`**: Keep in sync.
+
+#### Step 9 — Present changes (DO NOT commit)
+Show the user what was changed. **Do not commit, push, or create branches** unless the user explicitly asks. The user manages the git repository.
+
+### Summary Flow
+
+```
+finish task → run tests → test safety → simplify/cleanup → run tests
+→ fix issues → repeat until clean → sync all docs → present to user
+```
+
+---
+
+## Git Policy
+
+**NEVER commit, push, create branches, or manage the git repository automatically.**
+
+The user controls all git operations. When asked to commit, follow the user's instructions exactly. When not asked, just present the changes and wait.
+
+This applies to all agents: Claude, Junie, and any other AI tool working on this project.
+
+---
+
+## Key Integration Points
 
 ### Adding a New Swarm Behavior
-1.  **Modify `swarm_control` (Rust):** Implement the logic in a new module.
-2.  **State Machine:** Add new states to the FSM (e.g., `APPROACH_TARGET`).
-3.  **PX4 Interface:** Use `px4_msgs::msg::TrajectorySetpoint` (ENU -> NED conversion required).
+1. Modify `swarm_control` (Rust): implement logic in a new module.
+2. State Machine: add new states to the FSM.
+3. PX4 Interface: use `TrajectorySetpoint` (ENU -> NED conversion required).
 
 ### Phase 2: Distributed Lift System (DLS)
--   **6-Agent Minimum:** Phase 2 operations **require** 6 agents to maintain 6-DOF control of the slung payload.
--   **Admittance Control:** Drones must "admit" tether forces to prevent rigid position fighting.
--   **Emergency Detach:** Safety logic must handle immediate tether release in case of critical failure.
+- **6-Agent Minimum:** Phase 2 requires 6 agents for 6-DOF control.
+- **Admittance Control:** Drones must "admit" tether forces.
+- **Emergency Detach:** Safety logic must handle immediate tether release.
 
 ### Inter-Drone Communication
--   **Mechanism:** Publish to a local ROS 2 topic mapped to Zenoh.
--   **Data types:** `VehicleOdometry` or custom lightweight messages. Avoid raw video/LIDAR over the mesh.
-
-### AI Detection Pipeline
--   Detections must be transformed from Image Coordinates -> Camera Coordinates (using Depth Map) -> Drone Body Frame -> World Frame (using Odometry).
--   Publish global coordinates to `/perception/human_found`.
+- Publish to local ROS 2 topic mapped to Zenoh.
+- Avoid raw video/LIDAR over the mesh.
 
 ---
 
-## 🚦 Development & Testing Workflow
+## Testing Commands
 
-### 1. Maintenance Task ("do maintenance")
-When an agent receives the "do maintenance" command, it must follow this iterative protocol:
-1.  **Run All Tests:**
-    -   **Rust:** Run `cargo test` in `swarm_control/`.
-    -   **Python:** Run `pytest` in `perception/test/` and `simulation/` (includes `test_drone_physics.py` — 41 physics tests and `test_sim.py`).
-    -   **Simulation:** Execute `test_swarm_flight.py` to verify swarm flight logic (requires ROS 2). Run `drone_scenario.py` for standalone physics verification.
-2.  **Fix Issues:** Analyze any failures (compilation errors, test regressions, or linter warnings) and apply fixes.
-3.  **Iterate:** Repeat steps 1 and 2 until all tests pass and no issues remain.
-4.  **Update Documentation:**
-    -   **AGENTS.md:** Ensure this guide reflects the latest architectural changes or maintenance procedures.
-    -   **ROADMAP.md:** Update milestones and current status based on completed tasks.
-        -   **Status vocabulary:** Use `[ ]` (to do), `[/]` (in progress), or `[x]` (done/cover by tests).
-        -   **Format:** Start each task line with the status checkbox (e.g., `- [x] Task description`) or update the `Status` column in tables.
-        -   **Test Coverage:** Update the `(Test Coverage: X%)` next to Phase headers. Calculate this as the percentage of tasks within that phase marked as `(cover by tests)`.
-        -   **Subtask Coverage:** For complex tasks with multiple subtasks, describe the specific coverage for each subtask if it is possible and makes sense (e.g., `- [x] (cover by tests) **Task Name**: Description (Coverage: Unit tests for X and Y)`).
-    -   **Project Docs:** Update `README.md` and ensure translations are synchronized to keep them synchronized with the codebase.
-5.  **Log Maintenance:** Record the date and summary of changes in the project's history or a dedicated `MAINTENANCE.log`.
+```bash
+# Full physics + RTV test suite
+.venv/bin/python -m pytest simulation/test_drone_physics.py -q
 
-### 2. Testing Task ("do tests")
-When an agent receives the "do tests" command, it must prioritize coverage and robustness:
-1.  **Expand Test Coverage:**
-    -   **Unit Tests:** Identify untested functions (e.g., in `boids.rs`, `utils.rs`, `communication.rs`) and write comprehensive unit tests.
-    -   **Integration Tests:** Create or update tests in `swarm_control/tests/` to verify multi-module interactions, such as the PX4 handshake logic or Zenoh communication.
-    -   **Edge Cases:** Add tests for negative altitudes, disconnected peers, and malformed messages.
-2.  **Execute & Verify:**
-    -   Run `cargo test` and ensure coverage is as high as possible.
-    -   In environments where `rclrs` cannot compile, use a `tests_standalone` approach to verify logic.
-3.  **Fix & Repeat:**
-    -   Fix all discovered issues immediately.
-    -   Repeat the process until coverage is satisfactory and no tests fail.
-3.  **Update Documentation:**
-    -   **TESTING.md:** Update the global test status and provide a **detailed explanation** for all tests (Purpose, Input, Expected Outcome).
-    -   **Module Testing Docs:** Update specific files like `swarm_control/TESTING.md` with detailed test descriptions.
-    -   **Project Docs:** Ensure documentation reflects any changes in system behavior discovered during testing.
+# Quick subset
+.venv/bin/python -m pytest simulation/test_drone_physics.py -q -k "MAVLink"
 
-*Last Maintenance: 2026-04-04 - Fixed Raft consensus storage persistence, message deduplication, and PX4 safety communication logic. All 79 Rust tests and 255 Python/physics tests pass.*
+# Rust tests
+cd swarm_control && cargo test
 
-### 3. Simulation First
-Always validate logic in simulation.
--   `drone_physics.py`: **Standalone physics engine** — use for rapid algorithm development without ROS 2 or Docker. Supports quadratic drag, ISA atmosphere, wind perturbation, body-frame dynamics, terrain collision, and airframe presets. Run `./run_scenario.sh` for the full pipeline (tests -> sim -> visualization).
--   `mock_drone_sim.py`: Fast ROS 2-based mock for swarm protocol/logic testing.
--   `Gazebo SITL`: Integration ready via `gazebo/` directory (worlds, X500 model with LiftDrag + ArduPilot plugins, wind ROS node). Launch with `gazebo/launch/sitl_empty.launch.py`.
+# Perception tests
+.venv/bin/python -m pytest perception/test/
 
-### 3. Dockerized Environment
-The `Dockerfile` in the root contains all dependencies (Rust, ROS 2, Python libs).
--   Use `docker-compose up` to spin up a multi-drone test environment.
+# Run the live viewer (default mode)
+./run_scenario.sh
 
-### 4. Safety First
--   **Heartbeat:** All high-level nodes should monitor the link to the Pixhawk.
--   **Failsafes:** Logic must default to `HOVER` or `RTL` (Return to Launch) if the perception or control node crashes.
+# Run specific modes
+./run_scenario.sh --physics-live
+./run_scenario.sh --physics-swarm-live
+./run_scenario.sh --replay-live simulation/scenario_data.npz
+./run_scenario.sh --test
+```
 
 ---
 
-## 📈 Roadmap Context for Agents
-If you are tasked with moving the project forward, prioritize:
-1.  **Raft Consensus Implementation:** Moving from simple Leader-Follower to a robust consensus for task allocation.
-2.  **Zenoh-based Telemetry:** Finalizing the bridge configuration to ensure reliable GCS feedback.
-3.  **Admittance Control (Phase 2):** Implementing force-feedback logic for tethered flight.
-4.  **Multi-drone physics simulation:** Extend `drone_physics.py` to support multiple drones with Boids flocking (port from `boids.rs`) and inter-drone collision avoidance in the standalone simulator.
-5.  ~~**Wind & turbulence model:**~~ **DONE** — Constant wind, Dryden turbulence, and flight-log replay implemented in `wind_model.py`.
-6.  ~~**Phase 3 — Fixed-wing aerodynamics:**~~ **DONE** — `FixedWingAero` with AoA-dependent CL/CD, pre/post-stall model, lift force, and `make_fixed_wing()` preset.
-7.  ~~**Phase 3 — MAVLink bridge:**~~ **DONE** — `mavlink_bridge.py` with MAVLink v2 UDP bridge (heartbeat, attitude, GPS, HUD, commands). No external dependency — pure Python.
+## Roadmap Context for Agents
+
+If tasked with moving the project forward, check:
+1. [`ROADMAP.md`](ROADMAP.md) — strategic phases (K8s Gazebo integration).
+2. [`TODO.md`](TODO.md) — actionable backlog with links to `todo/` instructions.
+3. [`todo/`](todo/) — detailed per-phase implementation guides.
+
+Current priorities: K8s + Gazebo realistic simulation (Phases 1–6), live view terrain rendering (Phase 7).
 
 ---
 
-## 📝 Coding Standards
--   **Rust:** Follow `clippy` and `rustfmt`. Use `Arc<Mutex<T>>` for shared state in ROS 2 nodes.
--   **Python:** PEP 8 compliance. Use type hints.
--   **Documentation:** All new modules must be added to the relevant `README.md` and referenced in the main documentation.
--   **Languages:** Maintain translations in `README_PL.md`, `README_UA.md`, `README_HE.md`, etc.
+## Coding Standards
+- **Rust:** Follow `clippy` and `rustfmt`. Use `Arc<Mutex<T>>` for shared state.
+- **Python:** PEP 8. Type hints. No speculative abstractions.
+- **JavaScript:** Vanilla ES modules. No build step. `escapeHtml()` for any dynamic content.
+- **Documentation:** All new modules must be referenced in `AGENTS.md` and `README.md`.
 
 ---
-*Generated for the Swarm Digital Twin Project. Use this context to maintain architectural integrity.*
+
+## Safety First
+- **Heartbeat:** All high-level nodes monitor the Pixhawk link.
+- **Failsafes:** Default to `HOVER` or `RTL` if perception or control crashes.
+- **Collision detection:** Inter-drone separation monitor + terrain AGL enforcement.
+
+---
+
+*Last Maintenance: 2026-04-19 — 299 tests passing, 0 warnings. Live Run-time View with multi-drone, post-flight replay, browser launch, DataFlash recording. Full roadmap expanded with per-phase todo/ instructions.*

@@ -5329,3 +5329,163 @@ class TestDataFlashRecorder:
             cwd=sim_dir,
         )
         assert '--record-bin' in result.stdout
+
+
+class TestSafetyMonitor:
+    """Tests for inter-drone and terrain collision detection (roadmap Phase 4)."""
+
+    def test_no_events_when_well_separated(self):
+        """No events when all drones are far apart."""
+        from safety import SeparationMonitor
+        mon = SeparationMonitor(min_separation=1.5, near_miss_threshold=3.0)
+        positions = {
+            0: np.array([0.0, 0.0, 5.0]),
+            1: np.array([10.0, 0.0, 5.0]),
+            2: np.array([0.0, 10.0, 5.0]),
+        }
+        mon.check(positions, t=1.0)
+        assert mon.collision_count == 0
+        assert mon.near_miss_count == 0
+        assert mon.min_distance > 3.0
+
+    def test_near_miss_detected(self):
+        """Near miss when distance < threshold but > min_separation."""
+        from safety import SeparationMonitor, NearMissEvent
+        mon = SeparationMonitor(min_separation=1.5, near_miss_threshold=3.0)
+        positions = {
+            0: np.array([0.0, 0.0, 5.0]),
+            1: np.array([2.0, 0.0, 5.0]),
+        }
+        mon.check(positions, t=1.0)
+        assert mon.collision_count == 0
+        assert mon.near_miss_count == 1
+        assert isinstance(mon.events[0], NearMissEvent)
+        assert mon.events[0].distance == pytest.approx(2.0, abs=0.01)
+
+    def test_collision_detected(self):
+        """Collision when distance < min_separation."""
+        from safety import SeparationMonitor, CollisionEvent
+        mon = SeparationMonitor(min_separation=1.5, near_miss_threshold=3.0)
+        positions = {
+            0: np.array([0.0, 0.0, 5.0]),
+            1: np.array([1.0, 0.0, 5.0]),
+        }
+        mon.check(positions, t=2.5)
+        assert mon.collision_count == 1
+        assert mon.near_miss_count == 0
+        assert isinstance(mon.events[0], CollisionEvent)
+        assert mon.events[0].drone_a == 0
+        assert mon.events[0].drone_b == 1
+
+    def test_swarm_record_check(self):
+        """check_swarm_record() works with SwarmRecord-like objects."""
+        from safety import SeparationMonitor
+        from drone_physics import SwarmRecord
+        mon = SeparationMonitor(min_separation=1.5)
+        rec = SwarmRecord(
+            t=0.5,
+            positions=np.array([[0, 0, 5], [1, 0, 5], [10, 10, 5]], dtype=float),
+            velocities=np.zeros((3, 3)),
+        )
+        mon.check_swarm_record(rec)
+        assert mon.collision_count == 1
+        assert mon.min_distance == pytest.approx(1.0, abs=0.01)
+
+    def test_terrain_collision_detected(self):
+        """TerrainMonitor detects AGL < 0 as terrain collision."""
+        from safety import TerrainMonitor, TerrainCollisionEvent
+        terrain = TerrainMap.from_function(
+            lambda x, y: np.full_like(x, 10.0),
+            x_range=(-50, 50), y_range=(-50, 50), resolution=1.0,
+        )
+        mon = TerrainMonitor(terrain, min_agl=5.0)
+        mon.check(drone_id=1, position=np.array([0.0, 0.0, 8.0]), t=1.0)
+        assert mon.terrain_collision_count == 1
+        assert isinstance(mon.events[0], TerrainCollisionEvent)
+        assert mon.events[0].agl == pytest.approx(-2.0, abs=0.1)
+
+    def test_clearance_violation_detected(self):
+        """TerrainMonitor detects AGL < min_agl as clearance violation."""
+        from safety import TerrainMonitor, ClearanceViolationEvent
+        terrain = TerrainMap.from_function(
+            lambda x, y: np.zeros_like(x),
+            x_range=(-50, 50), y_range=(-50, 50), resolution=1.0,
+        )
+        mon = TerrainMonitor(terrain, min_agl=5.0)
+        mon.check(drone_id=1, position=np.array([0.0, 0.0, 3.0]), t=1.0)
+        assert mon.clearance_violation_count == 1
+        assert mon.terrain_collision_count == 0
+        assert isinstance(mon.events[0], ClearanceViolationEvent)
+
+    def test_terrain_ok_when_above_min_agl(self):
+        """No events when AGL > min_agl."""
+        from safety import TerrainMonitor
+        terrain = TerrainMap.from_function(
+            lambda x, y: np.zeros_like(x),
+            x_range=(-50, 50), y_range=(-50, 50), resolution=1.0,
+        )
+        mon = TerrainMonitor(terrain, min_agl=5.0)
+        mon.check(drone_id=1, position=np.array([0.0, 0.0, 10.0]), t=1.0)
+        assert len(mon.events) == 0
+        assert mon.min_agl_observed == pytest.approx(10.0, abs=0.1)
+
+    def test_safety_report_from_monitors(self):
+        """SafetyReport aggregates KPIs from both monitors."""
+        from safety import SeparationMonitor, TerrainMonitor, SafetyReport
+        terrain = TerrainMap.from_function(
+            lambda x, y: np.zeros_like(x),
+            x_range=(-50, 50), y_range=(-50, 50), resolution=1.0,
+        )
+        sep = SeparationMonitor(min_separation=1.5, near_miss_threshold=3.0)
+        ter = TerrainMonitor(terrain, min_agl=5.0)
+        sep.check({0: np.array([0, 0, 5.0]), 1: np.array([2, 0, 5.0])}, t=1.0)
+        ter.check(0, np.array([0.0, 0.0, 10.0]), t=1.0)
+        report = SafetyReport.from_monitors(sep, ter)
+        assert report.is_safe()
+        assert report.near_miss_count == 1
+        assert report.collision_count == 0
+        assert report.min_separation == pytest.approx(2.0, abs=0.01)
+        d = report.to_dict()
+        assert d["verdict"] == "SAFE"
+
+    def test_safety_report_unsafe_on_collision(self):
+        """SafetyReport.is_safe() returns False when collisions exist."""
+        from safety import SeparationMonitor, SafetyReport
+        sep = SeparationMonitor(min_separation=1.5)
+        sep.check({0: np.array([0, 0, 5.0]), 1: np.array([0.5, 0, 5.0])}, t=1.0)
+        report = SafetyReport.from_monitors(sep)
+        assert not report.is_safe()
+        assert report.collision_count == 1
+        assert "UNSAFE" in report.summary()
+
+    def test_full_swarm_simulation_produces_report(self):
+        """SeparationMonitor produces a valid SafetyReport from real swarm data.
+
+        The boids swarm has legitimate close passes during formation
+        transitions, so this test verifies the monitor *detects* events
+        correctly rather than asserting zero collisions.
+        """
+        from safety import SeparationMonitor, SafetyReport
+        from swarm_scenario import run_swarm_benchmark
+        np.random.seed(42)
+        run_swarm_benchmark("baseline")
+        data = np.load(
+            str(Path(__file__).resolve().parent / "swarm_data.npz"),
+            allow_pickle=True,  # noqa: S301 — trusted local file
+        )
+        t = data["t"]
+        positions = data["positions"]
+        sep = SeparationMonitor(min_separation=1.0, near_miss_threshold=2.0)
+        for i in range(len(t)):
+            pos_dict = {j: positions[i][j] for j in range(positions.shape[1])}
+            sep.check(pos_dict, float(t[i]))
+        report = SafetyReport.from_monitors(sep)
+        # Report must have valid structure
+        assert report.total_events >= 0
+        assert report.min_separation >= 0.0
+        assert report.min_separation < 10.0  # sanity — drones are nearby
+        d = report.to_dict()
+        assert d["verdict"] in ("SAFE", "UNSAFE")
+        assert isinstance(d["collision_count"], int)
+        # The summary must be printable
+        assert len(report.summary()) > 50

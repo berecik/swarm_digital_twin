@@ -112,11 +112,20 @@ python simulation/swarm_scenario.py
 ```
 
 ### Protocol for Autonomous Agents
-Agents receiving the "do tests" or "do maintenance" commands must:
-1. **Identify untested code:** Run coverage reports.
-2. **Add unit tests:** For every new function, add a corresponding test.
-3. **Document in TESTING.md:** Keep the global registry updated.
-4. **Fix failures immediately:** No submission with broken tests.
+Agents receiving the "do tests", "do maintenance", or "do test-fix loop" commands must:
+1. **Use MAINTENANCE scenario when requested:**
+   - finish the current scenario,
+   - test code,
+   - test safety behavior,
+   - simplify/cleanup code,
+   - run all tests,
+   - fix issues,
+   - repeat until no issues remain,
+   - then update/synchronize documentation.
+2. **Identify untested code:** Run coverage reports.
+3. **Add unit tests:** For every new function, add a corresponding test.
+4. **Document in `TESTING.md`:** Keep the global registry updated.
+5. **Fix failures immediately:** No submission with broken tests.
 
 ---
 
