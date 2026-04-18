@@ -18,19 +18,32 @@ import sys
 import time
 import argparse
 import glob
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 class SITLDrone:
-    """Manages a single MAVLink TCP connection to an ArduPilot SITL instance."""
+    """Manages a single MAVLink TCP connection to an ArduPilot SITL instance.
 
-    def __init__(self, drone_id: int, host: str = "127.0.0.1", port: int = 5760):
+    Optionally relays every received MAVLink frame to a secondary UDP
+    endpoint via ``telemetry_forward_url`` (e.g. ``udpout:127.0.0.1:14550``).
+    The Run-time View web app (``simulation/runtime_view``) listens on
+    that port and renders the live HUD; without forwarding, the launcher
+    shows ``CONNECTED`` but the drone mesh never moves because the SITL
+    container only opens TCP 5760 — there is no UDP MAVLink stream for
+    the live view receiver to consume.
+    """
+
+    def __init__(self, drone_id: int, host: str = "127.0.0.1", port: int = 5760,
+                 telemetry_forward_url: Optional[str] = None):
         self.drone_id = drone_id
         self.host = host
         self.port = port
         self.conn = None
         self.was_armed = False
+        self.telemetry_forward_url = telemetry_forward_url
+        self._forward = None  # populated by _setup_telemetry_forward()
 
     def connect(self, timeout: float = 30):
         from pymavlink import mavutil
@@ -43,6 +56,43 @@ class SITLDrone:
         self.conn.wait_heartbeat(timeout=timeout)
         print(f"  [drone_{self.drone_id}] Connected "
               f"(sys={self.conn.target_system})")
+        if self.telemetry_forward_url:
+            self._setup_telemetry_forward()
+
+    def _setup_telemetry_forward(self) -> bool:
+        """Open the optional UDP forward channel for the Run-time View.
+
+        Failure to open the forward socket is non-fatal — the mission still
+        runs, the live view just stays empty. The error is logged so the
+        operator can fix the URL without aborting the SITL run.
+        """
+        from pymavlink import mavutil
+        try:
+            self._forward = mavutil.mavlink_connection(
+                self.telemetry_forward_url, source_system=255)
+            print(f"  [drone_{self.drone_id}] Telemetry forward → "
+                  f"{self.telemetry_forward_url}")
+            return True
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"  [drone_{self.drone_id}] Telemetry forward setup failed: "
+                  f"{exc}")
+            self._forward = None
+            return False
+
+    def _forward_msg(self, msg) -> None:
+        """Best-effort relay of one MAVLink frame to the forward socket."""
+        if self._forward is None or msg is None:
+            return
+        try:
+            buf = msg.get_msgbuf()
+        except Exception:
+            return
+        if not buf:
+            return
+        try:
+            self._forward.write(buf)
+        except Exception:  # pragma: no cover - defensive
+            pass
 
     def request_streams(self, rate: int = 4):
         for stream_id in range(13):
@@ -60,6 +110,9 @@ class SITLDrone:
             msg = self.conn.recv_match(blocking=True, timeout=2)
             if msg is None:
                 continue
+            # Relay HEARTBEAT/GPS_RAW_INT to the live view so the launcher
+            # status chip and ground track populate before the mission arms.
+            self._forward_msg(msg)
             mtype = msg.get_type()
             if mtype == "GPS_RAW_INT" and msg.fix_type >= 3 and not gps_ok:
                 print(f"  [drone_{self.drone_id}] GPS 3D fix "
@@ -188,6 +241,8 @@ class SITLDrone:
             return "disconnected"
         if msg is None:
             return "flying"
+        # Relay every received frame to the live view (best-effort).
+        self._forward_msg(msg)
         mtype = msg.get_type()
         if mtype == "HEARTBEAT":
             is_armed = bool(
@@ -204,15 +259,23 @@ class SITLDrone:
         return "flying"
 
     def close(self):
+        if self._forward is not None:
+            try:
+                self._forward.close()
+            except Exception:  # pragma: no cover - defensive
+                pass
+            self._forward = None
         if self.conn:
             self.conn.close()
             self.conn = None
 
 
 def run_single(host: str, port: int, mission_path: str,
-               timeout: float = 300) -> bool:
+               timeout: float = 300,
+               telemetry_forward_url: Optional[str] = None) -> bool:
     """Run a single SITL drone mission. Returns True on success."""
-    drone = SITLDrone(0, host, port)
+    drone = SITLDrone(0, host, port,
+                      telemetry_forward_url=telemetry_forward_url)
     try:
         drone.connect(timeout=30)
         drone.request_streams(rate=4)
@@ -244,7 +307,8 @@ def run_single(host: str, port: int, mission_path: str,
 
 def run_swarm(n_drones: int, base_port: int, port_step: int,
               mission_dir: str, timeout: float = 600,
-              host: str = "127.0.0.1") -> dict:
+              host: str = "127.0.0.1",
+              telemetry_forward_url: Optional[str] = None) -> dict:
     """Run N SITL drones with missions from mission_dir.
 
     Returns dict mapping drone_id to success (True/False).
@@ -257,7 +321,8 @@ def run_swarm(n_drones: int, base_port: int, port_step: int,
         print(f"\n=== Connecting {n_drones} SITL drones ===")
         for i in range(n_drones):
             port = base_port + i * port_step
-            drone = SITLDrone(i, host, port)
+            drone = SITLDrone(i, host, port,
+                              telemetry_forward_url=telemetry_forward_url)
             drone.connect(timeout=30)
             drone.request_streams(rate=2)  # Lower rate for swarm
             drones.append(drone)
@@ -328,7 +393,8 @@ def run_swarm(n_drones: int, base_port: int, port_step: int,
 def run_swarm_formation(n_drones: int, base_port: int, port_step: int,
                         timeout: float = 600,
                         host: str = "127.0.0.1",
-                        mission_dir: str = None) -> bool:
+                        mission_dir: str = None,
+                        telemetry_forward_url: Optional[str] = None) -> bool:
     """Run N SITL drones in formation flight.
 
     The Rust swarm_node containers run their formation FSM and broadcast
@@ -349,7 +415,8 @@ def run_swarm_formation(n_drones: int, base_port: int, port_step: int,
         print(f"\n=== Connecting {n_drones} SITL drones (formation mode) ===")
         for i in range(n_drones):
             port = base_port + i * port_step
-            drone = SITLDrone(i, host, port)
+            drone = SITLDrone(i, host, port,
+                              telemetry_forward_url=telemetry_forward_url)
             drone.connect(timeout=30)
             drone.request_streams(rate=2)
             drones.append(drone)
@@ -436,6 +503,14 @@ def run_swarm_formation(n_drones: int, base_port: int, port_step: int,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SITL mission orchestrator")
+    # Common: optional telemetry forward URL (e.g. udpout:127.0.0.1:14550)
+    # passed at the parser level so every subcommand inherits it.
+    forward_help = (
+        "Optional pymavlink connection URL the orchestrator will relay every "
+        "received MAVLink frame to (e.g. 'udpout:127.0.0.1:14550'). Used by "
+        "the Run-time View live HUD; without it, the launcher shows "
+        "CONNECTED but the drone never moves."
+    )
     sub = parser.add_subparsers(dest="mode", required=True)
 
     # Single drone
@@ -444,6 +519,7 @@ if __name__ == "__main__":
     sp.add_argument("--port", type=int, default=5760)
     sp.add_argument("--mission", required=True, help="QGC WPL mission file")
     sp.add_argument("--timeout", type=int, default=300)
+    sp.add_argument("--telemetry-forward", default=None, help=forward_help)
 
     # Swarm (per-drone missions, AUTO mode)
     sp = sub.add_parser("swarm", help="Multi-drone SITL swarm (individual missions)")
@@ -453,6 +529,7 @@ if __name__ == "__main__":
     sp.add_argument("--port-step", type=int, default=10)
     sp.add_argument("--mission-dir", required=True, help="Dir with drone_N.waypoints")
     sp.add_argument("--timeout", type=int, default=600)
+    sp.add_argument("--telemetry-forward", default=None, help=forward_help)
 
     # Swarm formation (offboard, Rust swarm_nodes control)
     sp = sub.add_parser("swarm-formation",
@@ -467,15 +544,18 @@ if __name__ == "__main__":
                          "monitoring (assumes external offboard controller).")
     sp.add_argument("--timeout", type=int, default=86400,
                     help="Timeout in seconds (default: 86400 = 24h, effectively no limit)")
+    sp.add_argument("--telemetry-forward", default=None, help=forward_help)
 
     args = parser.parse_args()
 
     if args.mode == "single":
-        ok = run_single(args.host, args.port, args.mission, args.timeout)
+        ok = run_single(args.host, args.port, args.mission, args.timeout,
+                        telemetry_forward_url=args.telemetry_forward)
         sys.exit(0 if ok else 4)
     elif args.mode == "swarm":
         results = run_swarm(args.n, args.base_port, args.port_step,
-                            args.mission_dir, args.timeout, args.host)
+                            args.mission_dir, args.timeout, args.host,
+                            telemetry_forward_url=args.telemetry_forward)
         n_ok = sum(1 for v in results.values() if v)
         n_total = len(results)
         print(f"\n=== Swarm results: {n_ok}/{n_total} completed ===")
@@ -483,5 +563,6 @@ if __name__ == "__main__":
     elif args.mode == "swarm-formation":
         ok = run_swarm_formation(args.n, args.base_port, args.port_step,
                                  args.timeout, args.host,
-                                 mission_dir=args.mission_dir)
+                                 mission_dir=args.mission_dir,
+                                 telemetry_forward_url=args.telemetry_forward)
         sys.exit(0 if ok else 4)

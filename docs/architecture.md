@@ -28,7 +28,8 @@ This document provides a detailed technical overview of the **Swarm Digital Twin
 | **Middleware** | ROS 2 (Humble/Jazzy) | Intra-drone node communication. |
 | **Global Mesh** | Eclipse Zenoh | Inter-drone communication and GCS link. |
 | **Simulation** | Python (NumPy) | Standalone physics engine for rapid development. |
-| **3D Visualization** | Matplotlib | Terrain surface, wind indicator, AGL tracking, telemetry panels. |
+| **3D Visualization (Live)** | FastAPI + uvicorn + Three.js | Launcher, WebSocket telemetry, live HUD and viewport. |
+| **3D Visualization (Replay)** | Matplotlib | Post-flight terrain surface, wind indicator, AGL tracking, telemetry panels. |
 | **Full Simulation** | Gazebo Harmonic / PX4 SITL | Hardware-in-the-loop testing with world models. |
 
 ---
@@ -99,8 +100,16 @@ Health-check contract (must pass before mission replay):
 2. **ROS topics**: `ros2 topic list` includes `/wind/velocity` and `/wind/force`.
 3. **MAVLink UDP**: bridge endpoint `udp://127.0.0.1:14550` receives `HEARTBEAT` at ~1 Hz.
 
-### 7. 3D Visualization (`simulation/visualize_drone_3d.py`)
-Animated 3D visualization of simulation data:
+### 7. Live Run-time View (`simulation/runtime_view/`)
+Browser-based live visualization stack:
+
+- FastAPI server (`server.py`) serves launcher and live viewport.
+- WebSocket route `/ws/telemetry` streams `LiveTelemetrySample` at runtime.
+- Vanilla Three.js frontend (`web/live.js`) renders drone pose, trail, and HUD.
+- Mission launcher (`web/index.html` + `missions.json`) provides scenario cards.
+
+### 8. Post-Flight 3D Replay (`simulation/visualize_drone_3d.py`)
+Animated matplotlib visualization of recorded simulation data:
 - Terrain surface rendered with elevation colormap.
 - Flight trajectory with drone attitude axes and velocity vector.
 - Wind direction indicator with speed label.
@@ -144,7 +153,7 @@ Standard ROS 2 publishers/subscribers for local sensing and control.
 
 The project maintains comprehensive automated tests:
 
-- **64 Physics + MAVLink Tests** (`test_drone_physics.py`): Rotation math, gravity, hover, drag (linear + quadratic), PID, position control, energy conservation, atmosphere, wind, inertia, body-frame dynamics, validation, terrain, fixed-wing aerodynamics (AoA, stall, lift), and MAVLink bridge (encoding, decoding, CRC, GPS conversion).
+- **282 Physics + Run-time View Tests** (`test_drone_physics.py`): Rotation math, gravity, hover, drag (linear + quadratic), PID, position control, energy conservation, atmosphere, wind, inertia, body-frame dynamics, validation, terrain, fixed-wing aerodynamics (AoA, stall, lift), MAVLink bridge, telemetry queue/parser, runtime-view HTTP/WebSocket integration, physics-live replay pipeline, and waypoint visualization.
 - **13 Perception Tests** (`perception/test/`): Detection pipeline and 3D localization.
 - **1 Simulation Placeholder** (`test_sim.py`): ROS 2 swarm flight smoke test.
 - **Rust Swarm Tests** (`swarm_control/`): Boids, FSM, PX4 interface (requires ROS 2 env).

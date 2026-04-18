@@ -585,3 +585,36 @@ class MAVLinkBridge:
                     self._commands.append(parsed)
                 elif isinstance(parsed, PositionTarget):
                     self._position_targets.append(parsed)
+
+    def run_replay(self, records: List[Any], fps: float = 50.0, loop: bool = False):
+        """
+        Replay a sequence of SimState records via MAVLink.
+
+        Args:
+            records: List of records (usually from npz file or similar).
+            fps: Playback speed.
+            loop: Whether to loop playback.
+        """
+        print(f"MAVLinkBridge: Starting replay of {len(records)} records at {fps} FPS")
+        dt = 1.0 / fps
+
+        while self._running:
+            for rec in records:
+                if not self._running:
+                    break
+
+                start_time = time.time()
+                try:
+                    state = sim_state_from_record(rec)
+                    self.send_state(state)
+                except Exception as e:
+                    print(f"MAVLinkBridge replay error on record: {e}")
+
+                # Sleep to maintain FPS
+                elapsed = time.time() - start_time
+                if elapsed < dt:
+                    time.sleep(dt - elapsed)
+
+            if not loop:
+                break
+        print("MAVLinkBridge: Replay finished")

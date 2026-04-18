@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Swarm Digital Twin — Run-time View</title>
+  <link rel="stylesheet" href="/web/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="brand">
+        <span class="brand-py">sw</span><span class="brand-verse">arm</span>
+        <span class="brand-tag">digital twin</span>
+      </div>
+    </div>
+    <div class="topbar-center">
+      <div class="topbar-title">SELECT MISSION</div>
+      <div class="topbar-subtitle">Choose the scenario you wish to run</div>
+    </div>
+    <div class="topbar-right">
+      <a class="pro-pill" href="https://github.com/berecik/swarm_digital_twin" target="_blank" rel="noopener">
+        <span class="pro-pill-icon">&#9830;</span>
+        <span>SOURCE</span>
+      </a>
+      <button class="icon-btn" title="Profile" aria-label="Profile">&#9787;</button>
+      <button class="icon-btn" title="Menu" aria-label="Menu">&#9776;</button>
+      <button class="icon-btn" title="Sound" aria-label="Sound">&#9835;</button>
+    </div>
+  </header>
+
+  <main class="launcher">
+    <section class="hero">
+      <div class="hero-heading">
+        <h1>From Telemetry to <span class="hero-accent">Sky</span></h1>
+        <p>
+          Run production-ready physics and watch your swarm come to life through
+          a live MAVLink feed from the digital twin.
+        </p>
+      </div>
+      <div class="hero-status">
+        <div class="status-chip">
+          <span class="status-dot" id="hero-status-dot"></span>
+          <span class="status-label">STATUS</span>
+          <span class="status-value" id="hero-status-value">CHECKING…</span>
+        </div>
+        <a class="open-live-btn" href="/live">
+          <span>&#9658;</span> Open Live View
+        </a>
+      </div>
+    </section>
+
+    <section class="missions-section">
+      <h2 class="section-title">Missions</h2>
+      <div class="missions" id="mission-grid"></div>
+    </section>
+  </main>
+
+  <div id="launch-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-panel">
+      <h3 id="launch-title">Launch mission</h3>
+      <p>Copy and paste this command into a terminal to start the scenario:</p>
+      <pre id="launch-command" class="code-block"></pre>
+      <div class="modal-actions">
+        <button class="btn btn-green" id="launch-copy">Copy command</button>
+        <button class="btn btn-ghost" data-close-modal>Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/web/app.js"></script>
+</body>
+</html>

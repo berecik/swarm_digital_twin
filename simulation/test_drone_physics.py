@@ -1581,6 +1581,1201 @@ class TestMAVLink:
         assert decode_mavlink_v2(b'\xFD' + b'\x00' * 20) is None
 
 
+# ── Live Telemetry & Runtime View ───────────────────────────────────────────
+
+class TestLiveTelemetry:
+    def test_parse_telemetry_payload_attitude(self):
+        """MAVLINK_MSG_ID_ATTITUDE round-trip via parse_telemetry_payload."""
+        from mavlink_bridge import build_attitude, decode_mavlink_v2
+        from live_telemetry import parse_telemetry_payload, MAVLINK_MSG_ID_ATTITUDE
+
+        # 1. Build a real MAVLink v2 attitude message
+        orig_roll, orig_pitch, orig_yaw = 0.1, -0.2, 0.3
+        msg_bytes = build_attitude(orig_roll, orig_pitch, orig_yaw, time_boot_ms=12345)
+
+        # 2. Decode it to get the raw payload
+        decoded = decode_mavlink_v2(msg_bytes)
+        assert decoded is not None
+        msg_id, payload = decoded
+        assert msg_id == MAVLINK_MSG_ID_ATTITUDE
+
+        # 3. Parse with the new telemetry parser
+        parsed = parse_telemetry_payload(msg_id, payload)
+
+        # 4. Verify
+        assert parsed["time_boot_ms"] == 12345
+        np.testing.assert_allclose(parsed["euler"], [orig_roll, orig_pitch, orig_yaw], atol=1e-6)
+
+    def test_parse_telemetry_payload_global_position(self):
+        """MAVLINK_MSG_ID_GLOBAL_POSITION_INT round-trip via parse_telemetry_payload."""
+        from mavlink_bridge import build_global_position_int, decode_mavlink_v2
+        from live_telemetry import parse_telemetry_payload, MAVLINK_MSG_ID_GLOBAL_POSITION_INT
+
+        lat, lon, alt_msl = -34.5678, 123.4567, 100.5
+        msg_bytes = build_global_position_int(lat, lon, alt_msl, alt_rel_m=50.0, time_boot_ms=54321)
+
+        decoded = decode_mavlink_v2(msg_bytes)
+        msg_id, payload = decoded
+        assert msg_id == MAVLINK_MSG_ID_GLOBAL_POSITION_INT
+
+        parsed = parse_telemetry_payload(msg_id, payload)
+        assert parsed["time_boot_ms"] == 54321
+        assert abs(parsed["lat_deg"] - lat) < 1e-6
+        assert abs(parsed["lon_deg"] - lon) < 1e-6
+        assert abs(parsed["alt_msl"] - alt_msl) < 0.001
+
+    def test_gps_to_enu_inverse_of_enu_to_gps(self):
+        """_gps_to_enu should be the inverse of _enu_to_gps."""
+        from mavlink_bridge import _enu_to_gps
+        from live_telemetry import _gps_to_enu
+
+        ref_lat, ref_lon, ref_alt = -35.363261, 149.165230, 584.0
+        points = [
+            np.array([0.0, 0.0, 0.0]),
+            np.array([100.0, -50.0, 10.0]),
+            np.array([-20.5, 30.1, -5.0])
+        ]
+
+        for p in points:
+            lat, lon, alt = _enu_to_gps(p, ref_lat, ref_lon, ref_alt)
+            p_back = _gps_to_enu(lat, lon, alt, ref_lat, ref_lon, ref_alt)
+            np.testing.assert_allclose(p, p_back, atol=1e-3)
+
+    def test_queue_thread_safety(self):
+        """TelemetryQueue should handle concurrent push/snapshot without crashing."""
+        import threading
+        from live_telemetry import TelemetryQueue, LiveTelemetrySample
+
+        q = TelemetryQueue(maxlen=500)
+        stop_event = threading.Event()
+
+        def producer():
+            for i in range(1000):
+                q.push(LiveTelemetrySample(time_boot_ms=i))
+
+        def consumer():
+            while not stop_event.is_set():
+                q.snapshot(n=100)
+                q.latest()
+
+        t1 = threading.Thread(target=producer)
+        t2 = threading.Thread(target=consumer)
+        t1.start()
+        t2.start()
+        t1.join()
+        stop_event.set()
+        t2.join()
+
+        assert len(q) == 500
+        assert q.latest().time_boot_ms == 999
+
+    def test_bridge_to_queue_roundtrip(self):
+        """Full UDP loop: MAVLinkBridge -> MAVLinkLiveSource -> TelemetryQueue."""
+        import socket
+        import time
+        from mavlink_bridge import MAVLinkBridge, SimState
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+
+        # 1. Setup receiver on ephemeral port
+        q = TelemetryQueue()
+        # Find the port assigned by OS
+        dummy_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        dummy_sock.bind(("127.0.0.1", 0))
+        ephemeral_port = dummy_sock.getsockname()[1]
+        dummy_sock.close()
+
+        # In some environments, 127.0.0.1 might behave differently than localhost or 0.0.0.0
+        source = MAVLinkLiveSource(listen_ip="0.0.0.0", listen_port=ephemeral_port, queue=q)
+        source.start()
+
+        try:
+            # 2. Setup sender
+            bridge = MAVLinkBridge(target_ip="127.0.0.1", target_port=ephemeral_port, listen_port=0)
+            bridge.start()
+
+            # 3. Send state
+            state1 = SimState(
+                time_s=1.0,
+                position=np.array([10.0, 20.0, 30.0]),
+                velocity=np.array([1.0, 2.0, 3.0]),
+                roll=0.1, pitch=-0.2, yaw=0.3,
+                thrust_pct=50.0
+            )
+
+            # 4. Poll queue
+            sample = None
+            timeout = 3.0
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                bridge.send_state(state1)
+                time.sleep(0.1)
+                sample = q.latest()
+                if sample:
+                    break
+
+            assert sample is not None
+            assert sample.time_boot_ms == 1000
+            np.testing.assert_allclose(sample.euler, [0.1, -0.2, 0.3], atol=1e-4)
+
+            bridge.stop()
+        finally:
+            source.stop()
+
+    def test_csv_recorder_roundtrip(self, tmp_path):
+        """TelemetryCSVRecorder should persist and reload correctly."""
+        from live_telemetry import TelemetryCSVRecorder, LiveTelemetrySample
+        import csv
+
+        csv_file = tmp_path / "test_telemetry.csv"
+        recorder = TelemetryCSVRecorder(str(csv_file))
+
+        samples = [
+            LiveTelemetrySample(t_wall=100.0, time_boot_ms=1000, pos_enu=np.array([1,2,3])),
+            LiveTelemetrySample(t_wall=100.1, time_boot_ms=1100, pos_enu=np.array([4,5,6]), flight_mode="GUIDED", armed=True)
+        ]
+
+        for s in samples:
+            recorder.record(s)
+        recorder.close()
+
+        with open(csv_file, 'r') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+
+        assert len(rows) == 2
+        assert rows[0]["time_boot_ms"] == "1000"
+        assert float(rows[0]["x"]) == 1.0
+        assert rows[1]["mode"] == "GUIDED"
+        assert rows[1]["armed"] == "1"
+
+
+class TestRuntimeViewServer:
+    """In-process route tests via FastAPI's ``TestClient``.
+
+    These cover the simple HTTP route shapes and the WebSocket handshake.
+    Real over-the-wire tests live in :class:`TestRunTimeViewIntegration`
+    and :class:`TestLiveViewNoMotionRegression` which spin up uvicorn on
+    an ephemeral port.
+    """
+
+    def test_index_route_renders_launcher(self, tmp_path):
+        """Root route should render index.html."""
+        from fastapi.testclient import TestClient
+        from runtime_view.server import app
+        # Create a dummy index.html
+        web_dir = tmp_path / "web"
+        web_dir.mkdir()
+        (web_dir / "index.html").write_text("Launcher")
+        app.template_folder = str(web_dir)
+
+        with TestClient(app) as client:
+            res = client.get('/')
+            assert res.status_code == 200
+            assert b"Launcher" in res.content
+
+    def test_api_missions_returns_catalogue(self, tmp_path):
+        """API should return the missions JSON."""
+        from fastapi.testclient import TestClient
+        from runtime_view.server import app
+
+        with TestClient(app) as client:
+            res = client.get('/api/missions')
+            assert res.status_code == 200
+            assert isinstance(res.json(), list)
+
+    def test_api_status_reflects_queue_state(self):
+        """Status API should show current sample count and latest sample."""
+        from fastapi.testclient import TestClient
+        from runtime_view.server import app, telemetry_queue
+        from live_telemetry import LiveTelemetrySample
+        import numpy as np
+
+        telemetry_queue.clear()
+        telemetry_queue.push(LiveTelemetrySample(time_boot_ms=100, pos_enu=np.array([1,2,3])))
+
+        with TestClient(app) as client:
+            res = client.get('/api/status')
+            assert res.status_code == 200
+            data = res.json()
+            assert data["sample_count"] == 1
+            assert data["latest_sample"]["time_boot_ms"] == 100
+
+    def test_websocket_streams_latest_sample(self):
+        """The /ws/telemetry route must exist and accept a handshake."""
+        from fastapi.testclient import TestClient
+        from runtime_view.server import app, telemetry_queue
+        from live_telemetry import LiveTelemetrySample
+
+        telemetry_queue.clear()
+        telemetry_queue.push(LiveTelemetrySample(t_wall=1.0, time_boot_ms=100))
+
+        # The route must be registered on the FastAPI app.
+        ws_paths = [getattr(r, 'path', None) for r in app.routes]
+        assert '/ws/telemetry' in ws_paths
+
+        # And a handshake must succeed; the snapshot frame should follow.
+        with TestClient(app) as client:
+            with client.websocket_connect('/ws/telemetry') as ws:
+                msg = ws.receive_json()
+                assert msg.get('type') in ('snapshot', 'sample', 'ping')
+
+
+def _runtime_view_start_uvicorn(telemetry_queue):
+    """Boot the FastAPI runtime-view app on an ephemeral uvicorn port.
+
+    Returns ``(server, thread, base_url)`` where ``server`` is a
+    ``uvicorn.Server`` whose ``should_exit`` flag stops the loop.
+    Replaces the old werkzeug-based helper so the integration tests
+    drive the real FastAPI/Starlette stack the production server uses.
+    """
+    import asyncio as _asyncio
+    import threading as _threading
+    import time as _time
+
+    import uvicorn  # noqa: WPS433 — local import keeps the suite hermetic
+    import runtime_view.server as srv
+
+    # Tear down any leftover MAVLink listener from a previous test.
+    if srv.live_source is not None:
+        try:
+            srv.live_source.stop()
+        except Exception:
+            pass
+        srv.live_source = None
+
+    # Reset template/static folders to the canonical web/ directory.
+    # ``TestRuntimeViewServer`` cases monkey-patch ``template_folder`` to
+    # a tmp_path and never restore it, so without this reset our
+    # integration tests would either 404 or serve stale content from
+    # leftover tmp files.
+    srv.app.template_folder = str(srv.WEB_DIR)
+    srv.app.static_folder = str(srv.WEB_DIR)
+
+    # Replace the module-level queue so the test owns it.
+    srv.telemetry_queue.clear()
+    srv.telemetry_queue = telemetry_queue
+
+    # uvicorn.Server subclass that signals when startup completes and
+    # skips installing signal handlers (which only work on the main thread).
+    class _ThreadedUvicornServer(uvicorn.Server):
+        def __init__(self, config):
+            super().__init__(config)
+            self.startup_event = _threading.Event()
+
+        async def startup(self, sockets=None):
+            await super().startup(sockets=sockets)
+            self.startup_event.set()
+
+        def install_signal_handlers(self):
+            return
+
+    config = uvicorn.Config(
+        srv.app,
+        host='127.0.0.1',
+        port=0,
+        log_level='error',
+        access_log=False,
+        lifespan='off',
+    )
+    server = _ThreadedUvicornServer(config)
+
+    def _serve():
+        loop = _asyncio.new_event_loop()
+        try:
+            _asyncio.set_event_loop(loop)
+            loop.run_until_complete(server.serve())
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+    thread = _threading.Thread(
+        target=_serve, name='rtv-uvicorn-test', daemon=True
+    )
+    thread.start()
+    if not server.startup_event.wait(timeout=10.0):
+        raise RuntimeError('uvicorn did not start within 10 s')
+
+    # Probe the bound socket for the actual port (port=0 → OS-assigned).
+    port = None
+    deadline = _time.time() + 5.0
+    while _time.time() < deadline:
+        try:
+            for srv_state in (server.servers or []):
+                for sock in srv_state.sockets:
+                    port = sock.getsockname()[1]
+                    break
+                if port is not None:
+                    break
+        except Exception:
+            port = None
+        if port:
+            break
+        _time.sleep(0.01)
+    if not port:
+        raise RuntimeError('uvicorn server bound no socket')
+    return server, thread, f'http://127.0.0.1:{port}'
+
+
+def _runtime_view_stop_uvicorn(server, thread):
+    """Signal a uvicorn test server to exit and join its background thread."""
+    try:
+        server.should_exit = True
+    finally:
+        thread.join(timeout=5.0)
+
+
+class TestRunTimeViewIntegration:
+    """End-to-end integration tests for the Run-time View web app.
+
+    These tests boot the real FastAPI app on an ephemeral uvicorn port,
+    drive it with a real ``urllib`` HTTP client and a ``simple_websocket``
+    WebSocket client, and pump telemetry through
+    ``MAVLinkBridge`` → ``MAVLinkLiveSource`` → ``TelemetryQueue`` →
+    ``/ws/telemetry`` → JS-side handler. They are skipped automatically
+    if a sub-dependency is missing so the suite stays green on minimal
+    CI runners.
+    """
+
+    def _start_server(self, telemetry_queue):
+        return _runtime_view_start_uvicorn(telemetry_queue)
+
+    def _stop_server(self, server, thread):
+        _runtime_view_stop_uvicorn(server, thread)
+
+    def test_http_server_serves_index_and_static_assets(self):
+        """Real HTTP server should serve / and /web/styles.css with the dark theme."""
+        import threading
+        import urllib.request
+
+        from live_telemetry import TelemetryQueue
+        import runtime_view.server as srv  # noqa: F401
+
+        q = TelemetryQueue(maxlen=128)
+        server, thread, base = self._start_server(q)
+        try:
+            with urllib.request.urlopen(f'{base}/', timeout=2.0) as r:
+                assert r.status == 200
+                body = r.read().decode('utf-8')
+                assert 'class="topbar"' in body
+                assert 'mission-grid' in body
+
+            with urllib.request.urlopen(f'{base}/web/styles.css', timeout=2.0) as r:
+                assert r.status == 200
+                css = r.read().decode('utf-8')
+                # Pinned dark-navy theme tokens from the plan.
+                assert '--bg-0: #070b1f' in css
+                assert '--accent-green: #2ed47a' in css
+        finally:
+            self._stop_server(server, thread)
+
+    def test_http_server_serves_live_view_with_three_js_importmap(self):
+        """The /live route should ship the Three.js importmap and HUD scaffolding."""
+        import threading
+        import urllib.request
+
+        from live_telemetry import TelemetryQueue
+
+        q = TelemetryQueue(maxlen=128)
+        server, thread, base = self._start_server(q)
+        try:
+            with urllib.request.urlopen(f'{base}/live', timeout=2.0) as r:
+                assert r.status == 200
+                html = r.read().decode('utf-8')
+                # Three.js importmap and the live HUD container.
+                assert 'importmap' in html
+                assert '/web/vendor/three.module.js' in html
+                assert 'id="viewport"' in html
+                # HUD slots: AGL, ALT MSL, SPEED, HEADING, THROTTLE,
+                # BATTERY V, BATTERY %, MODE.
+                for slot in ('hud-agl', 'hud-alt', 'hud-speed', 'hud-heading',
+                             'hud-throttle', 'hud-batt-v', 'hud-batt-pct', 'hud-mode'):
+                    assert f'id="{slot}"' in html
+
+            # Vendor file should be served and look like real Three.js.
+            with urllib.request.urlopen(f'{base}/web/vendor/three.module.js', timeout=2.0) as r:
+                assert r.status == 200
+                head = r.read(200).decode('utf-8', errors='replace')
+                assert 'Three.js' in head or 'three' in head.lower()
+        finally:
+            self._stop_server(server, thread)
+
+    def test_websocket_pushes_pending_sample(self):
+        """A real WebSocket client should receive the latest queued sample as JSON."""
+        import json
+        import threading
+        import time
+        try:
+            import simple_websocket
+        except ImportError:
+            pytest.skip('simple_websocket not installed')
+
+        from live_telemetry import LiveTelemetrySample, TelemetryQueue
+        import runtime_view.server as srv
+
+        q = TelemetryQueue(maxlen=64)
+        # Push a sample BEFORE the client connects so the snapshot delivery
+        # carries it on the very first frame.
+        sample = LiveTelemetrySample(
+            t_wall=time.time(),
+            time_boot_ms=4242,
+            pos_enu=np.array([12.5, -3.25, 7.75]),
+            vel_enu=np.array([1.0, 0.5, -0.1]),
+            euler=(0.05, -0.10, 1.57),
+            throttle_pct=42.0,
+            alt_msl=120.5,
+            battery_voltage_v=15.6,
+            battery_remaining_pct=88.0,
+            flight_mode='GUIDED',
+            armed=True,
+        )
+        q.push(sample)
+
+        server, thread, base = self._start_server(q)
+        ws_url = base.replace('http://', 'ws://') + '/ws/telemetry'
+        try:
+            client = simple_websocket.Client(ws_url)
+            try:
+                # The first frame is the snapshot batch.
+                raw = client.receive(timeout=3.0)
+                assert raw is not None, 'Did not receive any telemetry frame'
+                msg = json.loads(raw)
+                assert msg['type'] in ('snapshot', 'sample')
+                if msg['type'] == 'snapshot':
+                    payload = msg['data'][-1]
+                else:
+                    payload = msg['data']
+                assert payload['time_boot_ms'] == 4242
+                np.testing.assert_allclose(payload['pos_enu'], [12.5, -3.25, 7.75], atol=1e-9)
+                np.testing.assert_allclose(payload['euler'], [0.05, -0.10, 1.57], atol=1e-9)
+                assert payload['flight_mode'] == 'GUIDED'
+                assert payload['armed'] is True
+                assert payload['throttle_pct'] == 42.0
+            finally:
+                client.close()
+        finally:
+            self._stop_server(server, thread)
+
+    def test_websocket_streams_new_samples_after_connect(self):
+        """Samples pushed AFTER the WS handshake must reach the client."""
+        import json
+        import threading
+        import time
+        try:
+            import simple_websocket
+        except ImportError:
+            pytest.skip('simple_websocket not installed')
+
+        from live_telemetry import LiveTelemetrySample, TelemetryQueue
+        import runtime_view.server as srv
+
+        q = TelemetryQueue(maxlen=64)
+        server, thread, base = self._start_server(q)
+        ws_url = base.replace('http://', 'ws://') + '/ws/telemetry'
+        try:
+            client = simple_websocket.Client(ws_url)
+            try:
+                # Drain any initial empty snapshot frames.
+                time.sleep(0.05)
+
+                # Push three samples with strictly increasing t_wall so
+                # the server's de-dup logic forwards each one.
+                t0 = time.time()
+                for k in range(3):
+                    q.push(LiveTelemetrySample(
+                        t_wall=t0 + 0.01 * (k + 1),
+                        time_boot_ms=1000 + k,
+                        pos_enu=np.array([float(k), 0.0, 5.0]),
+                    ))
+
+                # Read up to 5 frames within 3 s and look for time_boot_ms 1002.
+                seen_ticks = set()
+                deadline = time.time() + 3.0
+                while time.time() < deadline:
+                    raw = client.receive(timeout=0.5)
+                    if raw is None:
+                        continue
+                    msg = json.loads(raw)
+                    if msg['type'] == 'sample':
+                        seen_ticks.add(msg['data']['time_boot_ms'])
+                    elif msg['type'] == 'snapshot':
+                        for s in msg['data']:
+                            seen_ticks.add(s['time_boot_ms'])
+                    if 1002 in seen_ticks:
+                        break
+
+                assert 1002 in seen_ticks, f'Expected tick 1002 in stream, saw {sorted(seen_ticks)}'
+            finally:
+                client.close()
+        finally:
+            self._stop_server(server, thread)
+
+    def test_bridge_to_server_to_websocket_full_loop(self):
+        """End-to-end: MAVLinkBridge → MAVLinkLiveSource → /ws/telemetry."""
+        import json
+        import socket as _socket
+        import threading
+        import time
+        try:
+            import simple_websocket
+        except ImportError:
+            pytest.skip('simple_websocket not installed')
+
+        from mavlink_bridge import MAVLinkBridge, SimState
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+
+        # Pick an ephemeral UDP port for MAVLink.
+        probe = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        probe.bind(('127.0.0.1', 0))
+        mav_port = probe.getsockname()[1]
+        probe.close()
+
+        q = TelemetryQueue(maxlen=128)
+        source = MAVLinkLiveSource(listen_ip='0.0.0.0', listen_port=mav_port, queue=q)
+        source.start()
+
+        server, thread, base = self._start_server(q)
+        ws_url = base.replace('http://', 'ws://') + '/ws/telemetry'
+        try:
+            bridge = MAVLinkBridge(target_ip='127.0.0.1', target_port=mav_port, listen_port=0)
+            bridge.start()
+            try:
+                client = simple_websocket.Client(ws_url)
+                try:
+                    # Generate and pump a small mission via send_state(...)
+                    sample_seen = None
+                    for tick in range(20):
+                        state = SimState(
+                            time_s=1.0 + 0.05 * tick,
+                            position=np.array([float(tick), 0.0, 5.0]),
+                            velocity=np.array([1.0, 0.0, 0.0]),
+                            roll=0.01 * tick,
+                            pitch=-0.02,
+                            yaw=0.5,
+                            thrust_pct=55.0,
+                        )
+                        bridge.send_state(state)
+                        time.sleep(0.05)
+
+                        try:
+                            raw = client.receive(timeout=0.2)
+                        except Exception:
+                            raw = None
+                        if raw is None:
+                            continue
+                        msg = json.loads(raw)
+                        payload = None
+                        if msg['type'] == 'sample':
+                            payload = msg['data']
+                        elif msg['type'] == 'snapshot' and msg['data']:
+                            payload = msg['data'][-1]
+                        if payload and payload['time_boot_ms'] >= 1000:
+                            sample_seen = payload
+                            if payload['time_boot_ms'] >= 1500:
+                                break
+
+                    assert sample_seen is not None, 'No telemetry reached the WebSocket'
+                    # Position drift along +X should be visible (≥10 m).
+                    assert abs(sample_seen['pos_enu'][0]) >= 5.0, sample_seen
+                    assert sample_seen['flight_mode'] in {'GUIDED', 'STABILIZE', 'AUTO', 'LAND', 'RTL'}
+                finally:
+                    client.close()
+            finally:
+                bridge.stop()
+        finally:
+            try:
+                source.stop()
+            finally:
+                self._stop_server(server, thread)
+
+    def test_api_missions_returns_full_catalogue(self):
+        """`/api/missions` over real HTTP must return the on-disk catalogue."""
+        import json
+        import urllib.request
+
+        from live_telemetry import TelemetryQueue
+        import runtime_view.server as srv
+
+        q = TelemetryQueue(maxlen=16)
+        server, thread, base = self._start_server(q)
+        try:
+            with urllib.request.urlopen(f'{base}/api/missions', timeout=2.0) as r:
+                assert r.status == 200
+                payload = json.loads(r.read().decode('utf-8'))
+
+            # The shipped catalogue at simulation/runtime_view/missions.json
+            # is the source of truth for the launcher.
+            on_disk = json.loads(srv.MISSIONS_PATH.read_text(encoding='utf-8'))
+            assert isinstance(payload, list)
+            assert len(payload) == len(on_disk)
+            assert len(payload) >= 6, 'Plan §2.1.B.3 requires ≥6 mission cards'
+
+            required_keys = {
+                'id', 'title', 'description', 'thumbnail',
+                'tier', 'start_command', 'disabled',
+            }
+            for mission in payload:
+                missing = required_keys - set(mission)
+                assert not missing, f'mission {mission!r} is missing keys {missing}'
+                assert mission['tier'] in ('free', 'pro'), mission
+
+            ids = {m['id'] for m in payload}
+            assert {'single', 'physics', 'real-log'}.issubset(ids), ids
+        finally:
+            self._stop_server(server, thread)
+
+    def test_api_snapshot_returns_recent_samples(self):
+        """`/api/snapshot?n=K` must return the K most recent queued samples."""
+        import json
+        import time
+        import urllib.request
+
+        from live_telemetry import LiveTelemetrySample, TelemetryQueue
+
+        q = TelemetryQueue(maxlen=64)
+        # Push 10 strictly-monotonic samples so the snapshot ordering is
+        # deterministic regardless of how the deque slices them.
+        t0 = time.time()
+        for k in range(10):
+            q.push(LiveTelemetrySample(
+                t_wall=t0 + 0.001 * k,
+                time_boot_ms=2000 + k,
+                pos_enu=np.array([float(k), 0.0, 5.0]),
+                flight_mode='GUIDED' if k % 2 == 0 else 'AUTO',
+                armed=True,
+            ))
+
+        server, thread, base = self._start_server(q)
+        try:
+            # Default n=100 → returns all 10 samples in chronological order.
+            with urllib.request.urlopen(f'{base}/api/snapshot', timeout=2.0) as r:
+                assert r.status == 200
+                full = json.loads(r.read().decode('utf-8'))
+            assert isinstance(full, list)
+            assert len(full) == 10
+            assert [s['time_boot_ms'] for s in full] == list(range(2000, 2010))
+
+            # Limited n=4 → only the last 4 samples (2006..2009).
+            with urllib.request.urlopen(f'{base}/api/snapshot?n=4', timeout=2.0) as r:
+                assert r.status == 200
+                tail = json.loads(r.read().decode('utf-8'))
+            assert [s['time_boot_ms'] for s in tail] == [2006, 2007, 2008, 2009]
+
+            # The clamp at n=1 should still return exactly one sample
+            # (the most recent one), proving min/max bounds are honoured.
+            with urllib.request.urlopen(f'{base}/api/snapshot?n=1', timeout=2.0) as r:
+                one = json.loads(r.read().decode('utf-8'))
+            assert len(one) == 1 and one[0]['time_boot_ms'] == 2009
+        finally:
+            self._stop_server(server, thread)
+
+    def test_api_status_real_http_reflects_queue_state(self):
+        """`/api/status` over real HTTP should mirror the live queue."""
+        import json
+        import time
+        import urllib.request
+
+        from live_telemetry import LiveTelemetrySample, TelemetryQueue
+
+        q = TelemetryQueue(maxlen=8)
+        server, thread, base = self._start_server(q)
+        try:
+            # Empty queue → no latest sample, count == 0.
+            with urllib.request.urlopen(f'{base}/api/status', timeout=2.0) as r:
+                empty = json.loads(r.read().decode('utf-8'))
+            assert empty['sample_count'] == 0
+            assert empty['latest_sample'] is None
+
+            # Push two samples and re-query.
+            q.push(LiveTelemetrySample(t_wall=time.time(), time_boot_ms=4000))
+            q.push(LiveTelemetrySample(t_wall=time.time(), time_boot_ms=4001))
+            with urllib.request.urlopen(f'{base}/api/status', timeout=2.0) as r:
+                full = json.loads(r.read().decode('utf-8'))
+            assert full['sample_count'] == 2
+            assert full['latest_sample'] is not None
+            assert full['latest_sample']['time_boot_ms'] == 4001
+        finally:
+            self._stop_server(server, thread)
+
+    def test_static_web_assets_served(self):
+        """`/web/<path>` must serve every front-end asset the launcher needs."""
+        import urllib.request
+
+        from live_telemetry import TelemetryQueue
+        import runtime_view.server as srv
+
+        q = TelemetryQueue(maxlen=16)
+        server, thread, base = self._start_server(q)
+        try:
+            # JavaScript and CSS bundled with the launcher.
+            for rel in ('app.js', 'live.js', 'styles.css'):
+                with urllib.request.urlopen(f'{base}/web/{rel}', timeout=2.0) as r:
+                    assert r.status == 200, rel
+                    body = r.read()
+                    assert len(body) > 0, rel
+
+            # Vendored Three.js modules.
+            for rel in ('vendor/three.module.js', 'vendor/OrbitControls.js'):
+                with urllib.request.urlopen(f'{base}/web/{rel}', timeout=2.0) as r:
+                    assert r.status == 200, rel
+                    head = r.read(64)
+                    assert len(head) > 0, rel
+
+            # Mission thumbnails generated by the build step.
+            for rel in ('img/single.png', 'img/physics.png', 'img/real.png',
+                        'img/swarm3.png', 'img/swarm6.png', 'img/fw.png'):
+                with urllib.request.urlopen(f'{base}/web/{rel}', timeout=2.0) as r:
+                    assert r.status == 200, rel
+                    blob = r.read()
+                    # Pillow PNG magic header so we know the file is intact.
+                    assert blob[:8] == b'\x89PNG\r\n\x1a\n', rel
+
+            # Unknown asset must 404 cleanly (not crash with a 500).
+            try:
+                urllib.request.urlopen(f'{base}/web/no_such_file.txt', timeout=2.0)
+                raised = False
+            except urllib.error.HTTPError as exc:
+                raised = (exc.code == 404)
+            assert raised, 'Missing static asset must return HTTP 404'
+
+            # Sanity check: WEB_DIR is what the server actually points at.
+            assert srv.app.static_folder == str(srv.WEB_DIR)
+        finally:
+            self._stop_server(server, thread)
+
+
+class TestLiveViewNoMotionRegression:
+    """Regression coverage for the "live view connected but no motion" bug.
+
+    Symptom (reported 2026-04-09): the launcher status chip flips to
+    ``CONNECTED`` because the WebSocket handshake succeeds, but the drone
+    mesh sits at the world origin forever — no ``sample`` messages reach
+    the browser. Root cause: ``sitl_orchestrator.py`` consumed MAVLink over
+    TCP 5760 from the SITL container but never forwarded the frames to UDP
+    14550 where ``MAVLinkLiveSource`` was listening, so the receiver
+    queue stayed empty for the entire mission.
+
+    These tests pin both halves of the fix: (a) the live view itself must
+    forward queued samples promptly, and (b) ``SITLDrone`` must relay
+    incoming frames to the configured forward URL so the queue actually
+    fills up.
+    """
+
+    def _start_server(self, telemetry_queue):
+        """Boot the FastAPI app on an ephemeral port (mirrors TestRunTimeViewIntegration)."""
+        return _runtime_view_start_uvicorn(telemetry_queue)
+
+    def _stop_server(self, server, thread):
+        _runtime_view_stop_uvicorn(server, thread)
+
+    def test_websocket_connects_but_emits_no_sample_when_queue_empty(self):
+        """The exact regression: WS opens (status=CONNECTED) but no sample frames flow.
+
+        Reproduces the production failure mode in a hermetic test: with
+        nothing pushing telemetry to the queue, the live HUD JS receives
+        zero ``sample`` frames, which is why the drone mesh never moves.
+        """
+        import json
+        import time
+        try:
+            import simple_websocket
+        except ImportError:
+            pytest.skip('simple_websocket not installed')
+
+        from live_telemetry import TelemetryQueue
+
+        q = TelemetryQueue(maxlen=8)
+        server, thread, base = self._start_server(q)
+        ws_url = base.replace('http://', 'ws://') + '/ws/telemetry'
+        try:
+            client = simple_websocket.Client(ws_url)
+            try:
+                # Drain everything the server is willing to emit in 1 s.
+                deadline = time.time() + 1.0
+                samples_seen = 0
+                snapshots_seen = 0
+                while time.time() < deadline:
+                    try:
+                        raw = client.receive(timeout=0.2)
+                    except Exception:
+                        raw = None
+                    if raw is None:
+                        continue
+                    msg = json.loads(raw)
+                    if msg.get('type') == 'sample':
+                        samples_seen += 1
+                    elif msg.get('type') == 'snapshot':
+                        snapshots_seen += 1
+                # The WS connection itself opened cleanly (== "CONNECTED"
+                # in the HUD chip). But because nothing populated the
+                # queue, the JS handler in live.js never invoked
+                # applySample, so the drone mesh stayed at the origin.
+                assert samples_seen == 0, (
+                    'WS should not emit sample frames when the queue is empty')
+                # An empty initial snapshot must NOT be sent either, otherwise
+                # the JS handler would call applySample with stale zeros.
+                assert snapshots_seen == 0, (
+                    'WS should not emit snapshot frames for an empty queue')
+            finally:
+                client.close()
+        finally:
+            self._stop_server(server, thread)
+
+    def test_websocket_emits_motion_samples_when_queue_filled(self):
+        """When telemetry actually arrives, the WS must forward each pos_enu update."""
+        import json
+        import time
+        try:
+            import simple_websocket
+        except ImportError:
+            pytest.skip('simple_websocket not installed')
+
+        from live_telemetry import LiveTelemetrySample, TelemetryQueue
+
+        q = TelemetryQueue(maxlen=64)
+        server, thread, base = self._start_server(q)
+        ws_url = base.replace('http://', 'ws://') + '/ws/telemetry'
+        try:
+            client = simple_websocket.Client(ws_url)
+            try:
+                # Push a flight along a 10 m straight line so the JS
+                # camera-follow lerp would visibly move the drone mesh.
+                t0 = time.time()
+                positions = [(float(k), 0.0, 5.0) for k in range(10)]
+                for k, (x, y, z) in enumerate(positions):
+                    q.push(LiveTelemetrySample(
+                        t_wall=t0 + 0.01 * (k + 1),
+                        time_boot_ms=5000 + k,
+                        pos_enu=np.array([x, y, z]),
+                        vel_enu=np.array([1.0, 0.0, 0.0]),
+                        flight_mode='AUTO',
+                        armed=True,
+                    ))
+
+                seen_pos = []
+                deadline = time.time() + 3.0
+                while time.time() < deadline:
+                    try:
+                        raw = client.receive(timeout=0.5)
+                    except Exception:
+                        raw = None
+                    if raw is None:
+                        continue
+                    msg = json.loads(raw)
+                    if msg.get('type') == 'sample':
+                        seen_pos.append(tuple(msg['data']['pos_enu']))
+                    elif msg.get('type') == 'snapshot':
+                        for s in msg['data']:
+                            seen_pos.append(tuple(s['pos_enu']))
+                    if len(seen_pos) >= 5:
+                        break
+
+                assert seen_pos, 'Live view emitted no samples even though queue was filled'
+                # The pos_enu must actually CHANGE between samples — that
+                # is the literal definition of "the drone is moving".
+                assert len(set(seen_pos)) >= 2, (
+                    f'pos_enu never changed across {len(seen_pos)} frames: {seen_pos}')
+                # And the X coordinate must monotonically advance.
+                xs = [p[0] for p in seen_pos]
+                assert xs[-1] > xs[0], f'X coordinate did not advance: {xs}'
+            finally:
+                client.close()
+        finally:
+            self._stop_server(server, thread)
+
+    def test_sitl_drone_forwards_received_frame_to_udp_listener(self):
+        """SITLDrone._forward_msg must relay raw MAVLink bytes to the configured UDP URL."""
+        import socket as _socket
+        import time
+        from unittest.mock import MagicMock
+
+        from sitl_orchestrator import SITLDrone
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+
+        # Pick an ephemeral UDP port for the live view receiver.
+        probe = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        probe.bind(('127.0.0.1', 0))
+        fwd_port = probe.getsockname()[1]
+        probe.close()
+
+        q = TelemetryQueue(maxlen=8)
+        # ref defaults match the live view; with these, GPS round-trip
+        # produces a non-zero pos_enu so we can also assert "motion".
+        src = MAVLinkLiveSource(
+            listen_ip='127.0.0.1', listen_port=fwd_port, queue=q,
+            ref_lat=-0.508, ref_lon=-78.14, ref_alt_msl=4500.0,
+        )
+        src.start()
+        try:
+            drone = SITLDrone(0, telemetry_forward_url=f'udpout:127.0.0.1:{fwd_port}')
+            assert drone._setup_telemetry_forward(), 'forward setup failed'
+
+            # Build a real MAVLink GLOBAL_POSITION_INT frame using
+            # pymavlink (the same library the orchestrator uses) so the
+            # bytes are bit-identical to what SITL would emit.
+            from pymavlink.dialects.v20 import ardupilotmega as mavlink2
+            mav = mavlink2.MAVLink(None)
+            mav.srcSystem = 1
+            mav.srcComponent = 1
+            # 10 m east, 0 m north, 5 m up relative to the ref point.
+            lat_offset_deg = 0.0
+            lon_offset_deg = 10.0 / (111320.0 * np.cos(np.radians(-0.508)))
+            msg = mav.global_position_int_encode(
+                time_boot_ms=4242,
+                lat=int((-0.508 + lat_offset_deg) * 1e7),
+                lon=int((-78.14 + lon_offset_deg) * 1e7),
+                alt=int((4500.0 + 5.0) * 1000),
+                relative_alt=int(5.0 * 1000),
+                vx=100, vy=0, vz=0, hdg=9000,
+            )
+            msg.pack(mav)  # populates the internal _msgbuf
+
+            # _forward_msg is the production code path used by poll_once
+            # and wait_gps_ekf. Calling it directly avoids needing a real
+            # SITL TCP server.
+            drone._forward_msg(msg)
+
+            # Wait for the receiver thread to consume the UDP datagram.
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if len(q) > 0:
+                    break
+                time.sleep(0.05)
+
+            assert len(q) > 0, 'forwarded MAVLink frame never reached the live view queue'
+            sample = q.latest()
+            assert sample is not None
+            assert sample.time_boot_ms == 4242
+            # ENU translation: ~10 m east, ~5 m up, 0 m north.
+            np.testing.assert_allclose(
+                sample.pos_enu, [10.0, 0.0, 5.0], atol=0.5,
+                err_msg=f'pos_enu mismatch: {sample.pos_enu}',
+            )
+            drone.close()
+        finally:
+            src.stop()
+
+    def test_orchestrator_poll_once_forwards_every_frame(self):
+        """SITLDrone.poll_once must call _forward_msg on every received frame."""
+        from unittest.mock import MagicMock
+
+        from sitl_orchestrator import SITLDrone
+
+        drone = SITLDrone(0, telemetry_forward_url='udpout:127.0.0.1:1')
+        drone.conn = MagicMock()
+
+        # Fake STATUSTEXT-style message with a synthesized get_msgbuf().
+        fake_frame = b'\xfd\x09\x00\x00\x00\x01\x01\x00\x00\x00deadbeef00'
+        fake_msg = MagicMock()
+        fake_msg.get_type.return_value = "STATUSTEXT"
+        fake_msg.get_msgbuf.return_value = fake_frame
+        fake_msg.text = "Mission: 1 cmds"
+        drone.conn.recv_match.return_value = fake_msg
+
+        forwarded = []
+        forward_stub = MagicMock()
+        forward_stub.write.side_effect = lambda buf: forwarded.append(bytes(buf))
+        drone._forward = forward_stub
+
+        result = drone.poll_once()
+        assert result == 'flying'
+        assert forwarded == [fake_frame], (
+            'poll_once must relay every received frame to the forward channel')
+
+        # Two more polls — every frame must be forwarded, not just the first.
+        drone.poll_once()
+        drone.poll_once()
+        assert len(forwarded) == 3
+
+        # When recv_match yields nothing, no forward call must happen.
+        drone.conn.recv_match.return_value = None
+        forwarded.clear()
+        drone.poll_once()
+        assert forwarded == []
+
+    def test_full_pipeline_emits_motion_to_websocket(self):
+        """Full SITL → orchestrator forward → MAVLinkLiveSource → /ws/telemetry."""
+        import json
+        import socket as _socket
+        import time
+        try:
+            import simple_websocket
+        except ImportError:
+            pytest.skip('simple_websocket not installed')
+
+        from sitl_orchestrator import SITLDrone
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+
+        # 1. Bind a UDP listener for the forwarded MAVLink stream.
+        probe = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        probe.bind(('127.0.0.1', 0))
+        fwd_port = probe.getsockname()[1]
+        probe.close()
+
+        q = TelemetryQueue(maxlen=64)
+        src = MAVLinkLiveSource(
+            listen_ip='127.0.0.1', listen_port=fwd_port, queue=q,
+            ref_lat=-0.508, ref_lon=-78.14, ref_alt_msl=4500.0,
+        )
+        src.start()
+
+        # 2. Boot the runtime view server backed by the same queue.
+        server, thread, base = self._start_server(q)
+        ws_url = base.replace('http://', 'ws://') + '/ws/telemetry'
+
+        try:
+            # 3. SITLDrone with a real forward channel.
+            drone = SITLDrone(
+                0, telemetry_forward_url=f'udpout:127.0.0.1:{fwd_port}')
+            assert drone._setup_telemetry_forward()
+
+            from pymavlink.dialects.v20 import ardupilotmega as mavlink2
+            mav = mavlink2.MAVLink(None)
+            mav.srcSystem = 1
+            mav.srcComponent = 1
+
+            client = simple_websocket.Client(ws_url)
+            try:
+                # 4. Pump 12 ATTITUDE + GLOBAL_POSITION_INT pairs, each
+                # with a slightly different east position so the trail
+                # advances east by ~12 m total.
+                cos_lat = float(np.cos(np.radians(-0.508)))
+                lon_per_m = 1.0 / (111320.0 * cos_lat)
+                for tick in range(12):
+                    east_m = float(tick + 1)
+                    pos_msg = mav.global_position_int_encode(
+                        time_boot_ms=10000 + tick,
+                        lat=int(-0.508 * 1e7),
+                        lon=int((-78.14 + east_m * lon_per_m) * 1e7),
+                        alt=int((4500.0 + 5.0) * 1000),
+                        relative_alt=int(5.0 * 1000),
+                        vx=100, vy=0, vz=0, hdg=9000,
+                    )
+                    pos_msg.pack(mav)
+                    drone._forward_msg(pos_msg)
+                    time.sleep(0.05)
+
+                # 5. Drain the WS until we either see motion or hit a deadline.
+                seen_x = []
+                deadline = time.time() + 3.0
+                while time.time() < deadline:
+                    try:
+                        raw = client.receive(timeout=0.3)
+                    except Exception:
+                        raw = None
+                    if raw is None:
+                        continue
+                    msg = json.loads(raw)
+                    if msg.get('type') == 'sample':
+                        seen_x.append(msg['data']['pos_enu'][0])
+                    elif msg.get('type') == 'snapshot':
+                        for s in msg['data']:
+                            seen_x.append(s['pos_enu'][0])
+                    if len(seen_x) >= 4 and max(seen_x) - min(seen_x) >= 3.0:
+                        break
+
+                assert seen_x, 'No samples reached the WS — forwarder did not relay'
+                spread = max(seen_x) - min(seen_x) if seen_x else 0.0
+                assert spread >= 3.0, (
+                    f'Drone X position barely moved across WS frames '
+                    f'(spread={spread:.2f}, samples={seen_x}). The forwarder '
+                    f'or the parser dropped GPS updates somewhere.')
+            finally:
+                client.close()
+            drone.close()
+        finally:
+            try:
+                src.stop()
+            finally:
+                self._stop_server(server, thread)
+
+    def test_run_scenario_live_modes_open_live_url_and_set_forward(self):
+        """run_scenario.sh must open /live and set SITL_TELEMETRY_FORWARD for live modes."""
+        from pathlib import Path
+
+        # The script lives at the repo root, two levels up from this file.
+        script = Path(__file__).resolve().parents[1] / 'run_scenario.sh'
+        assert script.exists(), f'run_scenario.sh not found at {script}'
+        body = script.read_text(encoding='utf-8')
+
+        # 1. The default landing path of run_live_viz must be /live.
+        assert 'local open_path="${3:-/live}"' in body, (
+            'run_live_viz must default its open_path argument to /live')
+
+        # 2. run_single_mission_live must export the forward URL so the
+        # nested run_single_mission call passes it to the orchestrator.
+        assert 'SITL_TELEMETRY_FORWARD="udpout:127.0.0.1:14550"' in body, (
+            'run_single_mission_live must set SITL_TELEMETRY_FORWARD '
+            'so sitl_orchestrator forwards MAVLink to the live view')
+
+        # 3. run_single_mission_live must invoke run_live_viz with /live.
+        assert 'run_live_viz 14550 8765 /live' in body, (
+            'run_single_mission_live must open the live HUD path directly')
+
+        # 4. run_single_mission must consume SITL_TELEMETRY_FORWARD and
+        # forward it via --telemetry-forward to sitl_orchestrator.
+        assert 'telemetry_forward="${SITL_TELEMETRY_FORWARD:-}"' in body
+        assert '--telemetry-forward' in body
+
+    def test_run_scenario_default_mode_runs_physics_live(self):
+        """The (no-arg) default branch must run a physics simulation with the live viewer."""
+        from pathlib import Path
+        import re
+
+        script = Path(__file__).resolve().parents[1] / 'run_scenario.sh'
+        body = script.read_text(encoding='utf-8')
+
+        # Locate the --default) ... ;; case body and inspect what it runs.
+        m = re.search(r'\n\s*--default\)\s*\n(?P<body>.*?);;\s*\n', body,
+                      re.DOTALL)
+        assert m is not None, '--default branch not found in run_scenario.sh'
+        default_body = m.group('body')
+
+        # Must invoke run_physics_live so the simulation actually runs.
+        assert 'run_physics_live' in default_body, (
+            f'--default must call run_physics_live, got:\n{default_body}')
+        # Must loop so the viewer always has telemetry.
+        assert '--loop' in default_body, (
+            f'--default must pass --loop to run_physics_live, '
+            f'got:\n{default_body}')
+
+        # Must NOT bring up the SITL stack as part of the default flow.
+        assert 'run_single_mission' not in default_body, (
+            f'--default must NOT call run_single_mission* — that belongs '
+            f'to --single / --single-live. Got:\n{default_body}')
+        assert 'run_swarm_mission' not in default_body, (
+            f'--default must NOT call run_swarm_mission. Got:\n{default_body}')
+        assert 'run_single_viz' not in default_body, (
+            f'--default must NOT call the matplotlib replayer. '
+            f'Got:\n{default_body}')
+
+        # Must request the runtime-view dependencies.
+        assert 'NEED_RUNTIME_VIEW=1' in default_body, (
+            f'--default must set NEED_RUNTIME_VIEW=1 before ensure_venv. '
+            f'Got:\n{default_body}')
+
+
+class TestSITLOrchestratorCli:
+    """Smoke checks for the new --telemetry-forward CLI surface."""
+
+    def test_orchestrator_help_lists_telemetry_forward(self):
+        import subprocess
+        import sys as _sys
+
+        sim_dir = Path(__file__).resolve().parent
+        for sub in ('single', 'swarm', 'swarm-formation'):
+            result = subprocess.run(
+                [_sys.executable, str(sim_dir / 'sitl_orchestrator.py'),
+                 sub, '--help'],
+                capture_output=True, text=True, timeout=15,
+            )
+            assert result.returncode == 0, (
+                f'{sub} --help failed: {result.stderr}')
+            assert '--telemetry-forward' in result.stdout, (
+                f'{sub} --help did not advertise --telemetry-forward')
+
+
 # ── Swarm-Ready Standalone Twin ──────────────────────────────────────────────
 
 class TestSwarmStandaloneTwin:
@@ -3402,3 +4597,410 @@ class TestEulerRates:
         rates_neg = euler_rates_from_body_rates(-phi, theta, p, q, r)
         # theta_dot changes sign due to -sin(phi) term
         assert rates_pos[1] != pytest.approx(rates_neg[1], abs=1e-6)
+
+
+# ── Physics Live Replay Tests ────────────────────────────────────────────────
+
+class TestPhysicsLiveReplay:
+    """Tests for the physics_live_replay module — simulation → bridge →
+    live viewer pipeline.
+
+    These tests verify:
+    1. Simulation record generation and loading
+    2. NPZ file round-trip (save/load)
+    3. Full pipeline: physics sim → MAVLinkBridge → MAVLinkLiveSource → queue
+    4. Full pipeline through the WebSocket to the browser
+    5. run_scenario.sh --physics-live / --physics-swarm-live wiring
+    """
+
+    def test_default_waypoints_returns_valid_list(self):
+        """_default_waypoints() returns a list of 3D numpy arrays."""
+        from physics_live_replay import _default_waypoints
+        wps = _default_waypoints()
+        assert len(wps) >= 3
+        for wp in wps:
+            assert wp.shape == (3,)
+            assert wp[2] > 0, "waypoints should have positive altitude"
+
+    def test_run_physics_simulation_produces_records(self):
+        """run_physics_simulation() returns a non-empty list of SimRecords."""
+        from physics_live_replay import run_physics_simulation
+        records = run_physics_simulation(max_time=2.0)
+        assert len(records) > 10
+        # Records should have increasing time
+        for i in range(1, len(records)):
+            assert records[i].t > records[i - 1].t
+        # First record starts near origin, last record moved away
+        assert np.linalg.norm(records[0].position) < 1.0
+        total_dist = np.linalg.norm(records[-1].position - records[0].position)
+        assert total_dist > 0.1, "drone should have moved during simulation"
+
+    def test_run_physics_simulation_custom_waypoints(self):
+        """run_physics_simulation() respects custom waypoints."""
+        from physics_live_replay import run_physics_simulation
+        wps = [np.array([0, 0, 3.0]), np.array([5, 0, 3.0])]
+        records = run_physics_simulation(waypoints=wps, max_time=5.0)
+        assert len(records) > 0
+        # The drone should attempt to reach waypoint at x=5
+        max_x = max(r.position[0] for r in records)
+        assert max_x > 1.0, "drone should fly toward x=5 waypoint"
+
+    def test_load_npz_records_roundtrip(self, tmp_path):
+        """Save SimRecords to .npz, reload via load_npz_records(), verify match."""
+        from physics_live_replay import run_physics_simulation, load_npz_records
+
+        records = run_physics_simulation(max_time=1.0)
+        npz_path = str(tmp_path / "test_scenario.npz")
+        np.savez(
+            npz_path,
+            t=np.array([r.t for r in records]),
+            pos=np.array([r.position for r in records]),
+            vel=np.array([r.velocity for r in records]),
+            euler=np.array([r.euler for r in records]),
+            thrust=np.array([r.thrust for r in records]),
+            ang_vel=np.array([r.angular_velocity for r in records]),
+        )
+
+        loaded = load_npz_records(npz_path)
+        assert len(loaded) == len(records)
+        for orig, loaded_r in zip(records, loaded):
+            assert loaded_r.t == pytest.approx(orig.t, abs=1e-9)
+            np.testing.assert_allclose(loaded_r.position, orig.position, atol=1e-9)
+            np.testing.assert_allclose(loaded_r.velocity, orig.velocity, atol=1e-9)
+
+    def test_load_swarm_npz_records(self, tmp_path):
+        """load_swarm_npz_records() extracts one drone from a swarm file."""
+        from physics_live_replay import load_swarm_npz_records
+
+        n_steps, n_drones = 20, 3
+        t = np.linspace(0, 2.0, n_steps)
+        positions = np.random.randn(n_steps, n_drones, 3)
+        velocities = np.random.randn(n_steps, n_drones, 3)
+
+        npz_path = str(tmp_path / "swarm_data.npz")
+        np.savez(npz_path, t=t, positions=positions, velocities=velocities)
+
+        for drone_idx in range(n_drones):
+            loaded = load_swarm_npz_records(npz_path, drone_index=drone_idx)
+            assert len(loaded) == n_steps
+            for i, rec in enumerate(loaded):
+                np.testing.assert_allclose(
+                    rec.position, positions[i, drone_idx], atol=1e-9)
+
+    @pytest.mark.timeout(30)
+    def test_physics_records_to_bridge_to_queue(self):
+        """Full pipeline: run_simulation → MAVLinkBridge.send_state → MAVLinkLiveSource → queue.
+
+        Verifies that physics simulation records are correctly transformed
+        into MAVLink, sent via UDP, received, decoded, and end up in the
+        telemetry queue with matching positions.
+        """
+        import socket
+        import time
+        from physics_live_replay import run_physics_simulation
+        from mavlink_bridge import MAVLinkBridge, sim_state_from_record
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+
+        # Run a short simulation
+        records = run_physics_simulation(max_time=1.0)
+        assert len(records) > 5
+
+        # Bind the receiver on an ephemeral port
+        q = TelemetryQueue(maxlen=2048)
+        src = MAVLinkLiveSource(
+            listen_ip="127.0.0.1",
+            listen_port=0,
+            queue=q,
+        )
+        src.start()
+        recv_port = src._sock.getsockname()[1]
+
+        # Create a bridge targeting that port
+        bridge = MAVLinkBridge(
+            target_ip="127.0.0.1",
+            target_port=recv_port,
+            listen_port=0,
+        )
+        bridge.start()
+
+        try:
+            # Send a few records through the bridge
+            for rec in records[:10]:
+                state = sim_state_from_record(rec)
+                bridge.send_state(state)
+                time.sleep(0.02)
+
+            # Wait for samples to arrive
+            deadline = time.time() + 5.0
+            while len(q) < 3 and time.time() < deadline:
+                time.sleep(0.05)
+
+            assert len(q) >= 3, (
+                f"Expected at least 3 samples in queue, got {len(q)}")
+
+            # Verify the samples have non-trivial positions (drone moved)
+            samples = q.snapshot()
+            positions = [s.pos_enu for s in samples]
+            # At least some samples should differ in position
+            pos_spread = max(np.linalg.norm(
+                np.array(p) - np.array(positions[0])) for p in positions)
+            assert pos_spread > 0.001, (
+                "All samples have identical positions — bridge or receiver "
+                "is not forwarding correctly")
+        finally:
+            bridge.stop()
+            src.stop()
+
+    @pytest.mark.timeout(45)
+    def test_physics_to_websocket_full_pipeline(self):
+        """End-to-end: physics sim → bridge → source → server → WebSocket.
+
+        Boots the full FastAPI server, runs a short simulation through the
+        bridge, and verifies that the WebSocket client receives moving
+        telemetry samples. Interleaves sending and receiving to handle
+        timing correctly.
+        """
+        import socket as _socket
+        import time
+        import json
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+        from mavlink_bridge import MAVLinkBridge, sim_state_from_record
+        from physics_live_replay import run_physics_simulation
+
+        try:
+            import simple_websocket
+        except ImportError:
+            pytest.skip("simple_websocket not installed")
+
+        # Run a short simulation producing records with spread-out positions
+        records = run_physics_simulation(max_time=3.0)
+
+        # Set up the telemetry queue and start the server
+        q = TelemetryQueue(maxlen=4096)
+
+        # Pick an ephemeral UDP port for MAVLink
+        probe = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        probe.bind(('127.0.0.1', 0))
+        mav_port = probe.getsockname()[1]
+        probe.close()
+
+        src = MAVLinkLiveSource(
+            listen_ip='127.0.0.1', listen_port=mav_port, queue=q,
+        )
+        src.start()
+
+        server, thread, base_url = _runtime_view_start_uvicorn(q)
+
+        try:
+            bridge = MAVLinkBridge(
+                target_ip='127.0.0.1',
+                target_port=mav_port,
+                listen_port=0,
+            )
+            bridge.start()
+            try:
+                ws_url = base_url.replace('http://', 'ws://') + '/ws/telemetry'
+                client = simple_websocket.Client(ws_url)
+                try:
+                    # Interleave: send a record, try to read from WS
+                    sample_seen = None
+                    # Use records with spread-out positions (skip first few
+                    # which are near origin, use every 5th for speed)
+                    send_records = records[::5][:30]
+                    for tick, rec in enumerate(send_records):
+                        state = sim_state_from_record(rec)
+                        bridge.send_state(state)
+                        time.sleep(0.05)
+
+                        try:
+                            raw = client.receive(timeout=0.2)
+                        except Exception:
+                            continue
+                        if raw is None:
+                            continue
+                        msg = json.loads(raw)
+                        payload = None
+                        if msg['type'] == 'sample':
+                            payload = msg['data']
+                        elif msg['type'] == 'snapshot' and msg['data']:
+                            payload = msg['data'][-1]
+                        if payload and payload.get('pos_enu'):
+                            sample_seen = payload
+                            # Break once we see a sample with non-zero Z
+                            # (the drone has lifted off)
+                            if abs(payload['pos_enu'][2]) > 0.5:
+                                break
+
+                    assert sample_seen is not None, (
+                        'No telemetry reached the WebSocket from '
+                        'physics simulation replay')
+                    # Verify the sample has valid position data
+                    enu = sample_seen['pos_enu']
+                    assert isinstance(enu, list) and len(enu) == 3
+                finally:
+                    client.close()
+            finally:
+                bridge.stop()
+        finally:
+            try:
+                src.stop()
+            finally:
+                _runtime_view_stop_uvicorn(server, thread)
+
+    def test_run_scenario_physics_live_mode(self):
+        """run_scenario.sh --physics-live must call run_physics_live."""
+        import re
+        script = Path(__file__).resolve().parents[1] / 'run_scenario.sh'
+        body = script.read_text(encoding='utf-8')
+
+        # Find the --physics-live branch
+        m = re.search(
+            r'\n\s*--physics-live\)\s*\n(?P<body>.*?);;\s*\n',
+            body, re.DOTALL)
+        assert m is not None, '--physics-live branch not found'
+        branch = m.group('body')
+
+        assert 'NEED_RUNTIME_VIEW=1' in branch, (
+            '--physics-live must request runtime view deps')
+        assert 'run_physics_live' in branch, (
+            '--physics-live must call run_physics_live')
+        # Must NOT call run_single_mission or matplotlib viz
+        assert 'run_single_mission' not in branch
+        assert 'run_single_viz' not in branch
+        assert 'run_viz' not in branch
+
+    def test_run_scenario_physics_swarm_live_mode(self):
+        """run_scenario.sh --physics-swarm-live must call run_physics_live --swarm."""
+        import re
+        script = Path(__file__).resolve().parents[1] / 'run_scenario.sh'
+        body = script.read_text(encoding='utf-8')
+
+        m = re.search(
+            r'\n\s*--physics-swarm-live\)\s*\n(?P<body>.*?);;\s*\n',
+            body, re.DOTALL)
+        assert m is not None, '--physics-swarm-live branch not found'
+        branch = m.group('body')
+
+        assert 'NEED_RUNTIME_VIEW=1' in branch
+        assert 'run_physics_live' in branch
+        assert '--swarm' in branch
+        assert '--loop' in branch
+
+    def test_run_scenario_help_lists_physics_live(self):
+        """run_scenario.sh --help must document --physics-live and --physics-swarm-live."""
+        import subprocess
+        import sys as _sys
+
+        script = str(Path(__file__).resolve().parents[1] / 'run_scenario.sh')
+        result = subprocess.run(
+            ['bash', script, '--help'],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert '--physics-live' in result.stdout, (
+            '--physics-live missing from --help output')
+        assert '--physics-swarm-live' in result.stdout, (
+            '--physics-swarm-live missing from --help output')
+
+    def test_run_physics_live_function_exists_in_script(self):
+        """run_scenario.sh must define a run_physics_live() shell function."""
+        script = Path(__file__).resolve().parents[1] / 'run_scenario.sh'
+        body = script.read_text(encoding='utf-8')
+        assert 'run_physics_live()' in body, (
+            'run_physics_live() function not defined in run_scenario.sh')
+        assert 'physics_live_replay' in body, (
+            'run_physics_live must invoke physics_live_replay module')
+
+    def test_cli_help(self):
+        """physics_live_replay --help should exit 0 and list options."""
+        import subprocess
+        import sys as _sys
+
+        sim_dir = str(Path(__file__).resolve().parent)
+        result = subprocess.run(
+            [_sys.executable, '-m', 'physics_live_replay', '--help'],
+            capture_output=True, text=True, timeout=10,
+            cwd=sim_dir,
+        )
+        assert result.returncode == 0, f"--help failed: {result.stderr}"
+        for flag in ('--replay', '--swarm', '--fps', '--loop',
+                     '--http-port', '--mav-port', '--no-browser'):
+            assert flag in result.stdout, f"{flag} missing from --help"
+
+    def test_receiver_binds_before_replay_starts(self):
+        """run_physics_live() must start the MAVLink receiver BEFORE the
+        replay thread, otherwise UDP packets are silently dropped and the
+        drone mesh never moves in the browser.
+
+        This test inspects the source code to enforce the ordering contract:
+        start_telemetry() must be called before the replay thread starts,
+        and run_server() must be called with start_source=False.
+        """
+        import inspect
+        from physics_live_replay import run_physics_live
+
+        src = inspect.getsource(run_physics_live)
+
+        # start_telemetry() must appear before run_replay / _replay
+        idx_start = src.index('start_telemetry(')
+        idx_replay = src.index('replay_thread.start()')
+        assert idx_start < idx_replay, (
+            'start_telemetry() must be called before replay_thread.start() — '
+            'otherwise the receiver is not listening when the replay begins '
+            'and all UDP packets are silently dropped')
+
+        # run_server must NOT start a second source (double-bind)
+        assert 'start_source=False' in src, (
+            'run_server() must be called with start_source=False because '
+            'start_telemetry() was already called — a double-bind would '
+            'either fail or create a second listener that races with the '
+            'first')
+
+    @pytest.mark.timeout(30)
+    def test_replay_delivers_samples_to_queue_non_loop(self):
+        """Non-looping replay must deliver samples to the queue even though
+        it finishes quickly — the receiver must already be listening.
+
+        This is the regression test for the original bug: run_physics_live()
+        started the replay thread before binding the MAVLink receiver, so
+        the entire replay completed before any listener existed and zero
+        samples ever reached the queue.
+        """
+        import time
+        from physics_live_replay import run_physics_simulation
+        from mavlink_bridge import MAVLinkBridge, sim_state_from_record
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+
+        records = run_physics_simulation(max_time=1.0)
+
+        # Simulate the fixed ordering: receiver FIRST, then replay.
+        q = TelemetryQueue(maxlen=2048)
+        src = MAVLinkLiveSource(listen_ip='127.0.0.1', listen_port=0, queue=q)
+        src.start()
+        recv_port = src._sock.getsockname()[1]
+
+        bridge = MAVLinkBridge(
+            target_ip='127.0.0.1', target_port=recv_port, listen_port=0,
+        )
+        bridge.start()
+
+        try:
+            # Non-looping replay — runs once and finishes
+            bridge.run_replay(records[:20], fps=200.0, loop=False)
+
+            # Give the receiver a moment to process the last datagrams
+            time.sleep(0.3)
+
+            assert len(q) > 0, (
+                'Non-looping replay produced zero samples in the queue — '
+                'the receiver was not listening when the replay ran')
+
+            # Verify position spread (drone actually moved)
+            samples = q.snapshot()
+            positions = np.array([s.pos_enu for s in samples])
+            spread = np.max(np.ptp(positions, axis=0))
+            assert spread > 0.01, (
+                f'Samples in queue but drone did not move '
+                f'(spread={spread:.4f})')
+        finally:
+            bridge.stop()
+            src.stop()

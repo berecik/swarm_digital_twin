@@ -1,0 +1,56 @@
+[
+  {
+    "id": "single",
+    "title": "Single-Drone Mission",
+    "description": "Default Pixhawk SITL stack with the live 3D view.",
+    "thumbnail": "/web/img/single.png",
+    "tier": "free",
+    "start_command": "./run_scenario.sh --single-live",
+    "disabled": false
+  },
+  {
+    "id": "physics",
+    "title": "Physics-Only Replay",
+    "description": "Run the standalone Python physics scenario.",
+    "thumbnail": "/web/img/physics.png",
+    "tier": "free",
+    "start_command": "./run_scenario.sh --physics-single",
+    "disabled": false
+  },
+  {
+    "id": "real-log",
+    "title": "Real Flight Log Replay",
+    "description": "Validate against Andean mountain SRTM logs.",
+    "thumbnail": "/web/img/real.png",
+    "tier": "free",
+    "start_command": "./run_scenario.sh --real-log",
+    "disabled": false
+  },
+  {
+    "id": "swarm-3",
+    "title": "3-Drone Swarm",
+    "description": "Three-drone ring formation under crosswind.",
+    "thumbnail": "/web/img/swarm3.png",
+    "tier": "pro",
+    "start_command": "./run_scenario.sh --swarm 3",
+    "disabled": true
+  },
+  {
+    "id": "swarm-6",
+    "title": "6-Drone Swarm",
+    "description": "Six-drone gusty crosswind scenario.",
+    "thumbnail": "/web/img/swarm6.png",
+    "tier": "pro",
+    "start_command": "./run_scenario.sh --swarm 6",
+    "disabled": true
+  },
+  {
+    "id": "fixed-wing",
+    "title": "Valencia Fixed-Wing",
+    "description": "Fixed-wing flight over Antisana terrain.",
+    "thumbnail": "/web/img/fw.png",
+    "tier": "pro",
+    "start_command": "./run_scenario.sh --physics-single",
+    "disabled": true
+  }
+]

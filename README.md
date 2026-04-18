@@ -44,9 +44,10 @@ The framework enables:
 │   ├── flight_log.py           # Ardupilot flight log parser (CSV)
 │   ├── validation.py           # RMSE metrics & comparison plots
 │   ├── drone_scenario.py       # Full-featured scenario over terrain with wind
-│   ├── visualize_drone_3d.py   # 3D animated visualization with terrain & wind
+│   ├── visualize_drone_3d.py   # Post-flight matplotlib 3D replay tool
+│   ├── runtime_view/           # Live Run-time View web app (FastAPI + Three.js)
 │   ├── mavlink_bridge.py       # MAVLink v2 UDP bridge to QGroundControl
-│   └── test_drone_physics.py   # 64 physics + MAVLink unit tests
+│   └── test_drone_physics.py   # 282 physics/RTV tests
 ├── gazebo/                     # Gazebo SITL integration
 │   ├── worlds/                 # World files (empty, terrain)
 │   ├── models/x500/            # Holybro X500 V2 SDF model
@@ -94,7 +95,8 @@ Detailed documentation is available in the [docs/](docs/) directory:
 | **Middleware** | **Eclipse Zenoh** & **ROS 2** (Humble/Jazzy) |
 | **Physics Simulation** | **Python** (NumPy) — quadratic drag, lift+stall, wind, terrain, body-frame dynamics |
 | **MAVLink Bridge** | **Python** (custom MAVLink v2) — connects sim to QGroundControl |
-| **3D Visualization** | **Matplotlib** (terrain surface, wind indicator, AGL tracking) |
+| **3D Visualization (Live)** | **FastAPI + uvicorn + Three.js** (launcher + WebSocket live HUD) |
+| **3D Visualization (Replay)** | **Matplotlib** (post-flight terrain/wind/AGL replay) |
 | **Full Simulation** | Gazebo Harmonic / PX4 SITL / ArduPilot |
 | **Orchestration** | **Kubernetes + Helm** (default), Docker Compose (legacy) |
 | **Container Images** | Docker Hub (`beret/ardupilot-sitl`, `beret/swarm_companion`) |
@@ -104,20 +106,21 @@ Detailed documentation is available in the [docs/](docs/) directory:
 No Docker, no ROS 2 — just Python 3 and a terminal:
 
 ```bash
-# Run scenario and open 3D visualization (auto-creates venv)
+# Run default live Run-time View (auto-creates venv)
 ./run_scenario.sh
 
 # Or step by step:
-./run_scenario.sh --test       # run 64 physics + MAVLink unit tests
+./run_scenario.sh --test       # run 282 physics/RTV tests
+./run_scenario.sh --viz-live   # launch live Run-time View web app
 ./run_scenario.sh --sim-only   # run scenario (no GUI)
-./run_scenario.sh --viz-only   # open visualization with existing data
+./run_scenario.sh --viz-only   # open matplotlib replay with existing data
 ./run_scenario.sh --all        # tests → scenario → visualization
 ./run_scenario.sh --ci-local   # run local CI/CD-equivalent pipeline (tests + all CI benchmarks)
 ./run_scenario.sh --benchmark  # deterministic benchmark validation gates
 ./run_scenario.sh --real-log   # real-log validation against paper Table 5 (auto-downloads logs)
 ```
 
-The scenario flies a drone through 7 waypoints over rolling-hill terrain with quadratic aerodynamic drag, ISA atmosphere, constant wind, body-frame dynamics, and terrain collision. The 3D visualization renders the terrain surface, wind direction, drone attitude, AGL tracking, and flight telemetry panels.
+The scenario flies a drone through 7 waypoints over rolling-hill terrain with quadratic aerodynamic drag, ISA atmosphere, constant wind, body-frame dynamics, and terrain collision. The default visualization is the live web Run-time View (`/live`) with launcher + HUD. Matplotlib remains available for post-flight replay (`--viz-only` / `--single-static`).
 
 ## Getting Started
 
