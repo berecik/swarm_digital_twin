@@ -1,6 +1,11 @@
 # Gazebo as Kubernetes Playground — Realistic Swarm Simulation Scenario
 
-This scenario describes how to run Gazebo as a Kubernetes-native playground for realistic drone swarm simulation, including terrain, wind, collision detection, and full validation.
+Part of [ROADMAP Phase 1](../ROADMAP.md). See also
+[`k8s_namespace_lifecycle.md`](k8s_namespace_lifecycle.md) for namespace setup.
+
+This scenario describes how to run Gazebo as a Kubernetes-native playground
+for realistic drone swarm simulation, including terrain, wind, collision
+detection, and full validation.
 
 ## 1. Objective
 
@@ -139,19 +144,10 @@ This scenario is considered ready when:
 - acceptance report generation is reproducible and archived
 - operational documentation is synced in `ROADMAP.md`, `TODO.md`, `TESTING.md`, and `README.md`
 
-## 11. Migrated Follow-ups (from former `docs/REFACTOR_PLAN.md`)
+## 11. Related Instructions
 
-- **Live terrain rendering parity**
-  - Add terrain mesh rendering in the live Three.js view and align elevations with `simulation/terrain.py`.
-- **SITL mission thumbnail realism**
-  - Replace placeholder mission thumbnails with artifacts captured from real SITL runs.
-- **Multi-user exposure hardening**
-  - If runtime view is exposed beyond `127.0.0.1`, enforce auth, CSRF protection, and session isolation.
-- **Swarm SITL live view enablement**
-  - Route per-drone SITL telemetry (`system_id`) through orchestrator forwarding to keep browser swarm view live.
-- **`.BIN` replay support in web loader**
-  - Extend load/replay flow to parse and replay ArduPilot DataFlash `.BIN` logs.
-
-## 12. Historical Verification Baseline (migrated)
-
-Reference checks previously tracked in `docs/REFACTOR_PLAN.md` are now maintained in `TESTING.md` and release notes in `CHANGELOG.md`.
+- **Live view & replay backlog:** [`live_view_backlog.md`](live_view_backlog.md)
+- **Collision detection & safety:** [`collision_detection.md`](collision_detection.md)
+- **Wind simulation:** [`wind_simulation.md`](wind_simulation.md)
+- **Full test matrix:** [`k8s_test_matrix.md`](k8s_test_matrix.md)
+- **Historical verification:** see `TESTING.md` and `CHANGELOG.md`
