@@ -54,6 +54,7 @@ class LiveTelemetrySample:
     JSON consumers (FastAPI ``/api/status`` and ``/ws/telemetry``).
     """
 
+    drone_id: int = 1
     t_wall: float = 0.0
     time_boot_ms: int = 0
     pos_enu: np.ndarray = field(default_factory=lambda: np.zeros(3))
@@ -75,6 +76,7 @@ class LiveTelemetrySample:
     def to_dict(self) -> Dict[str, Any]:
         """Return a JSON-safe dict (numpy arrays become plain lists)."""
         return {
+            "drone_id": int(self.drone_id),
             "t_wall": float(self.t_wall),
             "time_boot_ms": int(self.time_boot_ms),
             "pos_enu": [float(x) for x in np.asarray(self.pos_enu).tolist()],
@@ -364,7 +366,11 @@ class MAVLinkLiveSource:
         self._thread: Optional[threading.Thread] = None
         self._running = False
 
-        # Sample being assembled from the current tick's fragments.
+        # Per-drone sample assembly state keyed by system_id.
+        self._drones: Dict[int, LiveTelemetrySample] = {}
+        self._have_any_per_drone: Dict[int, bool] = {}
+
+        # Legacy single-drone aliases (used by tests that inspect _current).
         self._current = LiveTelemetrySample()
         self._have_any = False
 
@@ -430,109 +436,125 @@ class MAVLinkLiveSource:
         decoded = decode_mavlink_v2(data)
         if decoded is None:
             return
-        msg_id, payload = decoded
+        system_id, msg_id, payload = decoded
         updates = parse_telemetry_payload(msg_id, payload)
         if not updates:
             return
-        self._apply_updates(updates)
+        self._apply_updates(updates, system_id=system_id)
 
-    def _apply_updates(self, updates: Dict[str, Any]) -> None:
+    def _get_drone_state(self, drone_id: int) -> LiveTelemetrySample:
+        """Return the in-progress sample for *drone_id*, creating it if new."""
+        if drone_id not in self._drones:
+            self._drones[drone_id] = LiveTelemetrySample(drone_id=drone_id)
+            self._have_any_per_drone[drone_id] = False
+        return self._drones[drone_id]
+
+    def _apply_updates(self, updates: Dict[str, Any],
+                       system_id: int = 1) -> None:
+        cur = self._get_drone_state(system_id)
+        have_any = self._have_any_per_drone.get(system_id, False)
+
         # Heartbeat / sys_status carry no time_boot_ms — merge them into
         # the current sample without flushing.
         new_tick = updates.get("time_boot_ms")
-        if new_tick is not None and self._have_any and new_tick != self._current.time_boot_ms:
+        if new_tick is not None and have_any and new_tick != cur.time_boot_ms:
             # Tick advanced → finalize the previous sample.
-            self._finalize_current()
+            self._finalize_drone(system_id)
+            cur = self._get_drone_state(system_id)
 
         # Apply updates.
         if "time_boot_ms" in updates:
-            self._current.time_boot_ms = int(updates["time_boot_ms"])
-            self._have_any = True
+            cur.time_boot_ms = int(updates["time_boot_ms"])
+            self._have_any_per_drone[system_id] = True
         if "euler" in updates:
-            self._current.euler = updates["euler"]
-            self._have_any = True
+            cur.euler = updates["euler"]
+            self._have_any_per_drone[system_id] = True
         if "lat_deg" in updates:
-            self._current.lat_deg = updates["lat_deg"]
+            cur.lat_deg = updates["lat_deg"]
         if "lon_deg" in updates:
-            self._current.lon_deg = updates["lon_deg"]
+            cur.lon_deg = updates["lon_deg"]
         if "alt_msl" in updates:
-            self._current.alt_msl = updates["alt_msl"]
+            cur.alt_msl = updates["alt_msl"]
         if "vel_enu" in updates:
-            self._current.vel_enu = updates["vel_enu"]
+            cur.vel_enu = updates["vel_enu"]
         if "airspeed" in updates:
-            self._current.airspeed = updates["airspeed"]
+            cur.airspeed = updates["airspeed"]
         if "groundspeed" in updates:
-            self._current.groundspeed = updates["groundspeed"]
+            cur.groundspeed = updates["groundspeed"]
         if "throttle_pct" in updates:
-            self._current.throttle_pct = updates["throttle_pct"]
+            cur.throttle_pct = updates["throttle_pct"]
         if "climb_rate" in updates:
-            self._current.climb_rate = updates["climb_rate"]
-        if "alt_msl_hud" in updates and self._current.alt_msl == 0.0:
-            self._current.alt_msl = updates["alt_msl_hud"]
+            cur.climb_rate = updates["climb_rate"]
+        if "alt_msl_hud" in updates and cur.alt_msl == 0.0:
+            cur.alt_msl = updates["alt_msl_hud"]
         if "battery_voltage_v" in updates:
-            self._current.battery_voltage_v = updates["battery_voltage_v"]
+            cur.battery_voltage_v = updates["battery_voltage_v"]
         if "battery_current_a" in updates:
-            self._current.battery_current_a = updates["battery_current_a"]
+            cur.battery_current_a = updates["battery_current_a"]
         if "battery_remaining_pct" in updates:
-            self._current.battery_remaining_pct = updates["battery_remaining_pct"]
+            cur.battery_remaining_pct = updates["battery_remaining_pct"]
         if "flight_mode" in updates:
-            self._current.flight_mode = updates["flight_mode"]
+            cur.flight_mode = updates["flight_mode"]
         if "armed" in updates:
-            self._current.armed = bool(updates["armed"])
+            cur.armed = bool(updates["armed"])
 
         # Recompute ENU from GPS when GPS has changed.
         if ("lat_deg" in updates) or ("lon_deg" in updates) or ("alt_msl" in updates):
-            self._current.pos_enu = _gps_to_enu(
-                self._current.lat_deg,
-                self._current.lon_deg,
-                self._current.alt_msl,
-                self.ref_lat,
-                self.ref_lon,
-                self.ref_alt_msl,
+            cur.pos_enu = _gps_to_enu(
+                cur.lat_deg, cur.lon_deg, cur.alt_msl,
+                self.ref_lat, self.ref_lon, self.ref_alt_msl,
             )
-            self._have_any = True
+            self._have_any_per_drone[system_id] = True
 
-        # The sender's last message per tick is SYS_STATUS, but GPS comes
-        # in third. Push immediately on GPS so consumers see fresh
-        # position without waiting for the next tick boundary — the
-        # finalize_current on the next tick is then a no-op because
-        # _have_any is False.
-        if "lat_deg" in updates and self._have_any:
-            self._finalize_current()
+        # Push immediately on GPS so consumers see fresh position.
+        if "lat_deg" in updates and self._have_any_per_drone.get(system_id):
+            self._finalize_drone(system_id)
 
-    def _finalize_current(self) -> None:
-        """Push the current sample into the queue and start a fresh one."""
-        if not self._have_any:
+        # Keep legacy _current alias in sync with drone 1.
+        if system_id == 1:
+            self._current = self._drones.get(1, self._current)
+            self._have_any = self._have_any_per_drone.get(1, False)
+
+    def _finalize_drone(self, drone_id: int) -> None:
+        """Push the sample for *drone_id* and start a fresh one."""
+        if not self._have_any_per_drone.get(drone_id):
             return
-        self._current.t_wall = time.time()
+        cur = self._drones[drone_id]
+        cur.t_wall = time.time()
         if self.recorder is not None:
             try:
-                self.recorder.record(self._current)
+                self.recorder.record(cur)
             except Exception:  # pragma: no cover - defensive
                 pass
-        self.queue.push(self._current)
+        self.queue.push(cur)
         if self._sample_hook is not None:
             try:
-                self._sample_hook(self._current)
+                self._sample_hook(cur)
             except Exception:  # pragma: no cover - defensive
                 pass
-        # Start a fresh sample, inheriting "sticky" fields that don't
-        # get re-sent every tick (battery, mode, last known pose).
+        # Start a fresh sample, inheriting "sticky" fields.
         fresh = LiveTelemetrySample(
-            time_boot_ms=self._current.time_boot_ms,
-            flight_mode=self._current.flight_mode,
-            armed=self._current.armed,
-            battery_voltage_v=self._current.battery_voltage_v,
-            battery_current_a=self._current.battery_current_a,
-            battery_remaining_pct=self._current.battery_remaining_pct,
-            lat_deg=self._current.lat_deg,
-            lon_deg=self._current.lon_deg,
-            alt_msl=self._current.alt_msl,
-            pos_enu=self._current.pos_enu.copy(),
-            euler=self._current.euler,
+            drone_id=drone_id,
+            time_boot_ms=cur.time_boot_ms,
+            flight_mode=cur.flight_mode,
+            armed=cur.armed,
+            battery_voltage_v=cur.battery_voltage_v,
+            battery_current_a=cur.battery_current_a,
+            battery_remaining_pct=cur.battery_remaining_pct,
+            lat_deg=cur.lat_deg,
+            lon_deg=cur.lon_deg,
+            alt_msl=cur.alt_msl,
+            pos_enu=cur.pos_enu.copy(),
+            euler=cur.euler,
         )
-        self._current = fresh
-        self._have_any = False
+        self._drones[drone_id] = fresh
+        self._have_any_per_drone[drone_id] = False
+
+    # Legacy alias — old tests call _finalize_current().
+    def _finalize_current(self) -> None:
+        """Finalize all drones that have pending data."""
+        for did in list(self._drones):
+            self._finalize_drone(did)
 
     # ── test hooks ───────────────────────────────────────────────────
 

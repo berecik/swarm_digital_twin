@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -80,15 +80,20 @@ def run_physics_simulation(
 
 
 def load_npz_records(path: str) -> List[SimRecord]:
-    """Load SimRecord list from a scenario_data.npz file."""
-    data = np.load(path, allow_pickle=True)
+    """Load SimRecord list from a scenario_data.npz file.
+
+    Gracefully handles missing optional keys (euler, thrust, ang_vel,
+    euler_rates) so older .npz files can still be replayed.
+    """
+    # allow_pickle needed for .npz files with object arrays (drone_ids)
+    data = np.load(path, allow_pickle=True)  # noqa: S301
     t = data["t"]
     pos = data["pos"]
     vel = data["vel"]
-    euler = data["euler"]
-    thrust = data["thrust"]
-    ang_vel = data["ang_vel"]
-    euler_rates = data.get("euler_rates")
+    euler = data["euler"] if "euler" in data else np.zeros((len(t), 3))
+    thrust = data["thrust"] if "thrust" in data else np.zeros(len(t))
+    ang_vel = data["ang_vel"] if "ang_vel" in data else np.zeros((len(t), 3))
+    euler_rates = data["euler_rates"] if "euler_rates" in data else None
     records = []
     for i in range(len(t)):
         er = euler_rates[i] if euler_rates is not None else None
@@ -131,6 +136,8 @@ def run_physics_live(
     mav_port: int = 14550,
     open_browser: bool = True,
     waypoints: Optional[List[np.ndarray]] = None,
+    swarm_records_per_drone: Optional[Dict[int, List[SimRecord]]] = None,
+    waypoints_per_drone: Optional[Dict[int, List[np.ndarray]]] = None,
 ) -> None:
     """
     Stream pre-computed SimRecords to the live viewer.
@@ -149,19 +156,42 @@ def run_physics_live(
     print(f"  HTTP:        http://127.0.0.1:{http_port}/live")
 
     # Publish waypoints so the live viewer can render them.
-    if waypoints is not None:
-        _srv.mission_waypoints = [wp.tolist() for wp in waypoints]
+    # For multi-drone, waypoints_per_drone is a dict {drone_id: [wp, ...]}.
+    if waypoints_per_drone is not None:
+        _srv.mission_waypoints = {
+            str(did): [wp.tolist() for wp in wps]
+            for did, wps in waypoints_per_drone.items()
+        }
+    elif waypoints is not None:
+        _srv.mission_waypoints = {"1": [wp.tolist() for wp in waypoints]}
 
     # 1. Bind the MAVLink UDP receiver FIRST so no replay packets are lost.
     _srv.start_telemetry(listen_port=mav_port)
 
-    # 2. Start the bridge that sends MAVLink to that receiver.
-    bridge = MAVLinkBridge(
-        target_ip="127.0.0.1",
-        target_port=mav_port,
-        listen_port=0,  # ephemeral — we don't receive commands
-    )
-    bridge.start()
+    # 2. Create bridge(s).  For multi-drone, one bridge per drone with
+    #    a unique system_id so the receiver can demultiplex.
+    bridges: List[MAVLinkBridge] = []
+    if swarm_records_per_drone:
+        drone_ids = sorted(swarm_records_per_drone.keys())
+        for did in drone_ids:
+            b = MAVLinkBridge(
+                target_ip="127.0.0.1",
+                target_port=mav_port,
+                listen_port=0,
+                system_id=did,
+            )
+            b.start()
+            bridges.append(b)
+        print(f"  Bridges: {len(bridges)} drones "
+              f"(system_ids {drone_ids})")
+    else:
+        b = MAVLinkBridge(
+            target_ip="127.0.0.1",
+            target_port=mav_port,
+            listen_port=0,
+        )
+        b.start()
+        bridges.append(b)
 
     # 3. Open the browser after a short delay so uvicorn has time to boot.
     if open_browser:
@@ -175,20 +205,50 @@ def run_physics_live(
                 pass
         threading.Thread(target=_open_browser, daemon=True).start()
 
-    # 4. Start the replay in a background thread.  The receiver is
-    #    already listening so every packet will be captured.
-    def _replay():
-        try:
-            bridge.run_replay(records, fps=fps, loop=loop)
-        except Exception as e:
-            print(f"Replay error: {e}")
-        finally:
-            if not loop:
-                print("Replay finished — server stays up for inspection. "
-                      "Press Ctrl-C to quit.")
+    # 4. Start replay thread(s).
+    if swarm_records_per_drone:
+        # Multi-drone: interleave all drones in a single thread by
+        # stepping through timesteps and sending each drone's state.
+        drone_ids = sorted(swarm_records_per_drone.keys())
+        bridge_map = {did: br for did, br in zip(drone_ids, bridges)}
 
-    replay_thread = threading.Thread(target=_replay, daemon=True)
-    replay_thread.start()
+        def _replay_swarm():
+            from mavlink_bridge import sim_state_from_record
+            try:
+                dt = 1.0 / fps
+                while True:
+                    # All record lists have the same length (from SwarmRecord).
+                    n_steps = len(swarm_records_per_drone[drone_ids[0]])
+                    for step in range(n_steps):
+                        t0 = time.time()
+                        for did in drone_ids:
+                            rec = swarm_records_per_drone[did][step]
+                            state = sim_state_from_record(rec)
+                            bridge_map[did].send_state(state)
+                        elapsed = time.time() - t0
+                        if elapsed < dt:
+                            time.sleep(dt - elapsed)
+                    if not loop:
+                        break
+            except Exception as e:
+                print(f"Swarm replay error: {e}")
+            finally:
+                if not loop:
+                    print("Replay finished — server stays up. "
+                          "Press Ctrl-C to quit.")
+
+        threading.Thread(target=_replay_swarm, daemon=True).start()
+    else:
+        def _replay():
+            try:
+                bridges[0].run_replay(records, fps=fps, loop=loop)
+            except Exception as e:
+                print(f"Replay error: {e}")
+            finally:
+                if not loop:
+                    print("Replay finished — server stays up. "
+                          "Press Ctrl-C to quit.")
+        threading.Thread(target=_replay, daemon=True).start()
 
     try:
         # 5. Start uvicorn (blocking).  Source is already running so
@@ -202,7 +262,8 @@ def run_physics_live(
     except KeyboardInterrupt:
         pass
     finally:
-        bridge.stop()
+        for b in bridges:
+            b.stop()
         _srv.stop_telemetry()
         print("Physics Live Replay: shutdown complete")
 
@@ -309,21 +370,26 @@ def main(argv: Optional[list] = None) -> int:
             terrain=make_terrain(),
             min_separation=1.5,
         )
-        # Convert swarm records to single-drone SimRecords for the bridge
-        idx = min(args.drone_index, len(drone_ids) - 1)
-        waypoints = drone_waypoints[drone_ids[idx]]
-        records = []
-        for sr in swarm_records:
-            records.append(SimRecord(
-                t=sr.t,
-                position=sr.positions[idx].copy(),
-                velocity=sr.velocities[idx].copy(),
-                euler=(0.0, 0.0, 0.0),
-                thrust=0.5,
-                angular_velocity=np.zeros(3),
-            ))
-        print(f"Swarm simulation complete: {len(records)} steps, "
-              f"streaming drone {idx}")
+        # Build per-drone SimRecord lists with sequential system_ids
+        # starting at 1 so the MAVLink bridges demultiplex correctly.
+        swarm_records_per_drone: Dict[int, List[SimRecord]] = {}
+        wp_per_drone: Dict[int, List[np.ndarray]] = {}
+        for i, did in enumerate(drone_ids):
+            sys_id = i + 1  # MAVLink system_id 1..N
+            wp_per_drone[sys_id] = drone_waypoints[did]
+            per_drone = []
+            for sr in swarm_records:
+                per_drone.append(SimRecord(
+                    t=sr.t,
+                    position=sr.positions[i].copy(),
+                    velocity=sr.velocities[i].copy(),
+                    euler=(0.0, 0.0, 0.0),
+                    thrust=0.5,
+                    angular_velocity=np.zeros(3),
+                ))
+            swarm_records_per_drone[sys_id] = per_drone
+        print(f"Swarm simulation complete: {len(swarm_records)} steps, "
+              f"{len(drone_ids)} drones")
     else:
         print("Running single-drone physics simulation...")
         waypoints = _default_waypoints()
@@ -332,20 +398,34 @@ def main(argv: Optional[list] = None) -> int:
         print(f"Simulation complete: {len(records)} steps, "
               f"{records[-1].t:.1f}s")
 
-    if not records:
-        print("Error: no records produced", file=sys.stderr)
-        return 1
-
     # ── Stream to live viewer ────────────────────────────────────────
-    run_physics_live(
-        records,
-        fps=args.fps,
-        loop=args.loop,
-        http_port=args.http_port,
-        mav_port=args.mav_port,
-        open_browser=not args.no_browser,
-        waypoints=waypoints,
-    )
+    if args.swarm and swarm_records_per_drone:
+        # Use the first drone's records as the fallback single-drone
+        # record list (keeps run_physics_live's signature happy).
+        first_id = sorted(swarm_records_per_drone.keys())[0]
+        run_physics_live(
+            swarm_records_per_drone[first_id],
+            fps=args.fps,
+            loop=args.loop,
+            http_port=args.http_port,
+            mav_port=args.mav_port,
+            open_browser=not args.no_browser,
+            swarm_records_per_drone=swarm_records_per_drone,
+            waypoints_per_drone=wp_per_drone,
+        )
+    else:
+        if not records:
+            print("Error: no records produced", file=sys.stderr)
+            return 1
+        run_physics_live(
+            records,
+            fps=args.fps,
+            loop=args.loop,
+            http_port=args.http_port,
+            mav_port=args.mav_port,
+            open_browser=not args.no_browser,
+            waypoints=waypoints,
+        )
     return 0
 
 

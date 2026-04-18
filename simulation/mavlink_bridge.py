@@ -275,10 +275,10 @@ def parse_mavlink_payload(msg_id: int, payload: bytes) -> Optional[Any]:
     return None
 
 
-def decode_mavlink_v2(data: bytes) -> Optional[Tuple[int, bytes]]:
+def decode_mavlink_v2(data: bytes) -> Optional[Tuple[int, int, bytes]]:
     """Decode one MAVLink v2 message from raw bytes.
 
-    Returns (msg_id, payload) or None if invalid.
+    Returns ``(system_id, msg_id, payload)`` or ``None`` if invalid.
     """
     if len(data) < MAVLINK_HEADER_LEN + MAVLINK_CHECKSUM_LEN:
         return None
@@ -286,6 +286,7 @@ def decode_mavlink_v2(data: bytes) -> Optional[Tuple[int, bytes]]:
         return None
 
     payload_len = data[1]
+    system_id = data[5]
     msg_id = struct.unpack_from('<I', data[7:10] + b'\x00')[0]
     total_len = MAVLINK_HEADER_LEN + payload_len + MAVLINK_CHECKSUM_LEN
 
@@ -303,7 +304,7 @@ def decode_mavlink_v2(data: bytes) -> Optional[Tuple[int, bytes]]:
     if actual_crc != expected_crc:
         return None
 
-    return (msg_id, payload)
+    return (system_id, msg_id, payload)
 
 
 # ── Bridge ─────────────────────────────────────────────────────────────────
@@ -575,7 +576,7 @@ class MAVLinkBridge:
             if result is None:
                 continue
 
-            msg_id, payload = result
+            _sys_id, msg_id, payload = result
             parsed = parse_mavlink_payload(msg_id, payload)
             if parsed is None:
                 continue

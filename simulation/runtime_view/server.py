@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import glob as _glob_mod
 import json
 import sys
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 # Allow running as ``python -m runtime_view.server`` from the project
 # root as well as from the ``simulation/`` directory. The sibling
@@ -80,8 +81,14 @@ telemetry_queue: TelemetryQueue = TelemetryQueue(maxlen=4096)
 live_source: Optional[MAVLinkLiveSource] = None
 
 # Waypoints for the current simulation (set by physics_live_replay).
-# Each entry is a list [x, y, z] in ENU metres.
-mission_waypoints: list = []
+# Dict mapping drone_id → list of [x, y, z] in ENU metres.
+# Legacy single-drone callers may set a plain list — the endpoint
+# normalises it to ``{1: waypoints}``.
+mission_waypoints: dict = {}
+
+# Background replay thread (for /api/load file replay).
+_replay_bridge: Optional[object] = None
+_replay_thread: Optional[threading.Thread] = None
 
 
 # ── HTML page helpers ───────────────────────────────────────────────────
@@ -178,8 +185,134 @@ def api_snapshot(n: int = Query(default=100)) -> JSONResponse:
 
 @app.get("/api/waypoints")
 def api_waypoints() -> JSONResponse:
-    """Return the active mission waypoints (ENU metres)."""
-    return JSONResponse(mission_waypoints)
+    """Return the active mission waypoints (ENU metres).
+
+    Returns a dict ``{drone_id: [[x,y,z], ...], ...}``.
+    Legacy single-drone lists are normalised to ``{"1": [...]}``.
+    """
+    wps = mission_waypoints
+    # Normalise legacy plain-list format.
+    if isinstance(wps, list):
+        wps = {"1": wps} if wps else {}
+    return JSONResponse(wps)
+
+
+@app.get("/api/files")
+def api_files() -> JSONResponse:
+    """List .npz and .BIN flight data files available for replay."""
+    files: List[dict] = []
+    sim_dir = _SIM_DIR
+    for p in sorted(sim_dir.glob("*.npz")):
+        files.append({
+            "name": p.name,
+            "path": str(p),
+            "size": p.stat().st_size,
+            "type": "npz",
+        })
+    log_dir = sim_dir.parent / "logs"
+    if log_dir.is_dir():
+        for p in sorted(log_dir.rglob("*.BIN")):
+            files.append({
+                "name": str(p.relative_to(sim_dir.parent)),
+                "path": str(p),
+                "size": p.stat().st_size,
+                "type": "bin",
+            })
+    return JSONResponse(files)
+
+
+def _load_npz_safe(path: str):
+    """Load .npz, trying without pickle first (safe), falling back only
+    for files that contain object arrays (e.g. drone_ids)."""
+    import numpy as np
+    try:
+        return np.load(path, allow_pickle=False)
+    except ValueError:
+        return np.load(path, allow_pickle=True)
+
+
+@app.post("/api/load")
+def api_load(path: str = Query(...)) -> JSONResponse:
+    """Load an .npz file and start replaying it to the live viewer.
+
+    The replay runs in a background thread; any previous replay is
+    stopped first.
+    """
+    global _replay_bridge, _replay_thread, mission_waypoints
+    from mavlink_bridge import MAVLinkBridge
+
+    file_path = Path(path)
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    if file_path.suffix.lower() not in ('.npz',):
+        raise HTTPException(status_code=400, detail="Only .npz files supported")
+
+    # Stop any existing replay.
+    if _replay_bridge is not None:
+        try:
+            _replay_bridge.stop()
+        except Exception:
+            pass
+        _replay_bridge = None
+    if _replay_thread is not None and _replay_thread.is_alive():
+        _replay_thread.join(timeout=2.0)
+        _replay_thread = None
+
+    telemetry_queue.clear()
+
+    try:
+        from physics_live_replay import load_npz_records, load_swarm_npz_records
+        data = _load_npz_safe(str(file_path))
+        if "positions" in data:
+            records = load_swarm_npz_records(str(file_path), drone_index=0)
+            file_type = "swarm_npz"
+        elif "pos" in data:
+            records = load_npz_records(str(file_path))
+            file_type = "npz"
+            if "waypoints" in data:
+                mission_waypoints = {
+                    "1": [w.tolist() for w in data["waypoints"]]
+                }
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported file format (no 'pos' or 'positions' key)",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not records:
+        raise HTTPException(status_code=400, detail="No records in file")
+
+    # Ensure the telemetry receiver is running.
+    if live_source is None:
+        start_telemetry(listen_port=14550)
+
+    listen_port = (live_source._sock.getsockname()[1]
+                   if live_source and live_source._sock else 14550)
+    bridge = MAVLinkBridge(
+        target_ip="127.0.0.1",
+        target_port=listen_port,
+        listen_port=0,
+    )
+    bridge.start()
+    _replay_bridge = bridge
+
+    def _replay():
+        bridge.run_replay(records, fps=50.0, loop=True)
+
+    t = threading.Thread(target=_replay, daemon=True)
+    t.start()
+    _replay_thread = t
+
+    return JSONResponse({
+        "status": "playing",
+        "file": str(file_path),
+        "type": file_type,
+        "records": len(records),
+    })
 
 
 # ── WebSocket route ─────────────────────────────────────────────────────

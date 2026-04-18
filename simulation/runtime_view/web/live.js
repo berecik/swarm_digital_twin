@@ -50,73 +50,121 @@ const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
 
-// ── Drone mesh (low-poly quadrotor) ───────────────────────────────
+// ── Multi-drone state ─────────────────────────────────────────────
 
-const drone = new THREE.Group();
+// Per-drone colour palette (up to 8; wraps for more).
+const DRONE_COLORS = [
+  0x22d3ee, // cyan
+  0x2ed47a, // green
+  0xec4899, // pink
+  0xf59e0b, // amber
+  0x8b5cf6, // violet
+  0xef4444, // red
+  0x3b82f6, // blue
+  0x14b8a6, // teal
+];
+const TRAIL_MAX = 1000;
 
-const body = new THREE.Mesh(
-  new THREE.BoxGeometry(0.6, 0.15, 0.6),
-  new THREE.MeshStandardMaterial({ color: 0x22d3ee, metalness: 0.3, roughness: 0.5 })
-);
-drone.add(body);
+// Map<droneId, { group, trail, trailPositions, trailCount, color }>
+const drones = new Map();
 
-const armGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.0, 8);
-const armMat = new THREE.MeshStandardMaterial({ color: 0x7a809e });
-for (const [dx, dz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-  const arm = new THREE.Mesh(armGeo, armMat);
-  arm.rotation.z = Math.PI / 2;
-  arm.position.set(dx * 0.35, 0, dz * 0.35);
-  arm.rotation.y = Math.atan2(dz, dx);
-  drone.add(arm);
+function createDroneMesh(droneId) {
+  const colorIdx = (droneId - 1) % DRONE_COLORS.length;
+  const color = DRONE_COLORS[colorIdx];
 
-  const rotor = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.25, 0.25, 0.03, 16),
-    new THREE.MeshStandardMaterial({ color: 0x2ed47a, emissive: 0x0a3f20 })
+  const group = new THREE.Group();
+  group.name = `drone-${droneId}`;
+
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(0.6, 0.15, 0.6),
+    new THREE.MeshStandardMaterial({ color, metalness: 0.3, roughness: 0.5 })
   );
-  rotor.position.set(dx * 0.55, 0.08, dz * 0.55);
-  drone.add(rotor);
+  group.add(body);
+
+  const armGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.0, 8);
+  const armMat = new THREE.MeshStandardMaterial({ color: 0x7a809e });
+  for (const [dx, dz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const arm = new THREE.Mesh(armGeo, armMat);
+    arm.rotation.z = Math.PI / 2;
+    arm.position.set(dx * 0.35, 0, dz * 0.35);
+    arm.rotation.y = Math.atan2(dz, dx);
+    group.add(arm);
+
+    const rotor = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.25, 0.25, 0.03, 16),
+      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.15 })
+    );
+    rotor.position.set(dx * 0.55, 0.08, dz * 0.55);
+    group.add(rotor);
+  }
+
+  const nose = new THREE.Mesh(
+    new THREE.ConeGeometry(0.08, 0.2, 16),
+    new THREE.MeshStandardMaterial({ color: 0xec4899 })
+  );
+  nose.rotation.x = Math.PI / 2;
+  nose.position.set(0, 0, 0.38);
+  group.add(nose);
+
+  // ID label above the drone
+  const labelCanvas = document.createElement('canvas');
+  labelCanvas.width = 128;
+  labelCanvas.height = 64;
+  const ctx = labelCanvas.getContext('2d');
+  ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+  ctx.font = 'bold 40px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`D${droneId}`, 64, 46);
+  const tex = new THREE.CanvasTexture(labelCanvas);
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent: true })
+  );
+  sprite.position.set(0, 1.2, 0);
+  sprite.scale.set(2.0, 1.0, 1);
+  group.add(sprite);
+
+  scene.add(group);
+
+  // Trail
+  const trailPositions = new Float32Array(TRAIL_MAX * 3);
+  const trailGeom = new THREE.BufferGeometry();
+  trailGeom.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+  const trailLine = new THREE.Line(
+    trailGeom,
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.6 })
+  );
+  scene.add(trailLine);
+
+  const state = {
+    group,
+    trail: trailLine,
+    trailGeom,
+    trailPositions,
+    trailCount: 0,
+    color,
+  };
+  drones.set(droneId, state);
+  return state;
 }
 
-const nose = new THREE.Mesh(
-  new THREE.ConeGeometry(0.08, 0.2, 16),
-  new THREE.MeshStandardMaterial({ color: 0xec4899 })
-);
-nose.rotation.x = Math.PI / 2;
-nose.position.set(0, 0, 0.38);
-drone.add(nose);
+function getDrone(droneId) {
+  return drones.get(droneId) || createDroneMesh(droneId);
+}
 
-scene.add(drone);
-
-// ── Trail line ─────────────────────────────────────────────────────
-
-const TRAIL_MAX = 1000;
-const trailPositions = new Float32Array(TRAIL_MAX * 3);
-const trailGeom = new THREE.BufferGeometry();
-trailGeom.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
-const trailMat = new THREE.LineBasicMaterial({
-  color: 0x22d3ee,
-  transparent: true,
-  opacity: 0.75,
-});
-const trail = new THREE.Line(trailGeom, trailMat);
-scene.add(trail);
-let trailCount = 0;
-let originEnu = null;
-
-function pushTrail(x, y, z) {
-  if (trailCount < TRAIL_MAX) {
-    trailPositions[trailCount * 3 + 0] = x;
-    trailPositions[trailCount * 3 + 1] = y;
-    trailPositions[trailCount * 3 + 2] = z;
-    trailCount += 1;
+function pushDroneTrail(state, x, y, z) {
+  const { trailPositions, trailGeom } = state;
+  if (state.trailCount < TRAIL_MAX) {
+    trailPositions[state.trailCount * 3 + 0] = x;
+    trailPositions[state.trailCount * 3 + 1] = y;
+    trailPositions[state.trailCount * 3 + 2] = z;
+    state.trailCount += 1;
   } else {
-    // Shift left by one sample.
     trailPositions.copyWithin(0, 3);
     trailPositions[(TRAIL_MAX - 1) * 3 + 0] = x;
     trailPositions[(TRAIL_MAX - 1) * 3 + 1] = y;
     trailPositions[(TRAIL_MAX - 1) * 3 + 2] = z;
   }
-  trailGeom.setDrawRange(0, trailCount);
+  trailGeom.setDrawRange(0, state.trailCount);
   trailGeom.attributes.position.needsUpdate = true;
   trailGeom.computeBoundingSphere();
 }
@@ -125,127 +173,115 @@ function pushTrail(x, y, z) {
 
 const waypointGroup = new THREE.Group();
 scene.add(waypointGroup);
+let waypointPaths = [];
 
-// Dashed line connecting waypoints (flight plan path)
-let waypointPath = null;
+let originEnu = null;
+let rawWaypointsData = null;  // dict or legacy list
 
-// Raw ENU waypoints — kept so we can re-render once originEnu is known.
-let rawWaypoints = null;
-
-function renderWaypoints(waypoints) {
-  // Clear previous markers
+function renderAllWaypoints(wpData) {
+  // Clear previous
   while (waypointGroup.children.length) {
     waypointGroup.remove(waypointGroup.children[0]);
   }
-  if (waypointPath) {
-    scene.remove(waypointPath);
-    waypointPath = null;
+  for (const p of waypointPaths) scene.remove(p);
+  waypointPaths = [];
+
+  if (!wpData) return;
+
+  // Normalise: dict {droneId: [[x,y,z],...]} or legacy list [[x,y,z],...]
+  let wpDict;
+  if (Array.isArray(wpData)) {
+    wpDict = { '1': wpData };
+  } else {
+    wpDict = wpData;
   }
-  if (!waypoints || waypoints.length === 0) return;
 
-  // Use the same origin as the drone (set by the first telemetry sample).
-  // Fall back to the first waypoint if telemetry hasn't arrived yet.
-  const origin = originEnu || waypoints[0];
+  const origin = originEnu || [0, 0, 0];
 
-  const wpMat = new THREE.MeshStandardMaterial({
-    color: 0xfacc15,
-    emissive: 0x6b5a00,
-    metalness: 0.3,
-    roughness: 0.5,
-  });
-  const poleMat = new THREE.MeshStandardMaterial({
-    color: 0xfacc15,
-    transparent: true,
-    opacity: 0.35,
-  });
+  for (const [droneIdStr, waypoints] of Object.entries(wpDict)) {
+    if (!Array.isArray(waypoints) || waypoints.length === 0) continue;
+    const droneId = parseInt(droneIdStr, 10);
+    const colorIdx = (droneId - 1) % DRONE_COLORS.length;
+    const color = DRONE_COLORS[colorIdx];
 
-  const pathPoints = [];
-
-  waypoints.forEach((wp, i) => {
-    // ENU → Three.js (same mapping as applySample)
-    const [ex, ny, uz] = wp;
-    const rx = ex - origin[0];
-    const ry = uz - origin[2];
-    const rz = -(ny - origin[1]);
-
-    // Sphere marker at waypoint position
-    const sphere = new THREE.Mesh(
-      new THREE.SphereGeometry(0.4, 16, 12),
-      wpMat,
-    );
-    sphere.position.set(rx, ry, rz);
-    waypointGroup.add(sphere);
-
-    // Thin vertical pole from ground to waypoint
-    if (ry > 0.2) {
-      const poleHeight = ry;
-      const pole = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.04, 0.04, poleHeight, 6),
-        poleMat,
-      );
-      pole.position.set(rx, poleHeight / 2, rz);
-      waypointGroup.add(pole);
-    }
-
-    // Small ground ring
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.3, 0.5, 16),
-      new THREE.MeshStandardMaterial({
-        color: 0xfacc15,
-        transparent: true,
-        opacity: 0.25,
-        side: THREE.DoubleSide,
-      }),
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.set(rx, 0.01, rz);
-    waypointGroup.add(ring);
-
-    // Label (sprite)
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 64;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#facc15';
-    ctx.font = 'bold 36px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(`WP${i + 1}`, 64, 42);
-    const tex = new THREE.CanvasTexture(canvas);
-    const spriteMat = new THREE.SpriteMaterial({ map: tex, transparent: true });
-    const sprite = new THREE.Sprite(spriteMat);
-    sprite.position.set(rx, ry + 1.2, rz);
-    sprite.scale.set(2.5, 1.25, 1);
-    waypointGroup.add(sprite);
-
-    pathPoints.push(new THREE.Vector3(rx, ry, rz));
-  });
-
-  // Dashed line connecting all waypoints
-  if (pathPoints.length >= 2) {
-    const pathGeom = new THREE.BufferGeometry().setFromPoints(pathPoints);
-    const pathMat = new THREE.LineDashedMaterial({
+    const wpMat = new THREE.MeshStandardMaterial({
       color: 0xfacc15,
-      dashSize: 1.0,
-      gapSize: 0.5,
-      transparent: true,
-      opacity: 0.6,
+      emissive: 0x6b5a00,
+      metalness: 0.3,
+      roughness: 0.5,
     });
-    waypointPath = new THREE.Line(pathGeom, pathMat);
-    waypointPath.computeLineDistances();
-    scene.add(waypointPath);
+
+    const pathPoints = [];
+
+    waypoints.forEach((wp, i) => {
+      const [ex, ny, uz] = wp;
+      const rx = ex - origin[0];
+      const ry = uz - origin[2];
+      const rz = -(ny - origin[1]);
+
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.35, 12, 8),
+        wpMat,
+      );
+      sphere.position.set(rx, ry, rz);
+      waypointGroup.add(sphere);
+
+      if (ry > 0.2) {
+        const pole = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.03, 0.03, ry, 6),
+          new THREE.MeshStandardMaterial({ color: 0xfacc15, transparent: true, opacity: 0.25 }),
+        );
+        pole.position.set(rx, ry / 2, rz);
+        waypointGroup.add(pole);
+      }
+
+      // Label
+      const lc = document.createElement('canvas');
+      lc.width = 128; lc.height = 64;
+      const lctx = lc.getContext('2d');
+      lctx.fillStyle = '#facc15';
+      lctx.font = 'bold 30px monospace';
+      lctx.textAlign = 'center';
+      const label = drones.size > 1 ? `D${droneId}W${i+1}` : `WP${i+1}`;
+      lctx.fillText(label, 64, 42);
+      const tex = new THREE.CanvasTexture(lc);
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: tex, transparent: true })
+      );
+      sprite.position.set(rx, ry + 1.0, rz);
+      sprite.scale.set(2.2, 1.1, 1);
+      waypointGroup.add(sprite);
+
+      pathPoints.push(new THREE.Vector3(rx, ry, rz));
+    });
+
+    if (pathPoints.length >= 2) {
+      const pathGeom = new THREE.BufferGeometry().setFromPoints(pathPoints);
+      const pathMat = new THREE.LineDashedMaterial({
+        color,
+        dashSize: 1.0,
+        gapSize: 0.5,
+        transparent: true,
+        opacity: 0.45,
+      });
+      const pathLine = new THREE.Line(pathGeom, pathMat);
+      pathLine.computeLineDistances();
+      scene.add(pathLine);
+      waypointPaths.push(pathLine);
+    }
   }
 }
 
 // Fetch waypoints from the server
 fetch('/api/waypoints')
   .then(r => r.json())
-  .then(wps => {
-    if (Array.isArray(wps) && wps.length > 0) {
-      rawWaypoints = wps;
-      renderWaypoints(wps);
+  .then(data => {
+    if (data && (Array.isArray(data) ? data.length > 0 : Object.keys(data).length > 0)) {
+      rawWaypointsData = data;
+      renderAllWaypoints(data);
     }
   })
-  .catch(() => {});  // No waypoints available — that's fine
+  .catch(() => {});
 
 // ── HUD ────────────────────────────────────────────────────────────
 
@@ -271,36 +307,38 @@ setStatus('connecting');
 // ── Sample → scene mapping ────────────────────────────────────────
 
 function applySample(s) {
+  const droneId = s.drone_id || 1;
   const [ex, ny, uz] = s.pos_enu || [0, 0, 0];
-  // Recenter to the first valid telemetry fix so the drone remains in-view
-  // even if the backend reference geodetic origin differs from the vehicle's
-  // absolute location (e.g. SITL at a different latitude/longitude).
+
   if (originEnu === null) {
     originEnu = [ex, ny, uz];
-    // Re-render waypoints now that we know the telemetry origin.
-    if (rawWaypoints) renderWaypoints(rawWaypoints);
+    if (rawWaypointsData) renderAllWaypoints(rawWaypointsData);
   }
-  const relEx = ex - originEnu[0];
-  const relNy = ny - originEnu[1];
-  const relUz = uz - originEnu[2];
-  // ENU (East, North, Up) → Three.js (X=East, Y=Up, Z=-North) so the
-  // default OrbitControls camera sees a familiar orientation.
-  const x = relEx;
-  const y = relUz;
-  const z = -relNy;
 
-  drone.position.set(x, y, z);
+  const x = ex - originEnu[0];
+  const y = uz - originEnu[2];
+  const z = -(ny - originEnu[1]);
 
-  // Euler: roll, pitch, yaw (rad). Three.js expects intrinsic XYZ.
+  const ds = getDrone(droneId);
+  ds.group.position.set(x, y, z);
+
   const [roll, pitch, yaw] = s.euler || [0, 0, 0];
-  drone.rotation.set(pitch, -yaw, roll);
+  ds.group.rotation.set(pitch, -yaw, roll);
 
-  pushTrail(x, y, z);
+  pushDroneTrail(ds, x, y, z);
 
-  // Camera follow — gentle target lerp.
-  controls.target.lerp(new THREE.Vector3(x, y, z), 0.05);
+  // Camera follow — lerp toward centroid of all drones.
+  if (drones.size === 1) {
+    controls.target.lerp(new THREE.Vector3(x, y, z), 0.05);
+  } else {
+    const centroid = new THREE.Vector3();
+    for (const d of drones.values()) centroid.add(d.group.position);
+    centroid.divideScalar(drones.size);
+    controls.target.lerp(centroid, 0.03);
+  }
 
-  // HUD updates
+  // HUD updates (show the latest sample regardless of drone).
+  const relUz = uz - originEnu[2];
   hud.agl.textContent = `${relUz.toFixed(1)} m`;
   hud.alt.textContent = `${(s.alt_msl || 0).toFixed(1)} m`;
   const spd = Math.hypot(s.vel_enu?.[0] || 0, s.vel_enu?.[1] || 0, s.vel_enu?.[2] || 0);
@@ -310,7 +348,7 @@ function applySample(s) {
   hud.throttle.textContent = `${(s.throttle_pct || 0).toFixed(0)}%`;
   hud.battV.textContent = `${(s.battery_voltage_v || 0).toFixed(2)} V`;
   hud.battPct.textContent = `${(s.battery_remaining_pct || 0).toFixed(0)}%`;
-  hud.mode.textContent = s.flight_mode || 'UNKNOWN';
+  hud.mode.textContent = `${s.flight_mode || 'UNKNOWN'}`;
 }
 
 // ── WebSocket consumer ────────────────────────────────────────────

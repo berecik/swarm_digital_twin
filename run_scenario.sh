@@ -311,9 +311,9 @@ ensure_venv() {
     if [[ "${NEED_RUNTIME_VIEW:-0}" == "1" ]] && ! python -c "import fastapi, uvicorn, websockets" &>/dev/null; then
         info "Installing fastapi + uvicorn + websockets for Run-time View..."
         if command -v uv &>/dev/null; then
-            uv pip install 'fastapi>=0.110' 'uvicorn>=0.27' 'websockets>=12'
+            uv pip install 'fastapi>=0.110' 'uvicorn>=0.27' 'websockets>=12,<13'
         else
-            pip install 'fastapi>=0.110' 'uvicorn>=0.27' 'websockets>=12'
+            pip install 'fastapi>=0.110' 'uvicorn>=0.27' 'websockets>=12,<13'
         fi
     fi
 
@@ -959,6 +959,8 @@ run_live_viz() {
             open "$url" 2>/dev/null || true
         elif command -v xdg-open &>/dev/null; then
             xdg-open "$url" 2>/dev/null || true
+        elif command -v start &>/dev/null; then
+            start "" "$url" 2>/dev/null || true
         fi
     ) &
 
@@ -1124,6 +1126,18 @@ case "$MODE" in
         fi
         run_physics_live --swarm --drones "$SWARM_DRONES" --loop
         ;;
+    --replay-live)
+        NEED_RUNTIME_VIEW=1 ensure_venv
+        local replay_file="${POSITIONAL[1]:-}"
+        if [ -z "$replay_file" ]; then
+            # Default: look for existing scenario_data.npz
+            replay_file="$SIM_DIR/scenario_data.npz"
+        fi
+        if [ ! -f "$replay_file" ]; then
+            fail "File not found: $replay_file — run a simulation first or specify a path"
+        fi
+        run_physics_live --replay "$replay_file" --loop
+        ;;
 
     # ── Testing & validation ─────────────────────────────────────────────────
     --test)
@@ -1198,8 +1212,13 @@ case "$MODE" in
         echo "                         to the live Three.js viewer in real time. No Docker"
         echo "                         or SITL needed. Pass --loop to replay indefinitely."
         echo "  --physics-swarm-live [N]"
-        echo "                         Run Python physics swarm (default: 6) and stream the"
-        echo "                         first drone to the live viewer (looping)."
+        echo "                         Run Python physics swarm (default: 6) and stream all"
+        echo "                         drones to the live viewer (looping). Each drone gets"
+        echo "                         its own mesh, trail, and colour."
+        echo "  --replay-live [FILE]"
+        echo "                         Replay an existing .npz or .BIN flight data file"
+        echo "                         in the live Three.js viewer (looping). Defaults to"
+        echo "                         simulation/scenario_data.npz if no file is given."
         echo ""
         echo "Testing & validation:"
         echo "  --test          Run physics + integration tests"

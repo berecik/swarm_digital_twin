@@ -121,8 +121,97 @@ async function refreshStatus() {
   }
 }
 
+// ── Replay file picker ─────────────────────────────────────────────
+// File names come from GET /api/files (server filesystem listing) and
+// are escaped via escapeHtml() before insertion — no XSS risk.
+
+const replayGrid = document.getElementById('replay-grid');
+
+function renderFileCard(f) {
+  const card = document.createElement('article');
+  card.className = 'mission-card';
+  const sizeKB = (f.size / 1024).toFixed(0);
+
+  // Build card using DOM methods for safety; only escaped text in innerHTML.
+  const thumb = document.createElement('div');
+  thumb.className = 'mission-thumb';
+  thumb.style.cssText = 'display:flex;align-items:center;justify-content:center;font-size:3rem;background:var(--bg-2)';
+  thumb.textContent = f.type === 'npz' ? '\u{1F4CA}' : '\u{1F4C4}';
+
+  const body = document.createElement('div');
+  body.className = 'mission-body';
+  const h3 = document.createElement('h3');
+  h3.className = 'mission-title';
+  h3.textContent = f.name;
+  const desc = document.createElement('p');
+  desc.className = 'mission-desc';
+  desc.textContent = `${sizeKB} KB \u00B7 ${f.type.toUpperCase()}`;
+  body.appendChild(h3);
+  body.appendChild(desc);
+
+  const footer = document.createElement('div');
+  footer.className = 'mission-footer';
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-green replay-btn';
+  btn.dataset.path = f.path;
+  btn.textContent = '\u25B6 REPLAY';
+  footer.appendChild(btn);
+
+  card.appendChild(thumb);
+  card.appendChild(body);
+  card.appendChild(footer);
+
+  btn.addEventListener('click', async (ev) => {
+    ev.stopPropagation();
+    btn.textContent = 'Loading\u2026';
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/load?path=${encodeURIComponent(f.path)}`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Failed to load: ${err.detail || res.statusText}`);
+        return;
+      }
+      window.location.href = '/live';
+    } catch (err) {
+      alert(`Error: ${err}`);
+    } finally {
+      btn.textContent = '\u25B6 REPLAY';
+      btn.disabled = false;
+    }
+  });
+  return card;
+}
+
+async function loadFiles() {
+  if (!replayGrid) return;
+  try {
+    const res = await fetch('/api/files');
+    const files = await res.json();
+    replayGrid.textContent = '';
+    if (!Array.isArray(files) || files.length === 0) {
+      const p = document.createElement('p');
+      p.style.color = 'var(--fg-1)';
+      p.textContent = 'No flight data files found. Run a simulation first.';
+      replayGrid.appendChild(p);
+      return;
+    }
+    for (const f of files) replayGrid.appendChild(renderFileCard(f));
+  } catch (err) {
+    const p = document.createElement('p');
+    p.style.color = 'var(--status-bad)';
+    p.textContent = `Failed to list files: ${err}`;
+    replayGrid.appendChild(p);
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+
 document.addEventListener('DOMContentLoaded', () => {
   loadMissions();
+  loadFiles();
   refreshStatus();
   setInterval(refreshStatus, 2000);
 });

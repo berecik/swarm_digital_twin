@@ -4,7 +4,7 @@
 
 **Scope:** remaining gaps and future work only. Completed items are in [`CHANGELOG.md`](../CHANGELOG.md).
 
-**Current state (2026-04-18):** 282 tests passing. All paper-aligned items delivered. Live Run-time View is the default visualization. Physics Live Replay streams simulations to the browser without Docker.
+**Current state (2026-04-18):** 291 tests passing. All paper-aligned items delivered. Live Run-time View is the default visualization. Physics Live Replay streams simulations to the browser without Docker.
 
 ---
 
@@ -22,13 +22,7 @@
 
 ## Backlog — upcoming features
 
-### 1) Multi-drone live view
-
-`MAVLinkLiveSource` demultiplexes by `system_id` into a
-`dict[int, TelemetryQueue]`; `live.js` spawns one mesh per drone ID.
-The mission cards (`swarm-3`, `swarm-6`) already exist — only the
-backend needs lifting. Swarm modes currently fall back to the
-matplotlib post-flight replayer.
+### ~~1) Multi-drone live view~~ ✅ Done
 
 ### 2) Browser-driven command execution
 
@@ -36,21 +30,14 @@ matplotlib post-flight replayer.
 pastes it). Wiring it to `subprocess.Popen` needs a sandbox, audit
 log, and confirmation modal.
 
-### 3) Post-flight replay in the web viewer
-
-Load `.npz` and `.BIN` files via a `?path=...` query on `/live` so the
-web viewer can replace `visualize_drone_3d.py` entirely for post-flight
-analysis.
+### ~~3) Post-flight replay in the web viewer~~ ✅ Done
 
 ### 4) DataFlash-compatible `.BIN` recording
 
 The first iteration writes CSV only. Writing ArduPilot-compatible
 `.BIN` from a live MAVLink stream is a much larger scope.
 
-### 5) Windows browser auto-open
-
-`run_live_viz` calls `open` (macOS) and `xdg-open` (Linux). Add
-`start ""` for Windows.
+### ~~5) Windows browser auto-open~~ ✅ Done
 
 ### 6) Real mission thumbnails
 
@@ -62,10 +49,7 @@ real SITL runs.
 The server binds to `127.0.0.1` only. LAN exposure would require auth
 and CSRF protection.
 
-### 8) websockets deprecation warnings
-
-8 `DeprecationWarning`s from `websockets.legacy`. Pin `websockets<15`
-or migrate to the modern API.
+### ~~8) websockets deprecation warnings~~ ✅ Done
 
 ---
 
@@ -75,7 +59,7 @@ or migrate to the modern API.
 
 | Check | Command | Status |
 |:---|:---|:---|
-| Full test suite (282) | `pytest simulation/test_drone_physics.py -q` | ✅ |
+| Full test suite (291) | `pytest simulation/test_drone_physics.py -q` | ✅ |
 | JS syntax | `node --check simulation/runtime_view/web/live.js` | ✅ |
 | Server import | `python -c "from simulation.runtime_view.server import app"` | ✅ |
 | Telemetry import | `cd simulation && python -c "from live_telemetry import MAVLinkLiveSource"` | ✅ |

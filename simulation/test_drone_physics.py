@@ -1446,7 +1446,7 @@ class TestMAVLink:
         msg = build_heartbeat(system_id=1, component_id=1)
         result = decode_mavlink_v2(msg)
         assert result is not None
-        msg_id, payload = result
+        _sys_id, msg_id, payload = result
         assert msg_id == MAVLINK_MSG_ID_HEARTBEAT
         assert len(payload) > 0
 
@@ -1459,7 +1459,7 @@ class TestMAVLink:
                              time_boot_ms=5000)
         result = decode_mavlink_v2(msg)
         assert result is not None
-        msg_id, payload = result
+        _sys_id, msg_id, payload = result
         assert msg_id == MAVLINK_MSG_ID_ATTITUDE
         fields = struct.unpack_from('<Iffffff', payload)
         assert fields[0] == 5000  # time_boot_ms
@@ -1480,7 +1480,7 @@ class TestMAVLink:
         )
         result = decode_mavlink_v2(msg)
         assert result is not None
-        msg_id, payload = result
+        _sys_id, msg_id, payload = result
         assert msg_id == MAVLINK_MSG_ID_GLOBAL_POSITION_INT
         fields = struct.unpack_from('<IiiiihhhH', payload)
         # lat in 1e-7 degrees
@@ -1499,7 +1499,7 @@ class TestMAVLink:
         )
         result = decode_mavlink_v2(msg)
         assert result is not None
-        msg_id, payload = result
+        _sys_id, msg_id, payload = result
         assert msg_id == MAVLINK_MSG_ID_VFR_HUD
         fields = struct.unpack_from('<ffhHff', payload)
         np.testing.assert_allclose(fields[0], 15.5, atol=1e-4)
@@ -1514,7 +1514,7 @@ class TestMAVLink:
         msg = build_sys_status(voltage_mv=22200, current_ca=1234, battery_pct=76)
         result = decode_mavlink_v2(msg)
         assert result is not None
-        msg_id, payload = result
+        _sys_id, msg_id, payload = result
         assert msg_id == MAVLINK_MSG_ID_SYS_STATUS
         fields = struct.unpack_from('<IIIHHhb', payload)
         assert fields[4] == 22200
@@ -1596,7 +1596,7 @@ class TestLiveTelemetry:
         # 2. Decode it to get the raw payload
         decoded = decode_mavlink_v2(msg_bytes)
         assert decoded is not None
-        msg_id, payload = decoded
+        _sys_id, msg_id, payload = decoded
         assert msg_id == MAVLINK_MSG_ID_ATTITUDE
 
         # 3. Parse with the new telemetry parser
@@ -1615,7 +1615,7 @@ class TestLiveTelemetry:
         msg_bytes = build_global_position_int(lat, lon, alt_msl, alt_rel_m=50.0, time_boot_ms=54321)
 
         decoded = decode_mavlink_v2(msg_bytes)
-        msg_id, payload = decoded
+        _sys_id, msg_id, payload = decoded
         assert msg_id == MAVLINK_MSG_ID_GLOBAL_POSITION_INT
 
         parsed = parse_telemetry_payload(msg_id, payload)
@@ -4940,11 +4940,15 @@ class TestPhysicsLiveReplay:
 
         src = inspect.getsource(run_physics_live)
 
-        # start_telemetry() must appear before run_replay / _replay
+        # start_telemetry() must appear before any replay thread launch
         idx_start = src.index('start_telemetry(')
-        idx_replay = src.index('replay_thread.start()')
+        # Find the first Thread(...).start() or replay_thread.start()
+        import re
+        replay_match = re.search(r'Thread\(target=_replay', src)
+        assert replay_match is not None, 'No replay thread found in source'
+        idx_replay = replay_match.start()
         assert idx_start < idx_replay, (
-            'start_telemetry() must be called before replay_thread.start() — '
+            'start_telemetry() must be called before the replay thread — '
             'otherwise the receiver is not listening when the replay begins '
             'and all UDP packets are silently dropped')
 
@@ -5004,3 +5008,187 @@ class TestPhysicsLiveReplay:
         finally:
             bridge.stop()
             src.stop()
+
+
+class TestMultiDroneLiveView:
+    """Tests for multi-drone live view — system_id demux, per-drone
+    samples, and multi-bridge swarm replay."""
+
+    def test_decode_mavlink_v2_returns_system_id(self):
+        """decode_mavlink_v2() must return (system_id, msg_id, payload)."""
+        from mavlink_bridge import build_attitude, decode_mavlink_v2
+        msg = build_attitude(0.1, -0.2, 0.5, system_id=7)
+        result = decode_mavlink_v2(msg)
+        assert result is not None
+        sys_id, msg_id, payload = result
+        assert sys_id == 7
+        assert msg_id == 30  # ATTITUDE
+
+    def test_live_sample_carries_drone_id(self):
+        """LiveTelemetrySample must include drone_id in to_dict()."""
+        from live_telemetry import LiveTelemetrySample
+        s = LiveTelemetrySample(drone_id=4)
+        d = s.to_dict()
+        assert d['drone_id'] == 4
+
+    @pytest.mark.timeout(30)
+    def test_multi_drone_demux_in_queue(self):
+        """Two bridges with different system_ids produce samples with
+        different drone_id values in the same queue."""
+        import time
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+        from mavlink_bridge import MAVLinkBridge, SimState
+
+        q = TelemetryQueue(maxlen=512)
+        src = MAVLinkLiveSource(listen_ip='127.0.0.1', listen_port=0, queue=q)
+        src.start()
+        port = src._sock.getsockname()[1]
+
+        b1 = MAVLinkBridge(target_ip='127.0.0.1', target_port=port,
+                           listen_port=0, system_id=1)
+        b2 = MAVLinkBridge(target_ip='127.0.0.1', target_port=port,
+                           listen_port=0, system_id=2)
+        b1.start()
+        b2.start()
+
+        try:
+            for tick in range(10):
+                b1.send_state(SimState(
+                    time_s=0.1 * tick,
+                    position=np.array([float(tick), 0.0, 5.0]),
+                ))
+                b2.send_state(SimState(
+                    time_s=0.1 * tick,
+                    position=np.array([0.0, float(tick), 8.0]),
+                ))
+                time.sleep(0.03)
+
+            time.sleep(0.5)
+            samples = q.snapshot()
+            drone_ids = set(s.drone_id for s in samples)
+            assert 1 in drone_ids, f'No samples from drone 1: {drone_ids}'
+            assert 2 in drone_ids, f'No samples from drone 2: {drone_ids}'
+
+            d1 = [s for s in samples if s.drone_id == 1]
+            d2 = [s for s in samples if s.drone_id == 2]
+            assert len(d1) >= 2
+            assert len(d2) >= 2
+        finally:
+            b1.stop()
+            b2.stop()
+            src.stop()
+
+    def test_run_scenario_swarm_live_streams_all(self):
+        """--physics-swarm-live help must mention streaming all drones."""
+        import subprocess, sys as _sys
+        script = str(Path(__file__).resolve().parents[1] / 'run_scenario.sh')
+        result = subprocess.run(
+            ['bash', script, '--help'],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert '--physics-swarm-live' in result.stdout
+        # The help text after --physics-swarm-live should say "all"
+        swarm_section = result.stdout.split('--physics-swarm-live')[1]
+        first_lines = swarm_section.split('\n')[0] + swarm_section.split('\n')[1]
+        assert 'all' in first_lines.lower(), (
+            f'--physics-swarm-live help must mention streaming all drones, '
+            f'got: {first_lines}')
+
+
+class TestPostFlightReplay:
+    """Tests for post-flight replay in the web viewer (roadmap item 3):
+    --replay-live shell mode, /api/files, /api/load endpoints."""
+
+    def test_run_scenario_replay_live_in_help(self):
+        """--replay-live must appear in run_scenario.sh --help."""
+        import subprocess, sys as _sys
+        script = str(Path(__file__).resolve().parents[1] / 'run_scenario.sh')
+        result = subprocess.run(
+            ['bash', script, '--help'],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert '--replay-live' in result.stdout
+
+    def test_run_scenario_replay_live_branch_exists(self):
+        """run_scenario.sh must have a --replay-live case branch."""
+        import re
+        script = Path(__file__).resolve().parents[1] / 'run_scenario.sh'
+        body = script.read_text(encoding='utf-8')
+        m = re.search(r'\n\s*--replay-live\)\s*\n(?P<body>.*?);;\s*\n',
+                       body, re.DOTALL)
+        assert m is not None, '--replay-live branch not found'
+        branch = m.group('body')
+        assert 'run_physics_live' in branch
+        assert '--replay' in branch
+
+    def test_api_files_lists_npz(self):
+        """GET /api/files must return at least one .npz file."""
+        import urllib.request, json
+        from live_telemetry import TelemetryQueue
+        server, thread, base = _runtime_view_start_uvicorn(TelemetryQueue())
+        try:
+            url = f'{base}/api/files'
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                data = json.loads(resp.read())
+            assert isinstance(data, list)
+            npz_files = [f for f in data if f['type'] == 'npz']
+            assert len(npz_files) >= 1, (
+                f'Expected at least one .npz file, got: {data}')
+            assert 'scenario_data.npz' in [f['name'] for f in npz_files]
+        finally:
+            _runtime_view_stop_uvicorn(server, thread)
+
+    @pytest.mark.timeout(30)
+    def test_api_load_starts_replay(self):
+        """POST /api/load with a valid .npz starts a replay."""
+        import urllib.request, urllib.parse, json, time
+        from live_telemetry import TelemetryQueue, MAVLinkLiveSource
+
+        q = TelemetryQueue(maxlen=512)
+        server, thread, base = _runtime_view_start_uvicorn(q)
+
+        import runtime_view.server as srv
+        src = MAVLinkLiveSource(listen_ip='127.0.0.1', listen_port=0, queue=q)
+        src.start()
+        srv.live_source = src
+
+        try:
+            npz_path = str(Path(__file__).resolve().parent / 'scenario_data.npz')
+            url = f'{base}/api/load?path={urllib.parse.quote(npz_path)}'
+            req = urllib.request.Request(url, method='POST')
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+
+            assert data['status'] == 'playing'
+            assert data['records'] > 0
+
+            deadline = time.time() + 5.0
+            while len(q) < 3 and time.time() < deadline:
+                time.sleep(0.1)
+            assert len(q) >= 1, f'No samples after /api/load, got {len(q)}'
+        finally:
+            if srv._replay_bridge is not None:
+                srv._replay_bridge.stop()
+                srv._replay_bridge = None
+            try:
+                src.stop()
+            except Exception:
+                pass
+            srv.live_source = None
+            _runtime_view_stop_uvicorn(server, thread)
+
+    def test_api_load_rejects_missing_file(self):
+        """POST /api/load with a nonexistent path returns 404."""
+        import urllib.request, urllib.error, urllib.parse
+        from live_telemetry import TelemetryQueue
+        server, thread, base = _runtime_view_start_uvicorn(TelemetryQueue())
+        try:
+            url = f'{base}/api/load?path={urllib.parse.quote("/nonexistent/file.npz")}'
+            req = urllib.request.Request(url, method='POST')
+            try:
+                urllib.request.urlopen(req, timeout=5)
+                assert False, 'Expected HTTP error'
+            except urllib.error.HTTPError as e:
+                assert e.code in (404, 422), f'Expected 404, got {e.code}'
+        finally:
+            _runtime_view_stop_uvicorn(server, thread)
