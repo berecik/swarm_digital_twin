@@ -5,7 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased] — life_vision branch
+## [2026-04-18] — Live Run-time View release
 
 ### Added
 
@@ -19,76 +19,100 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   quadrotor mesh, 1000-point trail, HUD overlay (AGL, ALT MSL, SPEED,
   HEADING, THROTTLE, BATTERY V/%, MODE), status chip, OrbitControls camera.
 - **Waypoint markers** in the live view: yellow spheres, vertical poles,
-  ground rings, WP labels, and a dashed flight-plan path fetched from
-  `GET /api/waypoints`.
+  ground rings, WP labels, and dashed flight-plan paths (per-drone in
+  swarm mode).
 - `simulation/live_telemetry.py`: MAVLink v2 receiver thread
   (`MAVLinkLiveSource`), thread-safe `TelemetryQueue` ring buffer,
-  `LiveTelemetrySample` dataclass, `TelemetryCSVRecorder`, GPS↔ENU
-  conversion.
+  `LiveTelemetrySample` dataclass with `drone_id` field,
+  `TelemetryCSVRecorder`, GPS↔ENU conversion.
 - `simulation/physics_live_replay.py`: runs the Python physics engine and
   streams results through `MAVLinkBridge.run_replay()` → UDP →
   `MAVLinkLiveSource` → FastAPI → browser. Supports `--replay` (NPZ),
-  `--swarm`, `--loop`, `--fps`.
+  `--swarm`, `--loop`, `--fps`, `--record-bin`.
 - `MAVLinkBridge.run_replay()` method for deterministic playback of
   `SimRecord` lists without a SITL container.
-- `GET /api/waypoints` endpoint returning the active mission waypoints.
-- `GET /api/status`, `GET /api/snapshot?n=N`, `GET /api/missions` REST
-  endpoints.
-- `WS /ws/telemetry` WebSocket: initial 200-sample snapshot on connect,
-  then per-sample push with 5 s keepalive pings.
-- Mission launcher landing page (`/`) with 6 mission cards (3 free,
-  3 pro-placeholder), pysimverse-inspired dark-navy layout.
 - Vendored `three.module.js` (r160) and `OrbitControls.js` for offline
   operation.
 
-#### run_scenario.sh Modes
-- `--physics-live [--loop]` — Python physics sim → live Three.js viewer
-  (no Docker/SITL needed).
-- `--physics-swarm-live [N]` — swarm sim → live viewer (first drone,
-  looping).
-- `--viz-live [MAV_PORT] [HTTP_PORT]` — bare server waiting for external
-  MAVLink telemetry.
-- `--single-live` / `--single` — SITL stack + live viewer (requires
-  Docker/K8s).
-- Default (no args) changed from bare server to physics-live with
-  `--loop`.
+#### Multi-drone live view
+- `decode_mavlink_v2()` returns `(system_id, msg_id, payload)` — extracts
+  the MAVLink system ID from byte 5 of the header.
+- `MAVLinkLiveSource` demultiplexes telemetry by `system_id` into
+  per-drone assembly state. Each drone's samples carry a `drone_id` field.
+- `live.js` dynamically creates drone meshes keyed by `drone_id`, each
+  with its own colour (8-colour palette), trail, and `D1`/`D2`/... label.
+  Camera follows the centroid of all drones.
+- Swarm replay spawns N `MAVLinkBridge` instances (one per drone with
+  unique `system_id`), interleaving all drones in a single replay thread.
 
-#### Tests (40 new, 282 total)
-- `TestLiveTelemetry` (6): MAVLink payload parsing, GPS↔ENU inverse,
-  queue thread safety, bridge-to-queue roundtrip, CSV recorder.
-- `TestRuntimeViewServer` (4): HTTP route rendering, API catalogue,
-  status endpoint, WebSocket sample streaming.
-- `TestRunTimeViewIntegration` (10): real uvicorn server, HTTP asset
-  delivery, WebSocket snapshot/streaming, full MAVLink bridge → server →
-  WebSocket pipeline.
-- `TestLiveViewNoMotionRegression` (6): empty-queue WS behavior, motion
-  detection, SITL frame forwarding, orchestrator poll relay, full
-  pipeline, run_scenario.sh script assertions.
-- `TestPhysicsLiveReplay` (14): simulation record generation, NPZ
-  roundtrip, swarm NPZ extraction, bridge-to-queue pipeline, full
-  WebSocket pipeline, run_scenario.sh mode wiring, CLI help, receiver
-  startup ordering, non-loop replay delivery.
+#### Post-flight web replay
+- `--replay-live [FILE]` mode in `run_scenario.sh` — replays an existing
+  `.npz` file in the live Three.js viewer (looping).
+- `GET /api/files` lists `.npz` and `.BIN` files available for replay.
+- `POST /api/load?path=...` loads an `.npz` file and starts a background
+  bridge replay to the live viewer.
+- Launcher UI "Replay Flight Data" section with file cards and REPLAY
+  buttons.
+
+#### Browser-driven command execution
+- `POST /api/launch?id=<mission>` executes a mission's `start_command`
+  from `missions.json` via `subprocess.Popen`.
+- Allowlist security: only commands in the mission catalogue are accepted.
+- `POST /api/launch/stop` terminates a running mission.
+- `GET /api/launch/status` checks if a mission process is running.
+- Audit log written to `.ai/launch.log` with timestamps.
+- Confirmation modal with Launch button in the launcher UI.
+
+#### DataFlash `.BIN` recording
+- `simulation/dataflash_recorder.py`: writes ArduPilot-compatible binary
+  log files with FMT header records + ATT, GPS, BAT, MODE data records.
+- `record_sample()` converts `LiveTelemetrySample` to ATT+GPS+BAT records.
+- `--record-bin FILE` flag in `physics_live_replay` wires the recorder
+  via the `MAVLinkLiveSource` sample hook.
+
+#### REST API
+- `GET /api/missions` — mission catalogue from `missions.json`.
+- `GET /api/status` — connection/sample status.
+- `GET /api/snapshot?n=N` — last N telemetry samples.
+- `GET /api/waypoints` — per-drone waypoints (dict format).
+- `GET /api/files` — available `.npz`/`.BIN` data files.
+- `POST /api/load?path=...` — load and replay a data file.
+- `POST /api/launch?id=...` — execute a mission command.
+- `POST /api/launch/stop` — stop running mission.
+- `GET /api/launch/status` — mission process status.
+- `WS /ws/telemetry` — 50 Hz telemetry push with snapshot on connect.
+
+#### run_scenario.sh modes
+- `(default)` — physics sim + live viewer (looping).
+- `--physics-live [--loop]` — single-drone physics sim → live viewer.
+- `--physics-swarm-live [N]` — N-drone swarm → live viewer (all drones).
+- `--replay-live [FILE]` — replay `.npz` file in live viewer.
+- `--viz-live [MAV_PORT] [HTTP_PORT]` — bare server for external MAVLink.
+- `--single-live` / `--single` — SITL stack + live viewer.
+
+#### Tests (57 new, 299 total)
+- `TestLiveTelemetry` (6), `TestRuntimeViewServer` (4),
+  `TestRunTimeViewIntegration` (10), `TestLiveViewNoMotionRegression` (6),
+  `TestPhysicsLiveReplay` (14), `TestMultiDroneLiveView` (4),
+  `TestPostFlightReplay` (5), `TestBrowserLaunch` (3),
+  `TestDataFlashRecorder` (5).
 
 ### Changed
-- **Server migrated from Flask to FastAPI** (commit 7384adb). ASGI-native
-  async WebSocket replaces Flask + flask-sock threads. Dependencies:
-  `fastapi>=0.110`, `uvicorn>=0.27`, `websockets>=12` (replacing
-  `flask>=3.0`, `flask-sock>=0.7`).
-- `run_scenario.sh` default mode changed from bare live-view server to
-  `run_physics_live --loop` (runs simulation + streams to browser).
-- All "Flask" references in comments and help text updated to "FastAPI".
-- ENU recentering in `live.js`: first telemetry sample sets the origin
-  so the drone stays in view regardless of geodetic reference point.
+- **Server migrated from Flask to FastAPI** (ASGI-native async WebSocket).
+  Dependencies: `fastapi>=0.110`, `uvicorn>=0.27`, `websockets>=12,<13`.
+- Default `./run_scenario.sh` runs physics sim + live viewer (was bare
+  server, was matplotlib replayer before that).
+- Windows browser auto-open via `start ""` in `run_live_viz()`.
+- `load_npz_records()` handles missing optional keys gracefully.
+- `mission_waypoints` changed from list to dict `{drone_id: [wps]}`.
 
 ### Fixed
-- **Replay-before-receiver race condition** in `run_physics_live()`:
-  `start_telemetry()` now binds the UDP listener before the replay
-  thread starts, preventing silent packet loss that caused the drone
-  mesh to never move in the browser.
+- **Replay-before-receiver race condition**: `start_telemetry()` now binds
+  the UDP listener before the replay thread starts.
 
 ---
 
-## Paper-Aligned Physics (implemented prior to life_vision branch)
+## Paper-Aligned Physics (implemented prior to this release)
 
 All items from Valencia et al. (2025) verified against the codebase:
 
