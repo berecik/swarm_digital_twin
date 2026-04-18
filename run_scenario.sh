@@ -307,13 +307,13 @@ ensure_venv() {
         fi
     fi
 
-    # flask + flask-sock needed for the Run-time View web app
-    if [[ "${NEED_RUNTIME_VIEW:-0}" == "1" ]] && ! python -c "import flask, flask_sock" &>/dev/null; then
-        info "Installing flask + flask-sock for Run-time View..."
+    # fastapi + uvicorn + websockets needed for the Run-time View web app
+    if [[ "${NEED_RUNTIME_VIEW:-0}" == "1" ]] && ! python -c "import fastapi, uvicorn, websockets" &>/dev/null; then
+        info "Installing fastapi + uvicorn + websockets for Run-time View..."
         if command -v uv &>/dev/null; then
-            uv pip install flask flask-sock
+            uv pip install 'fastapi>=0.110' 'uvicorn>=0.27' 'websockets>=12'
         else
-            pip install flask flask-sock
+            pip install 'fastapi>=0.110' 'uvicorn>=0.27' 'websockets>=12'
         fi
     fi
 
@@ -1064,7 +1064,7 @@ case "$MODE" in
         ;;
     --viz-live)
         NEED_RUNTIME_VIEW=1 ensure_venv
-        run_live_viz "${POSITIONAL[1]:-14550}" "${POSITIONAL[2]:-8765}"
+        run_live_viz "${POSITIONAL[1]:-14550}" "${POSITIONAL[2]:-8765}" /live
         ;;
 
     # ── Stack management ────────────────────────────────────────────────────
@@ -1138,10 +1138,12 @@ case "$MODE" in
         echo "  --backend=docker   Use Docker Compose"
         echo ""
         echo "Per-drone stack modes (Docker or K8s):"
-        echo "  (default)        Run the single-drone SITL stack with the live web"
-        echo "                   Run-time View at http://127.0.0.1:8765"
-        echo "  --single         Same as default — alias kept for muscle memory"
-        echo "  --single-live    Same as default — explicit live-view alias"
+        echo "  (default)        Start ONLY the live web Run-time View (Flask + Three.js)"
+        echo "                   at http://127.0.0.1:8765/live, listening for MAVLink"
+        echo "                   on UDP 14550. Bring up the SITL stack separately with"
+        echo "                   --single-live to feed it telemetry."
+        echo "  --single         Run the single-drone SITL stack and open the live HUD"
+        echo "  --single-live    Same as --single — explicit live-view alias"
         echo "  --single-static  Run the single-drone SITL stack and open the legacy"
         echo "                   matplotlib post-flight replayer (no live view)"
         echo "  --swarm [N]      Run N-drone formation flight (default: 6) then open"
@@ -1155,9 +1157,10 @@ case "$MODE" in
         echo "  --viz-only       Open the matplotlib replayer for an existing scenario"
         echo "  --sitl-viz [F]   Visualize newest SITL .BIN log (or specify path)"
         echo "  --viz-live [MAV_PORT] [HTTP_PORT]"
-        echo "                   Start the Run-time View web app standalone (Flask +"
-        echo "                   Three.js) at http://127.0.0.1:HTTP_PORT (default 8765),"
-        echo "                   listening for MAVLink on UDP MAV_PORT (default 14550)."
+        echo "                   Same as the (default) mode — start the Run-time View"
+        echo "                   web app standalone at http://127.0.0.1:HTTP_PORT/live"
+        echo "                   (default 8765), listening for MAVLink on UDP MAV_PORT"
+        echo "                   (default 14550)."
         echo ""
         echo "Legacy physics simulation (no Docker/K8s needed):"
         echo "  --physics-single     Run Python physics single-drone scenario + visualize"
@@ -1174,11 +1177,11 @@ case "$MODE" in
         echo "  --help          Show this help"
         echo ""
         echo "Real-time Telemetry (Run-time View):"
-        echo "  The dark-navy launcher + live 3D HUD is now the DEFAULT visualizer"
-        echo "  for single-drone modes (--default / --single / --single-live)."
-        echo "  Use --viz-live to run the Run-time View standalone against an"
-        echo "  externally-managed MAVLink stream, or --single-static to opt back"
-        echo "  into the legacy post-flight matplotlib viewer."
+        echo "  The default mode (no args) now boots ONLY the Flask + Three.js HUD"
+        echo "  on http://127.0.0.1:8765/live; pair it with a separately-running SITL"
+        echo "  stack, a real vehicle, or a MAVLink replay. Use --single-live to bring"
+        echo "  the SITL stack up alongside the HUD in a single command, or"
+        echo "  --single-static for the legacy post-flight matplotlib viewer."
         echo ""
         echo "Docker backend — per-drone stack (6 drones x 4 services = 24 containers):"
         echo "  sitl_drone_N      — Pixhawk sim + Micro-XRCE-DDS Agent (ROS_DOMAIN_ID=N)"
@@ -1195,13 +1198,14 @@ case "$MODE" in
         ;;
 
     # ── Default (no args) ────────────────────────────────────────────────────
-    # Default flow now uses the live web Run-time View (REFACTOR_PLAN
-    # §2.1.H follow-up — flipping the default visualizer to the
-    # Flask + Three.js stack). Use `--single-static` to fall back to the
-    # post-flight matplotlib viewer.
+    # Default flow boots only the live web Run-time View (Flask +
+    # Three.js). It listens on UDP 14550 for MAVLink and serves
+    # http://127.0.0.1:8765/live in the browser. Bring up the SITL
+    # stack separately with `--single-live` (live HUD + SITL mission)
+    # or `--single-static` (legacy matplotlib post-flight viewer).
     --default)
-        NEED_PYMAVLINK=1 NEED_RUNTIME_VIEW=1 ensure_venv
-        run_single_mission_live 300
+        NEED_RUNTIME_VIEW=1 ensure_venv
+        run_live_viz "${POSITIONAL[1]:-14550}" "${POSITIONAL[2]:-8765}" /live
         ;;
     *)
         fail "Unknown option: $MODE (use --help)"

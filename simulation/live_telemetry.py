@@ -51,7 +51,7 @@ class LiveTelemetrySample:
 
     All numeric fields default to zero so that partial messages can be
     pushed into the queue without losing schema compatibility with the
-    JSON consumers (Flask ``/api/status`` and ``/ws/telemetry``).
+    JSON consumers (FastAPI ``/api/status`` and ``/ws/telemetry``).
     """
 
     t_wall: float = 0.0

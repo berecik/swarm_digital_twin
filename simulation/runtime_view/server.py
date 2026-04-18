@@ -1,5 +1,5 @@
 """
-Run-time View Flask Server - Swarm Digital Twin
+Run-time View FastAPI Server - Swarm Digital Twin
 Author: beret <beret@hipisi.org.pl>
 Company: Marysia Software Limited <ceo@marysia.app>
 Domain: app.marysia.drone
@@ -14,13 +14,16 @@ Run standalone with::
     python -m runtime_view.server --port 8765 --listen-port 14550
 
 from the ``simulation/`` directory, or via ``run_scenario.sh --viz-live``.
+The HTTP server is FastAPI on top of uvicorn; the WebSocket route uses
+Starlette's native ``WebSocket`` API instead of flask-sock so the same
+process serves both REST and live telemetry over a single ASGI app.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
-import os
 import sys
 import threading
 import time
@@ -36,8 +39,9 @@ _SIM_DIR = _THIS_DIR.parent                  # .../simulation
 if str(_SIM_DIR) not in sys.path:
     sys.path.insert(0, str(_SIM_DIR))
 
-from flask import Flask, jsonify, send_from_directory, abort  # noqa: E402
-from flask_sock import Sock  # noqa: E402
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse  # noqa: E402
+import uvicorn  # noqa: E402
 
 from live_telemetry import (  # noqa: E402
     LiveTelemetrySample,
@@ -46,26 +50,37 @@ from live_telemetry import (  # noqa: E402
 )
 
 
-# ── App factory ──────────────────────────────────────────────────────────
+# ── Web/asset paths ──────────────────────────────────────────────────────
 
 WEB_DIR = _THIS_DIR / "web"
 MISSIONS_PATH = _THIS_DIR / "missions.json"
 
-app = Flask(
-    __name__,
-    static_folder=str(WEB_DIR),
-    static_url_path="/static",
-    template_folder=str(WEB_DIR),
-)
-sock = Sock(app)
 
-# Global singletons — the module-level names are imported by the unit
-# tests, so keep them stable.
+# ── App + module-level singletons ───────────────────────────────────────
+#
+# The unit tests import ``app``, ``telemetry_queue``, ``live_source``,
+# ``WEB_DIR``, ``MISSIONS_PATH``, ``start_telemetry`` and
+# ``stop_telemetry`` directly, so the symbol shape must stay stable
+# across the Flask → FastAPI migration.
+
+app = FastAPI(
+    title="Swarm Digital Twin — Run-time View",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
+
+# ``static_folder`` and ``template_folder`` were Flask attributes; the
+# tests still set them directly to swap in tmp_path web roots, so we
+# expose them as plain attributes on the FastAPI app instance.
+app.static_folder = str(WEB_DIR)
+app.template_folder = str(WEB_DIR)
+
 telemetry_queue: TelemetryQueue = TelemetryQueue(maxlen=4096)
 live_source: Optional[MAVLinkLiveSource] = None
 
 
-# ── Routes: HTML pages ──────────────────────────────────────────────────
+# ── HTML page helpers ───────────────────────────────────────────────────
 
 
 def _read_template(name: str) -> str:
@@ -78,39 +93,48 @@ def _read_template(name: str) -> str:
     cases.
     """
     candidates = []
-    if app.template_folder:
-        candidates.append(Path(app.template_folder) / name)
-    if Path(app.template_folder or "") != WEB_DIR:
+    template_folder = getattr(app, "template_folder", None)
+    if template_folder:
+        candidates.append(Path(template_folder) / name)
+    if Path(template_folder or "") != WEB_DIR:
         candidates.append(WEB_DIR / name)
     for path in candidates:
         if path.exists():
             return path.read_text(encoding="utf-8")
-    abort(404)
+    raise HTTPException(status_code=404, detail=f"{name} not found")
 
 
-@app.route("/")
-def index():
+@app.get("/", response_class=HTMLResponse)
+def index() -> HTMLResponse:
     """Render the mission launcher."""
-    return _read_template("index.html")
+    return HTMLResponse(_read_template("index.html"))
 
 
-@app.route("/live")
-def live_view():
+@app.get("/live", response_class=HTMLResponse)
+def live_view() -> HTMLResponse:
     """Render the live 3D view."""
-    return _read_template("live.html")
+    return HTMLResponse(_read_template("live.html"))
 
 
-# ── Routes: static assets ───────────────────────────────────────────────
+# ── Static asset route (parity with the Flask /web/<path> path) ─────────
 
 
-@app.route("/web/<path:filename>")
+@app.get("/web/{filename:path}")
 def web_assets(filename: str):
     """Serve CSS/JS/img/vendor assets from the ``web`` directory."""
-    folder = Path(app.static_folder or WEB_DIR)
-    return send_from_directory(str(folder), filename)
+    folder = Path(getattr(app, "static_folder", None) or WEB_DIR)
+    target = (folder / filename).resolve()
+    # Reject path traversal: the resolved path must stay inside ``folder``.
+    try:
+        target.relative_to(folder.resolve())
+    except ValueError:
+        raise HTTPException(status_code=404)
+    if not target.is_file():
+        raise HTTPException(status_code=404)
+    return FileResponse(str(target))
 
 
-# ── Routes: REST API ────────────────────────────────────────────────────
+# ── REST API ────────────────────────────────────────────────────────────
 
 
 def _load_missions() -> list:
@@ -122,65 +146,84 @@ def _load_missions() -> list:
     return []
 
 
-@app.route("/api/missions")
-def api_missions():
+@app.get("/api/missions")
+def api_missions() -> JSONResponse:
     """Return the mission catalogue as JSON."""
-    return jsonify(_load_missions())
+    return JSONResponse(_load_missions())
 
 
-@app.route("/api/status")
-def api_status():
+@app.get("/api/status")
+def api_status() -> JSONResponse:
     """Return the current telemetry/connection status."""
     latest = telemetry_queue.latest()
     running = bool(live_source is not None and getattr(live_source, "_running", False))
-    return jsonify({
+    return JSONResponse({
         "connected": running,
         "sample_count": len(telemetry_queue),
         "latest_sample": latest.to_dict() if latest is not None else None,
     })
 
 
-@app.route("/api/snapshot")
-def api_snapshot():
+@app.get("/api/snapshot")
+def api_snapshot(n: int = Query(default=100)) -> JSONResponse:
     """Return the last ``n`` telemetry samples (default 100, max 1000)."""
-    from flask import request
-    try:
-        n = int(request.args.get("n", "100"))
-    except (TypeError, ValueError):
-        n = 100
     n = max(1, min(1000, n))
     samples = telemetry_queue.snapshot(n=n)
-    return jsonify([s.to_dict() for s in samples])
+    return JSONResponse([s.to_dict() for s in samples])
 
 
 # ── WebSocket route ─────────────────────────────────────────────────────
 
 
-@sock.route("/ws/telemetry")
-def telemetry_stream(ws):
-    """Push the latest :class:`LiveTelemetrySample` at ~50 Hz."""
+@app.websocket("/ws/telemetry")
+async def telemetry_stream(ws: WebSocket) -> None:
+    """Push every queued :class:`LiveTelemetrySample` at ~50 Hz.
+
+    Forwards *every* sample with ``t_wall > last_t`` rather than only the
+    most recent one. The previous ``latest()``-only loop coalesced bursts
+    into a single frame, so when several GPS updates arrived between two
+    20 ms WS ticks the browser saw the drone teleport instead of move —
+    matching the "connected but no motion" regression. Async + asyncio
+    sleeps replace the Flask thread loop but the wire format is identical.
+    """
+    await ws.accept()
     last_t: float = -1.0
     last_heartbeat = time.time()
     try:
         # Kick off with a snapshot so the client paints immediately.
         initial = telemetry_queue.snapshot(n=200)
         if initial:
-            ws.send(json.dumps({
+            await ws.send_text(json.dumps({
                 "type": "snapshot",
                 "data": [s.to_dict() for s in initial],
             }))
+            # Treat the snapshot as already-acknowledged so the catch-up
+            # loop below doesn't immediately re-send the same samples.
+            last_t = max(s.t_wall for s in initial)
         while True:
-            latest = telemetry_queue.latest()
-            if latest is not None and latest.t_wall > last_t:
-                ws.send(json.dumps({"type": "sample", "data": latest.to_dict()}))
-                last_t = latest.t_wall
+            # Drain every unseen sample in chronological order so the JS
+            # trail buffer gets every position update, not just the last.
+            for sample in telemetry_queue.snapshot():
+                if sample.t_wall > last_t:
+                    await ws.send_text(json.dumps({
+                        "type": "sample",
+                        "data": sample.to_dict(),
+                    }))
+                    last_t = sample.t_wall
             now = time.time()
             if now - last_heartbeat >= 5.0:
-                ws.send(json.dumps({"type": "ping", "t": now}))
+                await ws.send_text(json.dumps({"type": "ping", "t": now}))
                 last_heartbeat = now
-            time.sleep(0.02)  # 50 Hz cap
+            await asyncio.sleep(0.02)  # 50 Hz cap
+    except WebSocketDisconnect:
+        return
     except Exception:
-        # flask-sock raises on disconnect; treat that as a normal close.
+        # Mirror the Flask handler: any other failure is treated as a
+        # normal close so a hung browser tab doesn't crash the server.
+        try:
+            await ws.close()
+        except Exception:
+            pass
         return
 
 
@@ -215,11 +258,16 @@ def run_server(
     listen_port: int = 14550,
     start_source: bool = True,
 ) -> None:
-    """Run the Flask development server (blocking)."""
+    """Run uvicorn against the FastAPI app (blocking)."""
     if start_source:
         start_telemetry(listen_port=listen_port)
+    config = uvicorn.Config(
+        app, host=host, port=port,
+        log_level="info", access_log=False, lifespan="off",
+    )
+    server = uvicorn.Server(config)
     try:
-        app.run(host=host, port=port, threaded=True, debug=False, use_reloader=False)
+        server.run()
     finally:
         stop_telemetry()
 
@@ -227,7 +275,7 @@ def run_server(
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="runtime_view.server",
-        description="Flask + Three.js Run-time View for the Swarm Digital Twin.",
+        description="FastAPI + Three.js Run-time View for the Swarm Digital Twin.",
     )
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind address")
     parser.add_argument("--port", type=int, default=8765, help="HTTP port")

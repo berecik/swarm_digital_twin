@@ -1750,8 +1750,17 @@ class TestLiveTelemetry:
 
 
 class TestRuntimeViewServer:
+    """In-process route tests via FastAPI's ``TestClient``.
+
+    These cover the simple HTTP route shapes and the WebSocket handshake.
+    Real over-the-wire tests live in :class:`TestRunTimeViewIntegration`
+    and :class:`TestLiveViewNoMotionRegression` which spin up uvicorn on
+    an ephemeral port.
+    """
+
     def test_index_route_renders_launcher(self, tmp_path):
         """Root route should render index.html."""
+        from fastapi.testclient import TestClient
         from runtime_view.server import app
         # Create a dummy index.html
         web_dir = tmp_path / "web"
@@ -1759,33 +1768,24 @@ class TestRuntimeViewServer:
         (web_dir / "index.html").write_text("Launcher")
         app.template_folder = str(web_dir)
 
-        with app.test_client() as client:
+        with TestClient(app) as client:
             res = client.get('/')
             assert res.status_code == 200
-            assert b"Launcher" in res.data
+            assert b"Launcher" in res.content
 
     def test_api_missions_returns_catalogue(self, tmp_path):
         """API should return the missions JSON."""
+        from fastapi.testclient import TestClient
         from runtime_view.server import app
-        import json
 
-        missions_file = tmp_path / "missions.json"
-        missions_data = [{"id": "test", "name": "Test Mission"}]
-        missions_file.write_text(json.dumps(missions_data))
-
-        # Patch the missions path in the module if possible, or just rely on file existence
-        import runtime_view.server
-        orig_path = runtime_view.server.__file__
-        # This is tricky because it's hardcoded in get_missions.
-        # Let's just verify the route logic.
-        with app.test_client() as client:
+        with TestClient(app) as client:
             res = client.get('/api/missions')
             assert res.status_code == 200
-            # If missions.json doesn't exist at the expected location, it returns []
-            assert isinstance(res.get_json(), list)
+            assert isinstance(res.json(), list)
 
     def test_api_status_reflects_queue_state(self):
         """Status API should show current sample count and latest sample."""
+        from fastapi.testclient import TestClient
         from runtime_view.server import app, telemetry_queue
         from live_telemetry import LiveTelemetrySample
         import numpy as np
@@ -1793,79 +1793,156 @@ class TestRuntimeViewServer:
         telemetry_queue.clear()
         telemetry_queue.push(LiveTelemetrySample(time_boot_ms=100, pos_enu=np.array([1,2,3])))
 
-        with app.test_client() as client:
+        with TestClient(app) as client:
             res = client.get('/api/status')
             assert res.status_code == 200
-            data = res.get_json()
+            data = res.json()
             assert data["sample_count"] == 1
             assert data["latest_sample"]["time_boot_ms"] == 100
 
     def test_websocket_streams_latest_sample(self):
-        """WebSocket should stream telemetry (smoke test)."""
+        """The /ws/telemetry route must exist and accept a handshake."""
+        from fastapi.testclient import TestClient
         from runtime_view.server import app, telemetry_queue
         from live_telemetry import LiveTelemetrySample
-        import numpy as np
-        import json
 
         telemetry_queue.clear()
         telemetry_queue.push(LiveTelemetrySample(t_wall=1.0, time_boot_ms=100))
 
-        # flask-sock is hard to test with standard test_client
-        # but we can verify the route exists
-        assert '/ws/telemetry' in [r.rule for r in app.url_map.iter_rules()]
+        # The route must be registered on the FastAPI app.
+        ws_paths = [getattr(r, 'path', None) for r in app.routes]
+        assert '/ws/telemetry' in ws_paths
+
+        # And a handshake must succeed; the snapshot frame should follow.
+        with TestClient(app) as client:
+            with client.websocket_connect('/ws/telemetry') as ws:
+                msg = ws.receive_json()
+                assert msg.get('type') in ('snapshot', 'sample', 'ping')
+
+
+def _runtime_view_start_uvicorn(telemetry_queue):
+    """Boot the FastAPI runtime-view app on an ephemeral uvicorn port.
+
+    Returns ``(server, thread, base_url)`` where ``server`` is a
+    ``uvicorn.Server`` whose ``should_exit`` flag stops the loop.
+    Replaces the old werkzeug-based helper so the integration tests
+    drive the real FastAPI/Starlette stack the production server uses.
+    """
+    import asyncio as _asyncio
+    import threading as _threading
+    import time as _time
+
+    import uvicorn  # noqa: WPS433 — local import keeps the suite hermetic
+    import runtime_view.server as srv
+
+    # Tear down any leftover MAVLink listener from a previous test.
+    if srv.live_source is not None:
+        try:
+            srv.live_source.stop()
+        except Exception:
+            pass
+        srv.live_source = None
+
+    # Reset template/static folders to the canonical web/ directory.
+    # ``TestRuntimeViewServer`` cases monkey-patch ``template_folder`` to
+    # a tmp_path and never restore it, so without this reset our
+    # integration tests would either 404 or serve stale content from
+    # leftover tmp files.
+    srv.app.template_folder = str(srv.WEB_DIR)
+    srv.app.static_folder = str(srv.WEB_DIR)
+
+    # Replace the module-level queue so the test owns it.
+    srv.telemetry_queue.clear()
+    srv.telemetry_queue = telemetry_queue
+
+    # uvicorn.Server subclass that signals when startup completes and
+    # skips installing signal handlers (which only work on the main thread).
+    class _ThreadedUvicornServer(uvicorn.Server):
+        def __init__(self, config):
+            super().__init__(config)
+            self.startup_event = _threading.Event()
+
+        async def startup(self, sockets=None):
+            await super().startup(sockets=sockets)
+            self.startup_event.set()
+
+        def install_signal_handlers(self):
+            return
+
+    config = uvicorn.Config(
+        srv.app,
+        host='127.0.0.1',
+        port=0,
+        log_level='error',
+        access_log=False,
+        lifespan='off',
+    )
+    server = _ThreadedUvicornServer(config)
+
+    def _serve():
+        loop = _asyncio.new_event_loop()
+        try:
+            _asyncio.set_event_loop(loop)
+            loop.run_until_complete(server.serve())
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+    thread = _threading.Thread(
+        target=_serve, name='rtv-uvicorn-test', daemon=True
+    )
+    thread.start()
+    if not server.startup_event.wait(timeout=10.0):
+        raise RuntimeError('uvicorn did not start within 10 s')
+
+    # Probe the bound socket for the actual port (port=0 → OS-assigned).
+    port = None
+    deadline = _time.time() + 5.0
+    while _time.time() < deadline:
+        try:
+            for srv_state in (server.servers or []):
+                for sock in srv_state.sockets:
+                    port = sock.getsockname()[1]
+                    break
+                if port is not None:
+                    break
+        except Exception:
+            port = None
+        if port:
+            break
+        _time.sleep(0.01)
+    if not port:
+        raise RuntimeError('uvicorn server bound no socket')
+    return server, thread, f'http://127.0.0.1:{port}'
+
+
+def _runtime_view_stop_uvicorn(server, thread):
+    """Signal a uvicorn test server to exit and join its background thread."""
+    try:
+        server.should_exit = True
+    finally:
+        thread.join(timeout=5.0)
 
 
 class TestRunTimeViewIntegration:
     """End-to-end integration tests for the Run-time View web app.
 
-    These tests boot the real Flask + flask-sock app on an ephemeral
-    port via ``werkzeug.serving.make_server``, drive it with a real
-    ``websocket-client`` (or ``simple_websocket``) connection, and pump
-    telemetry through ``MAVLinkBridge`` → ``MAVLinkLiveSource`` →
-    ``TelemetryQueue`` → ``/ws/telemetry`` → JS-side handler. They are
-    skipped automatically if a sub-dependency is missing so the suite
-    stays green on minimal CI runners.
+    These tests boot the real FastAPI app on an ephemeral uvicorn port,
+    drive it with a real ``urllib`` HTTP client and a ``simple_websocket``
+    WebSocket client, and pump telemetry through
+    ``MAVLinkBridge`` → ``MAVLinkLiveSource`` → ``TelemetryQueue`` →
+    ``/ws/telemetry`` → JS-side handler. They are skipped automatically
+    if a sub-dependency is missing so the suite stays green on minimal
+    CI runners.
     """
 
     def _start_server(self, telemetry_queue):
-        """Boot the Flask app on an ephemeral port; return (server, thread, base_url)."""
-        import threading as _threading
-        from werkzeug.serving import make_server
-        import runtime_view.server as srv
-
-        # Make sure no MAVLink listener is bound during tests.
-        if srv.live_source is not None:
-            try:
-                srv.live_source.stop()
-            except Exception:
-                pass
-            srv.live_source = None
-
-        # Reset template/static folders to the canonical web/ directory.
-        # The pre-existing TestRuntimeViewServer cases monkey-patch
-        # ``app.template_folder`` to a tmp_path and never restore it,
-        # so without this reset our integration tests would either 404
-        # or serve stale content from leftover tmp files.
-        srv.app.template_folder = str(srv.WEB_DIR)
-        srv.app.static_folder = str(srv.WEB_DIR)
-
-        # Replace the module-level queue so the test owns it.
-        srv.telemetry_queue.clear()
-        srv.telemetry_queue = telemetry_queue
-
-        server = make_server('127.0.0.1', 0, srv.app, threaded=True)
-        port = server.server_address[1]
-        thread = _threading.Thread(
-            target=server.serve_forever, name='rtv-test-server', daemon=True
-        )
-        thread.start()
-        return server, thread, f'http://127.0.0.1:{port}'
+        return _runtime_view_start_uvicorn(telemetry_queue)
 
     def _stop_server(self, server, thread):
-        try:
-            server.shutdown()
-        finally:
-            thread.join(timeout=2.0)
+        _runtime_view_stop_uvicorn(server, thread)
 
     def test_http_server_serves_index_and_static_assets(self):
         """Real HTTP server should serve / and /web/styles.css with the dark theme."""
@@ -2266,6 +2343,437 @@ class TestRunTimeViewIntegration:
             assert srv.app.static_folder == str(srv.WEB_DIR)
         finally:
             self._stop_server(server, thread)
+
+
+class TestLiveViewNoMotionRegression:
+    """Regression coverage for the "live view connected but no motion" bug.
+
+    Symptom (reported 2026-04-09): the launcher status chip flips to
+    ``CONNECTED`` because the WebSocket handshake succeeds, but the drone
+    mesh sits at the world origin forever — no ``sample`` messages reach
+    the browser. Root cause: ``sitl_orchestrator.py`` consumed MAVLink over
+    TCP 5760 from the SITL container but never forwarded the frames to UDP
+    14550 where ``MAVLinkLiveSource`` was listening, so the receiver
+    queue stayed empty for the entire mission.
+
+    These tests pin both halves of the fix: (a) the live view itself must
+    forward queued samples promptly, and (b) ``SITLDrone`` must relay
+    incoming frames to the configured forward URL so the queue actually
+    fills up.
+    """
+
+    def _start_server(self, telemetry_queue):
+        """Boot the FastAPI app on an ephemeral port (mirrors TestRunTimeViewIntegration)."""
+        return _runtime_view_start_uvicorn(telemetry_queue)
+
+    def _stop_server(self, server, thread):
+        _runtime_view_stop_uvicorn(server, thread)
+
+    def test_websocket_connects_but_emits_no_sample_when_queue_empty(self):
+        """The exact regression: WS opens (status=CONNECTED) but no sample frames flow.
+
+        Reproduces the production failure mode in a hermetic test: with
+        nothing pushing telemetry to the queue, the live HUD JS receives
+        zero ``sample`` frames, which is why the drone mesh never moves.
+        """
+        import json
+        import time
+        try:
+            import simple_websocket
+        except ImportError:
+            pytest.skip('simple_websocket not installed')
+
+        from live_telemetry import TelemetryQueue
+
+        q = TelemetryQueue(maxlen=8)
+        server, thread, base = self._start_server(q)
+        ws_url = base.replace('http://', 'ws://') + '/ws/telemetry'
+        try:
+            client = simple_websocket.Client(ws_url)
+            try:
+                # Drain everything the server is willing to emit in 1 s.
+                deadline = time.time() + 1.0
+                samples_seen = 0
+                snapshots_seen = 0
+                while time.time() < deadline:
+                    try:
+                        raw = client.receive(timeout=0.2)
+                    except Exception:
+                        raw = None
+                    if raw is None:
+                        continue
+                    msg = json.loads(raw)
+                    if msg.get('type') == 'sample':
+                        samples_seen += 1
+                    elif msg.get('type') == 'snapshot':
+                        snapshots_seen += 1
+                # The WS connection itself opened cleanly (== "CONNECTED"
+                # in the HUD chip). But because nothing populated the
+                # queue, the JS handler in live.js never invoked
+                # applySample, so the drone mesh stayed at the origin.
+                assert samples_seen == 0, (
+                    'WS should not emit sample frames when the queue is empty')
+                # An empty initial snapshot must NOT be sent either, otherwise
+                # the JS handler would call applySample with stale zeros.
+                assert snapshots_seen == 0, (
+                    'WS should not emit snapshot frames for an empty queue')
+            finally:
+                client.close()
+        finally:
+            self._stop_server(server, thread)
+
+    def test_websocket_emits_motion_samples_when_queue_filled(self):
+        """When telemetry actually arrives, the WS must forward each pos_enu update."""
+        import json
+        import time
+        try:
+            import simple_websocket
+        except ImportError:
+            pytest.skip('simple_websocket not installed')
+
+        from live_telemetry import LiveTelemetrySample, TelemetryQueue
+
+        q = TelemetryQueue(maxlen=64)
+        server, thread, base = self._start_server(q)
+        ws_url = base.replace('http://', 'ws://') + '/ws/telemetry'
+        try:
+            client = simple_websocket.Client(ws_url)
+            try:
+                # Push a flight along a 10 m straight line so the JS
+                # camera-follow lerp would visibly move the drone mesh.
+                t0 = time.time()
+                positions = [(float(k), 0.0, 5.0) for k in range(10)]
+                for k, (x, y, z) in enumerate(positions):
+                    q.push(LiveTelemetrySample(
+                        t_wall=t0 + 0.01 * (k + 1),
+                        time_boot_ms=5000 + k,
+                        pos_enu=np.array([x, y, z]),
+                        vel_enu=np.array([1.0, 0.0, 0.0]),
+                        flight_mode='AUTO',
+                        armed=True,
+                    ))
+
+                seen_pos = []
+                deadline = time.time() + 3.0
+                while time.time() < deadline:
+                    try:
+                        raw = client.receive(timeout=0.5)
+                    except Exception:
+                        raw = None
+                    if raw is None:
+                        continue
+                    msg = json.loads(raw)
+                    if msg.get('type') == 'sample':
+                        seen_pos.append(tuple(msg['data']['pos_enu']))
+                    elif msg.get('type') == 'snapshot':
+                        for s in msg['data']:
+                            seen_pos.append(tuple(s['pos_enu']))
+                    if len(seen_pos) >= 5:
+                        break
+
+                assert seen_pos, 'Live view emitted no samples even though queue was filled'
+                # The pos_enu must actually CHANGE between samples — that
+                # is the literal definition of "the drone is moving".
+                assert len(set(seen_pos)) >= 2, (
+                    f'pos_enu never changed across {len(seen_pos)} frames: {seen_pos}')
+                # And the X coordinate must monotonically advance.
+                xs = [p[0] for p in seen_pos]
+                assert xs[-1] > xs[0], f'X coordinate did not advance: {xs}'
+            finally:
+                client.close()
+        finally:
+            self._stop_server(server, thread)
+
+    def test_sitl_drone_forwards_received_frame_to_udp_listener(self):
+        """SITLDrone._forward_msg must relay raw MAVLink bytes to the configured UDP URL."""
+        import socket as _socket
+        import time
+        from unittest.mock import MagicMock
+
+        from sitl_orchestrator import SITLDrone
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+
+        # Pick an ephemeral UDP port for the live view receiver.
+        probe = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        probe.bind(('127.0.0.1', 0))
+        fwd_port = probe.getsockname()[1]
+        probe.close()
+
+        q = TelemetryQueue(maxlen=8)
+        # ref defaults match the live view; with these, GPS round-trip
+        # produces a non-zero pos_enu so we can also assert "motion".
+        src = MAVLinkLiveSource(
+            listen_ip='127.0.0.1', listen_port=fwd_port, queue=q,
+            ref_lat=-0.508, ref_lon=-78.14, ref_alt_msl=4500.0,
+        )
+        src.start()
+        try:
+            drone = SITLDrone(0, telemetry_forward_url=f'udpout:127.0.0.1:{fwd_port}')
+            assert drone._setup_telemetry_forward(), 'forward setup failed'
+
+            # Build a real MAVLink GLOBAL_POSITION_INT frame using
+            # pymavlink (the same library the orchestrator uses) so the
+            # bytes are bit-identical to what SITL would emit.
+            from pymavlink.dialects.v20 import ardupilotmega as mavlink2
+            mav = mavlink2.MAVLink(None)
+            mav.srcSystem = 1
+            mav.srcComponent = 1
+            # 10 m east, 0 m north, 5 m up relative to the ref point.
+            lat_offset_deg = 0.0
+            lon_offset_deg = 10.0 / (111320.0 * np.cos(np.radians(-0.508)))
+            msg = mav.global_position_int_encode(
+                time_boot_ms=4242,
+                lat=int((-0.508 + lat_offset_deg) * 1e7),
+                lon=int((-78.14 + lon_offset_deg) * 1e7),
+                alt=int((4500.0 + 5.0) * 1000),
+                relative_alt=int(5.0 * 1000),
+                vx=100, vy=0, vz=0, hdg=9000,
+            )
+            msg.pack(mav)  # populates the internal _msgbuf
+
+            # _forward_msg is the production code path used by poll_once
+            # and wait_gps_ekf. Calling it directly avoids needing a real
+            # SITL TCP server.
+            drone._forward_msg(msg)
+
+            # Wait for the receiver thread to consume the UDP datagram.
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if len(q) > 0:
+                    break
+                time.sleep(0.05)
+
+            assert len(q) > 0, 'forwarded MAVLink frame never reached the live view queue'
+            sample = q.latest()
+            assert sample is not None
+            assert sample.time_boot_ms == 4242
+            # ENU translation: ~10 m east, ~5 m up, 0 m north.
+            np.testing.assert_allclose(
+                sample.pos_enu, [10.0, 0.0, 5.0], atol=0.5,
+                err_msg=f'pos_enu mismatch: {sample.pos_enu}',
+            )
+            drone.close()
+        finally:
+            src.stop()
+
+    def test_orchestrator_poll_once_forwards_every_frame(self):
+        """SITLDrone.poll_once must call _forward_msg on every received frame."""
+        from unittest.mock import MagicMock
+
+        from sitl_orchestrator import SITLDrone
+
+        drone = SITLDrone(0, telemetry_forward_url='udpout:127.0.0.1:1')
+        drone.conn = MagicMock()
+
+        # Fake STATUSTEXT-style message with a synthesized get_msgbuf().
+        fake_frame = b'\xfd\x09\x00\x00\x00\x01\x01\x00\x00\x00deadbeef00'
+        fake_msg = MagicMock()
+        fake_msg.get_type.return_value = "STATUSTEXT"
+        fake_msg.get_msgbuf.return_value = fake_frame
+        fake_msg.text = "Mission: 1 cmds"
+        drone.conn.recv_match.return_value = fake_msg
+
+        forwarded = []
+        forward_stub = MagicMock()
+        forward_stub.write.side_effect = lambda buf: forwarded.append(bytes(buf))
+        drone._forward = forward_stub
+
+        result = drone.poll_once()
+        assert result == 'flying'
+        assert forwarded == [fake_frame], (
+            'poll_once must relay every received frame to the forward channel')
+
+        # Two more polls — every frame must be forwarded, not just the first.
+        drone.poll_once()
+        drone.poll_once()
+        assert len(forwarded) == 3
+
+        # When recv_match yields nothing, no forward call must happen.
+        drone.conn.recv_match.return_value = None
+        forwarded.clear()
+        drone.poll_once()
+        assert forwarded == []
+
+    def test_full_pipeline_emits_motion_to_websocket(self):
+        """Full SITL → orchestrator forward → MAVLinkLiveSource → /ws/telemetry."""
+        import json
+        import socket as _socket
+        import time
+        try:
+            import simple_websocket
+        except ImportError:
+            pytest.skip('simple_websocket not installed')
+
+        from sitl_orchestrator import SITLDrone
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+
+        # 1. Bind a UDP listener for the forwarded MAVLink stream.
+        probe = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        probe.bind(('127.0.0.1', 0))
+        fwd_port = probe.getsockname()[1]
+        probe.close()
+
+        q = TelemetryQueue(maxlen=64)
+        src = MAVLinkLiveSource(
+            listen_ip='127.0.0.1', listen_port=fwd_port, queue=q,
+            ref_lat=-0.508, ref_lon=-78.14, ref_alt_msl=4500.0,
+        )
+        src.start()
+
+        # 2. Boot the runtime view server backed by the same queue.
+        server, thread, base = self._start_server(q)
+        ws_url = base.replace('http://', 'ws://') + '/ws/telemetry'
+
+        try:
+            # 3. SITLDrone with a real forward channel.
+            drone = SITLDrone(
+                0, telemetry_forward_url=f'udpout:127.0.0.1:{fwd_port}')
+            assert drone._setup_telemetry_forward()
+
+            from pymavlink.dialects.v20 import ardupilotmega as mavlink2
+            mav = mavlink2.MAVLink(None)
+            mav.srcSystem = 1
+            mav.srcComponent = 1
+
+            client = simple_websocket.Client(ws_url)
+            try:
+                # 4. Pump 12 ATTITUDE + GLOBAL_POSITION_INT pairs, each
+                # with a slightly different east position so the trail
+                # advances east by ~12 m total.
+                cos_lat = float(np.cos(np.radians(-0.508)))
+                lon_per_m = 1.0 / (111320.0 * cos_lat)
+                for tick in range(12):
+                    east_m = float(tick + 1)
+                    pos_msg = mav.global_position_int_encode(
+                        time_boot_ms=10000 + tick,
+                        lat=int(-0.508 * 1e7),
+                        lon=int((-78.14 + east_m * lon_per_m) * 1e7),
+                        alt=int((4500.0 + 5.0) * 1000),
+                        relative_alt=int(5.0 * 1000),
+                        vx=100, vy=0, vz=0, hdg=9000,
+                    )
+                    pos_msg.pack(mav)
+                    drone._forward_msg(pos_msg)
+                    time.sleep(0.05)
+
+                # 5. Drain the WS until we either see motion or hit a deadline.
+                seen_x = []
+                deadline = time.time() + 3.0
+                while time.time() < deadline:
+                    try:
+                        raw = client.receive(timeout=0.3)
+                    except Exception:
+                        raw = None
+                    if raw is None:
+                        continue
+                    msg = json.loads(raw)
+                    if msg.get('type') == 'sample':
+                        seen_x.append(msg['data']['pos_enu'][0])
+                    elif msg.get('type') == 'snapshot':
+                        for s in msg['data']:
+                            seen_x.append(s['pos_enu'][0])
+                    if len(seen_x) >= 4 and max(seen_x) - min(seen_x) >= 3.0:
+                        break
+
+                assert seen_x, 'No samples reached the WS — forwarder did not relay'
+                spread = max(seen_x) - min(seen_x) if seen_x else 0.0
+                assert spread >= 3.0, (
+                    f'Drone X position barely moved across WS frames '
+                    f'(spread={spread:.2f}, samples={seen_x}). The forwarder '
+                    f'or the parser dropped GPS updates somewhere.')
+            finally:
+                client.close()
+            drone.close()
+        finally:
+            try:
+                src.stop()
+            finally:
+                self._stop_server(server, thread)
+
+    def test_run_scenario_live_modes_open_live_url_and_set_forward(self):
+        """run_scenario.sh must open /live and set SITL_TELEMETRY_FORWARD for live modes."""
+        from pathlib import Path
+
+        # The script lives at the repo root, two levels up from this file.
+        script = Path(__file__).resolve().parents[1] / 'run_scenario.sh'
+        assert script.exists(), f'run_scenario.sh not found at {script}'
+        body = script.read_text(encoding='utf-8')
+
+        # 1. The default landing path of run_live_viz must be /live.
+        assert 'local open_path="${3:-/live}"' in body, (
+            'run_live_viz must default its open_path argument to /live')
+
+        # 2. run_single_mission_live must export the forward URL so the
+        # nested run_single_mission call passes it to the orchestrator.
+        assert 'SITL_TELEMETRY_FORWARD="udpout:127.0.0.1:14550"' in body, (
+            'run_single_mission_live must set SITL_TELEMETRY_FORWARD '
+            'so sitl_orchestrator forwards MAVLink to the live view')
+
+        # 3. run_single_mission_live must invoke run_live_viz with /live.
+        assert 'run_live_viz 14550 8765 /live' in body, (
+            'run_single_mission_live must open the live HUD path directly')
+
+        # 4. run_single_mission must consume SITL_TELEMETRY_FORWARD and
+        # forward it via --telemetry-forward to sitl_orchestrator.
+        assert 'telemetry_forward="${SITL_TELEMETRY_FORWARD:-}"' in body
+        assert '--telemetry-forward' in body
+
+    def test_run_scenario_default_mode_invokes_run_live_viz(self):
+        """The (no-arg) default branch of run_scenario.sh must boot only run_live_viz."""
+        from pathlib import Path
+        import re
+
+        script = Path(__file__).resolve().parents[1] / 'run_scenario.sh'
+        body = script.read_text(encoding='utf-8')
+
+        # Locate the --default) ... ;; case body and inspect what it runs.
+        m = re.search(r'\n\s*--default\)\s*\n(?P<body>.*?);;\s*\n', body,
+                      re.DOTALL)
+        assert m is not None, '--default branch not found in run_scenario.sh'
+        default_body = m.group('body')
+
+        # Must invoke run_live_viz with the live path.
+        assert 'run_live_viz' in default_body, (
+            f'--default must call run_live_viz, got:\n{default_body}')
+        assert '/live' in default_body, (
+            f'--default must open the /live path, got:\n{default_body}')
+
+        # Must NOT bring up the SITL stack as part of the default flow —
+        # default is now the standalone Run-time View only.
+        assert 'run_single_mission' not in default_body, (
+            f'--default must NOT call run_single_mission* — that belongs '
+            f'to --single / --single-live. Got:\n{default_body}')
+        assert 'run_swarm_mission' not in default_body, (
+            f'--default must NOT call run_swarm_mission. Got:\n{default_body}')
+        assert 'run_single_viz' not in default_body, (
+            f'--default must NOT call the matplotlib replayer. '
+            f'Got:\n{default_body}')
+
+        # Must request the runtime-view dependencies (fastapi + uvicorn +
+        # websockets) via NEED_RUNTIME_VIEW so a fresh venv installs them.
+        assert 'NEED_RUNTIME_VIEW=1' in default_body, (
+            f'--default must set NEED_RUNTIME_VIEW=1 before ensure_venv. '
+            f'Got:\n{default_body}')
+
+
+class TestSITLOrchestratorCli:
+    """Smoke checks for the new --telemetry-forward CLI surface."""
+
+    def test_orchestrator_help_lists_telemetry_forward(self):
+        import subprocess
+        import sys as _sys
+
+        sim_dir = Path(__file__).resolve().parent
+        for sub in ('single', 'swarm', 'swarm-formation'):
+            result = subprocess.run(
+                [_sys.executable, str(sim_dir / 'sitl_orchestrator.py'),
+                 sub, '--help'],
+                capture_output=True, text=True, timeout=15,
+            )
+            assert result.returncode == 0, (
+                f'{sub} --help failed: {result.stderr}')
+            assert '--telemetry-forward' in result.stdout, (
+                f'{sub} --help did not advertise --telemetry-forward')
 
 
 # ── Swarm-Ready Standalone Twin ──────────────────────────────────────────────
