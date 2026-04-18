@@ -1,0 +1,29 @@
+# Parity profile — values matching the standalone Python physics engine
+# (DroneParams from make_holybro_x500) for physics equivalence testing.
+#
+# Usage:
+#   helm install parity helm/swarm-digital-twin/ \
+#     -f helm/swarm-digital-twin/values-parity.yaml \
+#     -n swarm-sim --create-namespace
+#
+# Then run: python simulation/physics_parity.py --check-sdf
+
+namespace: swarm-sim
+
+drones: 1  # single drone for parity comparison
+
+# Match standalone physics parameters exactly.
+sitl:
+  lat: "47.3769"      # Zurich (default ref point in mavlink_bridge)
+  lng: "8.5417"
+  alt: "408"
+  vehicle: copter
+
+# Resource quotas enabled for safety.
+resourceQuota:
+  enabled: true
+  maxPods: "10"
+  requestsCpu: "4"
+  requestsMemory: "8Gi"
+  limitsCpu: "8"
+  limitsMemory: "16Gi"

@@ -1,0 +1,45 @@
+# Playground profile — Gazebo/SITL-oriented workload for multi-drone
+# simulation runs with resource quotas and lifecycle controls.
+#
+# Usage:
+#   helm install sim-run helm/swarm-digital-twin/ \
+#     -f helm/swarm-digital-twin/values-playground.yaml \
+#     -n swarm-sim --create-namespace
+#
+# Teardown:
+#   helm uninstall sim-run -n swarm-sim
+
+namespace: swarm-sim
+
+drones: 6
+
+# Enable resource quotas to prevent runaway pods.
+resourceQuota:
+  enabled: true
+  maxPods: "50"
+  requestsCpu: "16"
+  requestsMemory: "32Gi"
+  limitsCpu: "32"
+  limitsMemory: "64Gi"
+
+# Default limits for containers without explicit resource specs.
+limitRange:
+  enabled: true
+  defaultRequestCpu: "100m"
+  defaultRequestMemory: "128Mi"
+  defaultLimitCpu: "1"
+  defaultLimitMemory: "512Mi"
+
+# SITL location — Quito, Ecuador (matches Antisana terrain).
+sitl:
+  lat: "-0.508333"
+  lng: "-78.141667"
+  alt: "4500"
+  vehicle: copter
+
+# Telemetry forwarding to the live viewer.
+service:
+  mavlink:
+    type: NodePort
+    baseNodePort: 30760
+    nodePortStep: 10

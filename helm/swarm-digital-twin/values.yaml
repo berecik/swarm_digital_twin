@@ -84,3 +84,20 @@ nodeSelector:
 # Zenoh peer mesh (point-to-point, no router)
 zenoh:
   port: 7447
+
+# Resource quota for the simulation namespace (prevents runaway pods)
+resourceQuota:
+  enabled: false
+  maxPods: "50"
+  requestsCpu: "16"
+  requestsMemory: "32Gi"
+  limitsCpu: "32"
+  limitsMemory: "64Gi"
+
+# Default limits for containers without explicit resource specs
+limitRange:
+  enabled: false
+  defaultRequestCpu: "100m"
+  defaultRequestMemory: "128Mi"
+  defaultLimitCpu: "1"
+  defaultLimitMemory: "512Mi"

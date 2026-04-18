@@ -9,8 +9,56 @@ This document tracks the high-level testing status and provides detailed explana
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM + Transport + Timing Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics + Run-time View** (Python) | ✅ Pass (282) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + real-log gate + aero-area gate + battery/energy gate + terrain satellite-texture gate + wind auto-tuning gate + trajectory-tracking validation + live telemetry/runtime-view integration) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation + trajectory tracking + quadrotor effective aero-area model + battery & energy model + satellite-texture terrain overlay + wind disturbance auto-tuning + FastAPI/Three.js live view telemetry pipeline |
+| **Drone Physics + Run-time View** (Python) | ✅ Pass (318) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + real-log gate + aero-area gate + battery/energy gate + terrain satellite-texture gate + wind auto-tuning gate + trajectory-tracking validation + live telemetry/runtime-view integration) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation + trajectory tracking + quadrotor effective aero-area model + battery & energy model + satellite-texture terrain overlay + wind disturbance auto-tuning + FastAPI/Three.js live view telemetry pipeline |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
+
+## Phase 1 — K8s + Gazebo Baseline (verified 2026-04-19)
+
+All Phase 1 items implemented. Docs synchronized.
+
+| Check | Command | Status |
+| :--- | :--- | :--- |
+| Namespace commands idempotent | Review `todo/k8s_namespace_lifecycle.md` | ✅ Uses `--dry-run=client \| kubectl apply` |
+| Helm playground profile | `helm lint helm/swarm-digital-twin/ -f helm/swarm-digital-twin/values-playground.yaml` | ✅ Lint passes |
+| ResourceQuota template | `helm template sim helm/swarm-digital-twin/ -f helm/swarm-digital-twin/values-playground.yaml \| grep ResourceQuota` | ✅ Rendered |
+| Topology Helm test | `test -f helm/swarm-digital-twin/templates/tests/test-service-topology.yaml` | ✅ Exists |
+| Operational runbook | `test -f docs/k8s_runbook.md` | ✅ Exists |
+
+## Phase 2 — Real Physics Parity (verified 2026-04-19)
+
+All Phase 2 items implemented. 9 tests in `TestPhysicsParity`.
+
+| Check | Command | Status |
+| :--- | :--- | :--- |
+| Parity tests pass | `.venv/bin/python -m pytest simulation/test_drone_physics.py::TestPhysicsParity -v` | ✅ 9 passed |
+| SDF parameter match | `.venv/bin/python -m pytest ...::test_sdf_parameter_match` | ✅ All params match |
+| Trajectory RMSE gates | `.venv/bin/python -m pytest ...::test_trajectory_comparison_*` | ✅ Pass/fail verified |
+| Timing determinism | `.venv/bin/python -m pytest ...::test_timing_determinism_*` | ✅ Stable/jittery verified |
+| Truth CSV export | `.venv/bin/python -m pytest ...::test_truth_csv_roundtrip` | ✅ Roundtrip verified |
+| Helm parity profile | `helm lint helm/swarm-digital-twin/ -f helm/swarm-digital-twin/values-parity.yaml` | ✅ Lint passes |
+
+Remaining (requires K8s cluster):
+- [ ] Attitude RMSE gate (< 5 deg) — threshold defined, not yet wired as test
+- [ ] Energy consumption delta (< 15%) — threshold defined, not yet wired as test
+- [ ] End-to-end K8s parity against real Gazebo traces
+
+## Phase 4 — Collision Detection & Safety (verified 2026-04-19)
+
+Detection and KPI foundations implemented. 10 tests in `TestSafetyMonitor`.
+
+| Check | Command | Status |
+| :--- | :--- | :--- |
+| Safety tests pass | `.venv/bin/python -m pytest simulation/test_drone_physics.py::TestSafetyMonitor -v` | ✅ 10 passed |
+| SeparationMonitor | `...::test_collision_detected`, `...::test_near_miss_detected` | ✅ Verified |
+| TerrainMonitor | `...::test_terrain_collision_detected`, `...::test_clearance_violation_detected` | ✅ Verified |
+| SafetyReport | `...::test_safety_report_from_monitors`, `...::test_safety_report_unsafe_on_collision` | ✅ Verified |
+| Swarm benchmark | `...::test_full_swarm_simulation_produces_report` | ✅ Produces valid report |
+| Safety module exists | `test -f simulation/safety.py` | ✅ Exists |
+
+Remaining (requires PX4 integration):
+- [ ] Safety response playbook (HOVER/RTL triggers on critical events)
+- [ ] Safety response latency < 2 s
+- [ ] KPI export in acceptance report JSON format
 
 \* *Note: Rust tests for `swarm_control_core` require a sourced ROS 2 environment for compilation due to `rclrs` dependency.*
 

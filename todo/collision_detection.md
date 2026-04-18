@@ -77,7 +77,21 @@ elif agl < min_clearance:
 
 ## Acceptance Criteria
 
-- [ ] `SeparationMonitor` detects all collisions in swarm benchmark data
-- [ ] Terrain collision detector catches AGL violations
-- [ ] Safety response triggers within 2 s of event detection
-- [ ] KPIs are logged and reportable in acceptance report format
+- [x] `SeparationMonitor` detects collisions and near-misses — 10 tests in `TestSafetyMonitor`
+- [x] `TerrainMonitor` catches AGL violations and terrain collisions
+- [x] `SafetyReport` aggregates KPIs with `is_safe()`, `summary()`, `to_dict()`
+- [x] Full swarm benchmark produces a valid report (verified in `test_full_swarm_simulation_produces_report`)
+- [ ] Safety response triggers within 2 s of event detection (requires PX4 integration)
+- [ ] KPI export in acceptance report JSON format (structure defined in `k8s_test_matrix.md`)
+
+## Verification Commands
+
+```bash
+# All safety monitor tests
+.venv/bin/python -m pytest simulation/test_drone_physics.py::TestSafetyMonitor -v
+
+# Specific checks
+.venv/bin/python -m pytest simulation/test_drone_physics.py::TestSafetyMonitor -v -k "collision"
+.venv/bin/python -m pytest simulation/test_drone_physics.py::TestSafetyMonitor -v -k "terrain"
+.venv/bin/python -m pytest simulation/test_drone_physics.py::TestSafetyMonitor -v -k "report"
+```

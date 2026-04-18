@@ -5489,3 +5489,99 @@ class TestSafetyMonitor:
         assert isinstance(d["collision_count"], int)
         # The summary must be printable
         assert len(report.summary()) > 50
+
+
+class TestPhysicsParity:
+    """Tests for physics parity contract (roadmap Phase 2)."""
+
+    def test_sdf_parameter_match(self):
+        """X500 SDF model parameters must match DroneParams exactly."""
+        from physics_parity import ParityContract
+        sdf_path = str(Path(__file__).resolve().parents[1]
+                       / "gazebo" / "models" / "x500" / "model.sdf")
+        if not Path(sdf_path).is_file():
+            pytest.skip("gazebo/models/x500/model.sdf not found")
+        contract = ParityContract.from_sdf(sdf_path)
+        assert contract.passed, contract.summary()
+
+    def test_trajectory_comparison_identical(self):
+        """Identical trajectories must produce RMSE=0 and pass."""
+        from physics_parity import compare_trajectories
+        pos = np.array([[0, 0, 5], [1, 0, 5], [2, 0, 5]], dtype=float)
+        result = compare_trajectories(pos, pos)
+        assert result.passed
+        assert result.position_rmse_xy == pytest.approx(0.0, abs=1e-9)
+        assert result.position_rmse_z == pytest.approx(0.0, abs=1e-9)
+
+    def test_trajectory_comparison_within_threshold(self):
+        """Small deviations within threshold must pass."""
+        from physics_parity import compare_trajectories
+        pos_a = np.array([[0, 0, 5], [10, 0, 5], [20, 0, 5]], dtype=float)
+        pos_b = pos_a + np.array([0.5, 0.3, 0.2])  # small offset
+        result = compare_trajectories(pos_a, pos_b)
+        assert result.passed
+        assert result.position_rmse_xy < 2.0
+        assert result.position_rmse_z < 1.0
+
+    def test_trajectory_comparison_exceeds_threshold(self):
+        """Large deviations must fail."""
+        from physics_parity import compare_trajectories
+        pos_a = np.array([[0, 0, 5], [10, 0, 5]], dtype=float)
+        pos_b = np.array([[0, 0, 5], [10, 0, 10]], dtype=float)  # 5m Z error
+        result = compare_trajectories(pos_a, pos_b)
+        assert not result.passed
+
+    def test_timing_determinism_stable(self):
+        """Evenly spaced timestamps must pass jitter check."""
+        from physics_parity import check_timing_determinism
+        dt = 0.02
+        t = np.arange(0, 5.0, dt)
+        result = check_timing_determinism(t, expected_dt=dt)
+        assert result.passed
+        assert result.max_jitter_ms < 0.01
+
+    def test_timing_determinism_jittery(self):
+        """Irregular timestamps must fail jitter check."""
+        from physics_parity import check_timing_determinism
+        t = np.cumsum(np.random.uniform(0.01, 0.05, 100))
+        result = check_timing_determinism(t, expected_dt=0.02, max_jitter_ms=1.0)
+        assert not result.passed
+
+    def test_truth_record_extraction(self):
+        """extract_truth_from_records produces valid truth records."""
+        from physics_parity import extract_truth_from_records
+        from physics_live_replay import run_physics_simulation
+        records = run_physics_simulation(max_time=1.0)
+        truth = extract_truth_from_records(records, source="standalone")
+        assert len(truth) == len(records)
+        assert truth[0].source == "standalone"
+        assert truth[0].position.shape == (3,)
+
+    def test_truth_csv_roundtrip(self, tmp_path):
+        """save_truth_csv writes a valid CSV file."""
+        import csv
+        from physics_parity import extract_truth_from_records, save_truth_csv
+        from physics_live_replay import run_physics_simulation
+        records = run_physics_simulation(max_time=0.5)
+        truth = extract_truth_from_records(records)
+        csv_path = str(tmp_path / "truth.csv")
+        save_truth_csv(truth, csv_path)
+        with open(csv_path, encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            rows = list(reader)
+        assert "t" in header
+        assert "source" in header
+        assert len(rows) == len(records)
+
+    def test_parity_contract_summary(self):
+        """ParityContract.summary() is printable."""
+        from physics_parity import ParityContract
+        sdf_path = str(Path(__file__).resolve().parents[1]
+                       / "gazebo" / "models" / "x500" / "model.sdf")
+        if not Path(sdf_path).is_file():
+            pytest.skip("SDF not found")
+        contract = ParityContract.from_sdf(sdf_path)
+        s = contract.summary()
+        assert "ParityContract" in s
+        assert len(s) > 10
