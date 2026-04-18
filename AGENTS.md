@@ -59,7 +59,9 @@ Each drone is an independent ROS 2 entity.
     -   [`docs/development.md`](docs/development.md): Setup & coding standards.
     -   [`docs/physics.md`](docs/physics.md): Physics engine overview.
     -   [`docs/physics_details.md`](docs/physics_details.md): Full equations, derivations, and parameter tables.
-    -   [`docs/REFACTOR_PLAN.md`](docs/REFACTOR_PLAN.md): Refactoring roadmap vs Valencia et al. (2025).
+    -   [`ROADMAP.md`](ROADMAP.md): Unified roadmap (includes migrated items from the former refactor plan).
+    -   [`TODO.md`](TODO.md): Execution backlog derived from roadmap phases.
+    -   [`todo/gazebo_k8s_playground.md`](todo/gazebo_k8s_playground.md): Kubernetes Gazebo operational scenario.
 
 ---
 

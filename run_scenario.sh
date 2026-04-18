@@ -952,7 +952,7 @@ run_live_viz() {
 
     # Open the user's default browser shortly after the server boots.
     # macOS uses `open`, most Linux desktops use `xdg-open`. Windows
-    # auto-open is tracked in REFACTOR_PLAN §2.1.H follow-ups.
+    # auto-open follow-ups are tracked in ROADMAP/TODO docs.
     (
         sleep 1
         if command -v open &>/dev/null; then
@@ -1035,8 +1035,8 @@ SWARM_DRONES="${POSITIONAL[1]:-6}"
 case "$MODE" in
     # ── Primary modes (Docker Compose per-drone stack) ──────────────────────
     # `--single` / `--sitl` / `--default` all run the SITL stack with the
-    # live web Run-time View as the default visualizer (REFACTOR_PLAN
-    # §2.1.H follow-up — flipping the default away from matplotlib).
+    # live web Run-time View as the default visualizer (migrated roadmap
+    # follow-up — flipping the default away from matplotlib).
     --single|--sitl|--single-live)
         NEED_PYMAVLINK=1 NEED_RUNTIME_VIEW=1 ensure_venv
         run_single_mission_live 300
@@ -1053,7 +1053,7 @@ case "$MODE" in
             SWARM_DRONES=6
         fi
         run_swarm_mission "$SWARM_DRONES" "${PYTEST_TIMEOUT:-}"
-        # NOTE: live view multi-drone demux is tracked under REFACTOR_PLAN
+        # NOTE: live view multi-drone demux follow-ups are tracked in ROADMAP/TODO
         # §2.1.H follow-ups; swarm modes still fall back to the static
         # matplotlib post-flight replayer until that lands.
         run_viz "$SIM_DIR/swarm_data.npz"
@@ -1189,7 +1189,7 @@ case "$MODE" in
         echo "                   matplotlib post-flight replayer (no live view)"
         echo "  --swarm [N]      Run N-drone formation flight (default: 6) then open"
         echo "                   the post-flight replayer; multi-drone live view is"
-        echo "                   tracked under REFACTOR_PLAN §2.1.H follow-ups."
+        echo "                   tracked under ROADMAP/TODO follow-ups."
         echo "                   Drones fly in ring formation, offboard-controlled via Zenoh."
         echo "  --sim-only       Run single-drone stack only (no GUI)"
         echo "  --swarm-only [N] Run N-drone stack only (no GUI)"

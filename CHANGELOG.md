@@ -5,6 +5,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2026-04-18] — Kubernetes Gazebo simulation planning docs
+
+### Added
+
+- `ROADMAP.md`: new phased roadmap for Kubernetes-native Gazebo swarm simulation, covering realistic physics, terrain model integration, collision detection, wind simulation, and full-system validation gates.
+- `TODO.md`: actionable backlog with implementation tasks, acceptance KPIs, and documentation synchronization items.
+- `todo/gazebo_k8s_playground.md`: detailed operational scenario describing how to use Gazebo as a Kubernetes playground, including topology, execution flow, fault injection, test matrix, and acceptance report template.
+
+### Notes
+
+- This entry introduces planning and scenario documentation only; it does not claim implementation of new simulation mechanics yet.
+
+### Changed
+
+- Migrated former `docs/REFACTOR_PLAN.md` follow-up items into `ROADMAP.md`, `TODO.md`, and `todo/gazebo_k8s_playground.md`.
+- Updated documentation references to use unified roadmap/backlog documents.
+- Removed direct dependency on `docs/REFACTOR_PLAN.md` in active documentation links.
+
+---
+
 ## [2026-04-18] — Live Run-time View release
 
 ### Added

@@ -106,5 +106,6 @@ The physics engine is verified by 64 unit tests covering:
 ## Further Reading
 
 - **[Physics Details](physics_details.md)** — Full equations, derivations, and parameter tables.
-- **[Refactoring Plan](REFACTOR_PLAN.md)** — Gap analysis and implementation roadmap.
+- **[Roadmap](../ROADMAP.md)** — Unified roadmap including migrated refactor follow-ups.
+- **[Execution Backlog](../TODO.md)** — Implementation tasks aligned to roadmap phases.
 - **[TESTING.md](../TESTING.md)** — Complete test catalog with descriptions.

@@ -32,8 +32,7 @@ The framework enables:
 │   ├── testing.md              # Test strategy & catalog
 │   ├── development.md          # Setup & workflow guide
 │   ├── physics.md              # Physics engine overview
-│   ├── physics_details.md      # Full equations & derivations
-│   └── REFACTOR_PLAN.md        # Refactoring roadmap (Valencia et al.)
+│   └── physics_details.md      # Full equations & derivations
 ├── swarm_control/              # Swarm coordination & flight control (Rust)
 ├── heavy_lift_core/            # Distributed lift system logic (Rust)
 ├── perception/                 # AI/Vision detection & localization (Python)
@@ -70,6 +69,10 @@ The framework enables:
 ├── docker-compose.yml          # Docker Compose orchestration (legacy)
 ├── visualize_on_host.py        # Real-time swarm visualization (ROS 2)
 ├── AGENTS.md                   # Technical context & development guide
+├── ROADMAP.md                  # Unified roadmap (includes migrated refactor items)
+├── TODO.md                     # Actionable execution backlog
+├── todo/                       # Operational scenario documents
+│   └── gazebo_k8s_playground.md
 ├── TESTING.md                  # Test catalog & verification status
 └── MAINTENANCE.log             # Maintenance history
 ```
@@ -83,7 +86,8 @@ Detailed documentation is available in the [docs/](docs/) directory:
 - [**Development & Setup**](docs/development.md) — Environment setup and coding standards.
 - [**Physics Engine**](docs/physics.md) — Overview of the standalone simulation.
 - [**Physics Details**](docs/physics_details.md) — Full equations, derivations, and parameter tables.
-- [**Refactoring Plan**](docs/REFACTOR_PLAN.md) — Gap analysis vs Valencia et al. (2025) paper.
+- [**Roadmap**](ROADMAP.md) — Current roadmap including migrated backlog from the former refactor plan.
+- [**Execution Backlog**](TODO.md) — Actionable tasks derived from roadmap phases.
 - [**Agent Guide**](AGENTS.md) — Protocols and context for autonomous developers.
 
 ## Tech Stack
