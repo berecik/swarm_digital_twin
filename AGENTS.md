@@ -63,7 +63,18 @@ Each drone is an independent ROS 2 entity.
   - `runtime_view/server.py`: FastAPI server — REST API, WebSocket telemetry, mission launch, file replay.
   - `runtime_view/web/live.js`: Three.js multi-drone scene with dynamic meshes, trails, waypoints.
   - `mavlink_bridge.py`: MAVLink v2 UDP bridge with per-drone system_id support.
-  - `test_drone_physics.py`: **322 tests** covering physics, RTV, multi-drone, replay, launch, recorder.
+  - Test surface organised as packages:
+    `simulation/test_drone_physics/` (16 files: rotation, gravity_drag,
+    pid_control, simulation_loop, atmosphere, sensors, motors_battery,
+    wind, validation, fixed_wing, mavlink, swarm, safety, flight_log,
+    sitl_gazebo) + `simulation/test_runtime_view/` (10 files: server,
+    telemetry, multi_drone, replay, launch, recorder, invariant,
+    terrain_endpoint, auth, launcher_parity) + flat
+    `simulation/test_terrain.py` + `simulation/test_acceptance_matrix.py`.
+    Shared parametrize-time helpers in `simulation/_test_common.py`,
+    runtime-view uvicorn helpers in
+    `simulation/test_runtime_view/_helpers.py`.
+    **453 tests, 3 skipped** total.
 - `/gazebo`: Gazebo SITL integration (worlds, models, launch files).
 - `/docs`: Project documentation.
 - [`ROADMAP.md`](ROADMAP.md): Strategic roadmap (K8s Gazebo phases).
@@ -87,8 +98,8 @@ Complete the requested implementation or fix before entering maintenance.
 
 #### Step 2 — Run all tests
 ```bash
-# Python physics + RTV (must show 322+ passed, 0 warnings)
-.venv/bin/python -m pytest simulation/test_drone_physics.py -q
+# Python physics + RTV (must show 453+ passed, 0 warnings)
+.venv/bin/python -m pytest simulation/ -q
 
 # Rust (if swarm_control was modified)
 cd swarm_control && cargo test
@@ -177,7 +188,7 @@ This applies to all agents: Claude, Junie, and any other AI tool working on this
 
 ```bash
 # Full physics + RTV test suite
-.venv/bin/python -m pytest simulation/test_drone_physics.py -q
+.venv/bin/python -m pytest simulation/ -q
 
 # Quick subset
 .venv/bin/python -m pytest simulation/test_drone_physics.py -q -k "MAVLink"
@@ -226,4 +237,4 @@ Current priorities: K8s + Gazebo realistic simulation (Phases 1–6), live view 
 
 ---
 
-*Last Maintenance: 2026-04-19 — 322 tests passing, 0 warnings. Live Run-time View with multi-drone, post-flight replay, browser launch, DataFlash recording. SITL `--single`/`--swarm` now use the live HUD with auto-published waypoints; `run_scenario.sh` reclaims stale ports/processes/helm releases on every sim start and waits for helm teardown on exit. Full roadmap expanded with per-phase todo/ instructions.*
+*Last Maintenance: 2026-04-19 — 453 tests passing, 3 skipped, 0 warnings. Test surface organised per-domain as Python packages: `simulation/test_drone_physics/` (16 files, 53 classes — physics core, sensors, wind, validation, fixed-wing, MAVLink, telemetry, swarm, safety, flight log, SITL/Gazebo), `simulation/test_runtime_view/` (10 files, 16 classes — server, telemetry, multi-drone, replay, launch, recorder, invariant, terrain endpoint, auth, launcher parity), plus flat `simulation/test_terrain.py` (8 classes) and `simulation/test_acceptance_matrix.py` (9 classes). Shared parametrize-time helpers in `simulation/_test_common.py`; runtime-view uvicorn boot/teardown in `simulation/test_runtime_view/_helpers.py`. `simulation/conftest.py` puts `simulation/` on `sys.path` so subdirectory tests resolve `from drone_physics import …`. **Phases 1–7 complete.** Live Run-time View with multi-drone, post-flight replay, browser launch, DataFlash recording, terrain mesh rendering, .BIN replay, Bearer auth + CSRF + per-browser session tokens. Mission cards ship mission-aware Pillow thumbnails generated from each card's actual waypoint pattern. SITL `--single`/`--swarm` use the live HUD with auto-published waypoints. Phase 4 safety response playbook lands as `simulation/safety_response.SafetyResponseController` — pure-Python state machine over `NORMAL → WARNING → HOVER → RTL → EMERGENCY_STOP` with PX4 actuator hook. Phase 3/5/6 audit items closed via Python equivalents (Gazebo-algorithm emulators, in-process fault injection with detect/recover timestamps, scalability timing, cruise-p50 attitude hard gate). Strict K8s+PX4 thresholds preserved as `*_K8S` constants. The only deferred item is the Playwright headless DOM smoke (in `docs/nightly_lane.md`).*

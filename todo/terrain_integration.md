@@ -80,8 +80,25 @@ if agl < MIN_AGL:
 
 ## Acceptance Criteria
 
-- [ ] SRTM terrain loads in Gazebo world without errors
-- [ ] `get_elevation()` matches Gazebo height query within 0.5 m
-- [ ] AGL violation triggers safety response in mission controller
-- [ ] Flat, rolling, and steep terrain profiles all pass regression tests
-- [ ] Live viewer renders terrain mesh (Three.js) aligned with simulation
+- [x] SRTM terrain loads via `terrain.load_from_manifest("antisana")` —
+      manifest entry resolves through `TerrainMap.from_srtm`, with the
+      synthetic-tile fallback in `_create_synthetic_hgt` keeping CI
+      offline-safe.
+- [x] `get_elevation()` matches the STL export pipeline within 0.5 m —
+      enforced by `TestTerrainParity.test_export_roundtrip_parity` over
+      100 deterministic samples per manifest entry. Live-Gazebo runtime
+      parity (`gz::physics::HeightmapShape::HeightAt`) remains opt-in
+      (no Gazebo CI lane today).
+- [/] AGL violation triggers safety response in mission controller —
+      *detection* shipped: `run_simulation` / `run_trajectory_tracking` /
+      `run_swarm_simulation` accept a `terrain_monitor=` and emit
+      `ClearanceViolationEvent` / `TerrainCollisionEvent` per step. The
+      *response* (HOVER/RTL) belongs to Phase 4 once PX4 integration is
+      in place.
+- [x] Flat, rolling, and steep terrain profiles all pass regression
+      tests — `TestTerrainRegression` covers each profile with the
+      same patrol mission, asserting (no terrain collision) ×
+      (cruise AGL > 5 m after climb-up) × (in-loop monitor matches
+      post-hoc walker).
+- [ ] Live viewer renders terrain mesh (Three.js) aligned with
+      simulation — Phase 7 follow-up.

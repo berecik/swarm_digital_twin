@@ -168,7 +168,7 @@ Standard ROS 2 publishers/subscribers for local sensing and control.
 
 The project maintains comprehensive automated tests:
 
-- **322 Physics + Run-time View Tests** (`test_drone_physics.py`): Rotation math, gravity, hover, drag, PID, position control, energy, atmosphere, wind, inertia, body-frame dynamics, validation, terrain, fixed-wing aero, MAVLink, telemetry, runtime-view HTTP/WebSocket, physics-live replay, multi-drone, post-flight replay, browser launch, DataFlash recorder, safety monitor, physics parity.
+- **453 Physics + Run-time View Tests** (split across `test_drone_physics.py`, `test_runtime_view.py`, `test_terrain.py`, `test_acceptance_matrix.py`): Rotation math, gravity, hover, drag, PID, position control, energy, atmosphere, wind, inertia, body-frame dynamics, validation, terrain, fixed-wing aero, MAVLink, telemetry, runtime-view HTTP/WebSocket, physics-live replay, multi-drone, post-flight replay, browser launch, DataFlash recorder, safety monitor, physics parity.
 - **13 Perception Tests** (`perception/test/`): Detection pipeline and 3D localization.
 - **1 Simulation Placeholder** (`test_sim.py`): ROS 2 swarm flight smoke test.
 - **Rust Swarm Tests** (`swarm_control/`): Boids, FSM, PX4 interface (requires ROS 2 env).

@@ -1412,6 +1412,16 @@ case "$MODE" in
         run_physics_live --replay "$replay_file" --loop
         ;;
 
+    # ── Phase 6: full-system K8s validation matrix (Python pipeline) ──────
+    --acceptance-matrix)
+        ensure_venv
+        local subset="${POSITIONAL[1]:-ci}"
+        local out="${POSITIONAL[2]:-$ROOT_DIR/reports}"
+        info "Running acceptance matrix subset='$subset' → $out/"
+        ( cd "$SIM_DIR" && python -m simulation.acceptance_matrix \
+              --subset "$subset" --output "$out" )
+        ;;
+
     # ── Testing & validation ─────────────────────────────────────────────────
     --test)
         RUN_TESTS=1 ensure_venv

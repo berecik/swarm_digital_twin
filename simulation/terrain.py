@@ -14,6 +14,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 import struct
+import hashlib
 from pathlib import Path
 import shutil
 
@@ -478,6 +479,10 @@ class TerrainMap:
             self.origin[1] + (ny - 1) * self.resolution,
         )
 
+    def is_flat(self, tol: float = 1e-9) -> bool:
+        """True when every cell sits at the same elevation (within *tol*)."""
+        return bool(np.ptp(self.elevations) <= tol)
+
 
 # ── STL helpers ──────────────────────────────────────────────────────────────
 
@@ -691,13 +696,154 @@ def _fill_nan_nearest(grid: np.ndarray) -> None:
     if not mask.any():
         return
 
-    # Use iterative dilation — adequate for sparse holes in terrain grids
-    from scipy.ndimage import distance_transform_edt
     try:
+        from scipy.ndimage import distance_transform_edt
         indices = distance_transform_edt(mask, return_distances=False,
                                           return_indices=True)
         grid[mask] = grid[tuple(indices[:, mask])]
     except ImportError:
-        # Fallback: fill with global mean if scipy unavailable
-        mean_val = np.nanmean(grid)
-        grid[mask] = mean_val
+        # Stdlib fallback when scipy is absent: pure-numpy nearest-neighbour
+        # using the squared-distance argmin over known cells. O(N·M) where
+        # M is the count of known cells; fine for terrain grids (≤10⁵ cells)
+        # and avoids dragging scipy into the runtime dependency set.
+        ys, xs = np.where(~mask)
+        if ys.size == 0:
+            grid[mask] = 0.0
+            return
+        nan_ys, nan_xs = np.where(mask)
+        # Vectorised pairwise squared distances.
+        d2 = (nan_ys[:, None] - ys[None, :]) ** 2 \
+            + (nan_xs[:, None] - xs[None, :]) ** 2
+        nearest = d2.argmin(axis=1)
+        grid[mask] = grid[ys[nearest], xs[nearest]]
+
+
+# ── Manifest registry ────────────────────────────────────────────────────────
+# Phase 3 (terrain integration). Keeps the canonical "what terrains exist
+# and how to reproduce them" list in `gazebo/worlds/terrain/manifest.toml`
+# so simulator code, Gazebo worlds, and CI parity gates all share one
+# definition. Add new function-source terrains by registering them here.
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_MANIFEST_PATH = _PROJECT_ROOT / "gazebo" / "worlds" / "terrain" / "manifest.toml"
+
+
+def _rolling_sine(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Deterministic rolling-hill terrain: 5 m amplitude, 50 m wavelength."""
+    return 5.0 * np.sin(x / 50.0) * np.cos(y / 50.0)
+
+
+_REGISTERED_FNS = {
+    "rolling_sine": _rolling_sine,
+}
+
+
+def _read_manifest(manifest_path: Optional[Path]) -> dict:
+    import tomllib
+    path = Path(manifest_path) if manifest_path else DEFAULT_MANIFEST_PATH
+    if not path.is_file():
+        raise FileNotFoundError(f"terrain manifest not found: {path}")
+    with open(path, "rb") as f:
+        return tomllib.load(f)
+
+
+def _resolve_relative(manifest_path: Optional[Path], rel: str) -> Path:
+    base = (Path(manifest_path) if manifest_path
+            else DEFAULT_MANIFEST_PATH).parent
+    candidate = (base / rel).resolve()
+    return candidate
+
+
+def _require(entry: dict, name: str, key: str):
+    """Look up a required manifest field; raise ValueError on miss."""
+    if key not in entry:
+        raise ValueError(f"terrain '{name}': missing required field '{key}'")
+    return entry[key]
+
+
+def _validate_checksum(path: Path, expected_sha256: Optional[str],
+                       label: str) -> None:
+    """Validate file SHA-256 when checksum is provided in manifest."""
+    if not expected_sha256:
+        return
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual.lower() != str(expected_sha256).lower():
+        raise ValueError(
+            f"terrain '{label}': checksum mismatch for '{path.name}'"
+        )
+
+
+def load_from_manifest(name: str,
+                       manifest_path: Optional[Path] = None) -> 'TerrainMap':
+    """Build a :class:`TerrainMap` from a manifest entry.
+
+    Args:
+        name: Manifest entry name (top-level table in manifest.toml).
+        manifest_path: Override the default manifest location.
+
+    Raises:
+        FileNotFoundError: manifest file missing.
+        ValueError: unknown entry name, missing/unknown source, missing
+            required fields, or unknown registered function name.
+    """
+    manifest = _read_manifest(manifest_path)
+    if name not in manifest:
+        raise ValueError(
+            f"unknown terrain '{name}'; available: {sorted(manifest)}"
+        )
+    entry = manifest[name]
+    source = entry.get("source")
+    if source is None:
+        raise ValueError(f"terrain '{name}': missing required field 'source'")
+    if source == "flat":
+        return TerrainMap.flat(
+            elevation=float(entry.get("elevation", 0.0)),
+            size=float(entry.get("size_m", 1000.0)),
+            resolution=float(entry.get("resolution_m", 10.0)),
+        )
+    if source == "function":
+        fn_name = entry.get("fn")
+        if fn_name not in _REGISTERED_FNS:
+            raise ValueError(
+                f"terrain '{name}': unknown fn '{fn_name}'; "
+                f"registered: {sorted(_REGISTERED_FNS)}"
+            )
+        x_range = tuple(float(v) for v in _require(entry, name, "x_range"))
+        y_range = tuple(float(v) for v in _require(entry, name, "y_range"))
+        return TerrainMap.from_function(
+            _REGISTERED_FNS[fn_name],
+            x_range=x_range,
+            y_range=y_range,
+            resolution=float(entry.get("resolution_m", 1.0)),
+        )
+    if source == "srtm":
+        return TerrainMap.from_srtm(
+            lat=float(_require(entry, name, "lat")),
+            lon=float(_require(entry, name, "lon")),
+            size_km=float(entry.get("size_km", 5.0)),
+            resolution=float(entry.get("resolution_m", 30.0)),
+        )
+    if source == "array":
+        npz_path = _resolve_relative(manifest_path,
+                                     _require(entry, name, "npz_path"))
+        _validate_checksum(npz_path, entry.get("checksum_sha256"), name)
+        data = np.load(str(npz_path))
+        return TerrainMap.from_array(
+            data["elevations"],
+            origin=tuple(float(v) for v in entry.get("origin", (0.0, 0.0))),
+            resolution=float(entry.get("resolution_m", 1.0)),
+        )
+    if source == "stl":
+        stl_path = _resolve_relative(manifest_path,
+                                     _require(entry, name, "stl_path"))
+        _validate_checksum(stl_path, entry.get("checksum_sha256"), name)
+        return TerrainMap.from_stl(
+            str(stl_path),
+            resolution=float(entry.get("resolution_m", 1.0)),
+        )
+    raise ValueError(f"terrain '{name}': unknown source '{source}'")
+
+
+def manifest_entries(manifest_path: Optional[Path] = None) -> list:
+    """Return the list of entry names in the manifest (sorted)."""
+    return sorted(_read_manifest(manifest_path))

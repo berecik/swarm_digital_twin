@@ -1,0 +1,37 @@
+# Terrain Manifest — Swarm Digital Twin
+#
+# Single source of truth for terrains usable by the simulator and Gazebo
+# pipeline. Loaded by `simulation.terrain.load_from_manifest(name)`.
+#
+# Each entry's `source` selects how the TerrainMap is built:
+#   flat       — TerrainMap.flat(elevation, size_m, resolution_m)
+#   function   — TerrainMap.from_function(fn, x_range, y_range, resolution_m)
+#                `fn` resolves to a name registered in terrain._REGISTERED_FNS.
+#   srtm       — TerrainMap.from_srtm(lat, lon, size_km, resolution_m)
+#                Tile cache lives under /tmp/srtm_cache by default. When the
+#                cache misses and no network is available, terrain.py falls
+#                back to a deterministic synthetic tile via _create_synthetic_hgt.
+#   array      — TerrainMap.from_array(np.load(npz_path)["elevations"], ...).
+#                `npz_path` is relative to this manifest file.
+#   stl        — TerrainMap.from_stl(stl_path).
+#                `stl_path` is relative to this manifest file.
+
+[flat]
+source = "flat"
+elevation = 0.0
+size_m = 1000.0
+resolution_m = 10.0
+
+[synthetic_rolling]
+source = "function"
+fn = "rolling_sine"
+x_range = [-100.0, 100.0]
+y_range = [-100.0, 100.0]
+resolution_m = 5.0
+
+[antisana]
+source = "srtm"
+lat = -0.508333
+lon = -78.141667
+size_km = 5.0
+resolution_m = 30.0

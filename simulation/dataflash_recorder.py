@@ -104,7 +104,11 @@ def _build_fmt_record(msg_type: int, length: int, name: str,
 
 # Each entry: (msg_type, name, format_string, comma-separated labels)
 MESSAGES = {
-    'FMT': (MSG_FMT, 'FMT', 'BB4s16s64s', 'Type,Length,Name,Format,Columns'),
+    # FMT-of-FMT: must use ArduPilot's single-char codes (n=char[4],
+    # N=char[16], Z=char[64]) so pymavlink's DFReader can parse the
+    # log. The wire layout is identical; only the format-string chars
+    # written in the FMT record changed.
+    'FMT': (MSG_FMT, 'FMT', 'BBnNZ', 'Type,Length,Name,Format,Columns'),
     'ATT': (MSG_ATT, 'ATT', 'Qfffffff',
             'TimeUS,Roll,Pitch,Yaw,DesRoll,DesPitch,DesYaw,ErrRP'),
     'GPS': (MSG_GPS, 'GPS', 'QBILLfffffB',
@@ -137,9 +141,11 @@ class DataFlashRecorder:
 
     def _write_headers(self) -> None:
         """Write FMT records for all supported message types."""
-        # FMT record for the FMT type itself.
+        # FMT record for the FMT type itself. The format string uses
+        # ArduPilot's single-char codes (n=char[4], N=char[16], Z=char[64])
+        # so pymavlink's DFReader can parse the resulting log.
         fmt_len = 3 + 1 + 1 + 4 + 16 + 64  # head(2)+type(1) + payload
-        self._fh.write(_build_fmt_record(MSG_FMT, fmt_len, 'FMT', 'BB4s16s64s',
+        self._fh.write(_build_fmt_record(MSG_FMT, fmt_len, 'FMT', 'BBnNZ',
                                          'Type,Length,Name,Format,Columns'))
 
         # FMT records for each data message type.

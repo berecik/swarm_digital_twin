@@ -5,6 +5,59 @@ Detailed instructions for Phase 7 of the [ROADMAP](../ROADMAP.md).
 These are follow-up improvements to the live Run-time View, migrated from
 the former `docs/REFACTOR_PLAN.md`.
 
+## 0. Drones-Always-Visible Invariant (HARD RULE)
+
+**Contract:** every drone in the active simulation MUST be visible in the
+live view from the moment the page loads until the page is closed. There
+is no "waiting for telemetry" empty state. There is no disappearance
+between waypoints, between replay loops, after a mission ends, during
+the SITL boot phase, or while helm tears down.
+
+**Required behavior:**
+
+- On page load, `live.js` creates a placeholder drone mesh at the origin
+  for `drone_id = 1` (`createDroneMesh(1)` near the top of `live.js`),
+  so even before the first telemetry packet arrives the user sees a
+  drone.
+- `live.js` polls `GET /api/waypoints` on load and again ~4 s later; for
+  every `drone_id` that appears in the multi-drone dict it pre-creates
+  a placeholder mesh via `getDrone(droneId)`. Swarm flights therefore
+  show all N drones at the origin during the SITL boot phase before any
+  packets arrive.
+- When a telemetry sample arrives, the existing mesh for that drone_id
+  is repositioned (no destroy/recreate). The camera-follow logic keeps
+  at least one drone in frame; OrbitControls drag pauses follow,
+  double-click re-snaps.
+- After a non-looping replay finishes, the meshes stay where they were
+  on the last sample. The live view does not blank or shrink them away.
+- Across replay loops (`--physics-live --loop`, `--replay-live`), the
+  meshes persist; only their positions update on the next loop.
+- The Phase 7 terrain mesh, auth, `.BIN` replay, and any future viewer
+  feature must keep this invariant. New viewer code that destroys or
+  hides drone meshes is a regression.
+
+**Acceptance criteria:**
+
+- [x] `live.js` calls `createDroneMesh(1)` unconditionally near the top
+      so a placeholder is on screen before the first WebSocket message.
+- [x] `live.js` pre-creates per-drone placeholders from
+      `/api/waypoints` on load, and re-polls once a few seconds later.
+- [x] Camera follow keeps at least one drone in view (snap on first
+      sample, lerp afterwards; user drag pauses follow).
+- [x] Static smoke (`TestDronesAlwaysVisibleInvariant` — 4 checks)
+      asserts the placeholder is created before WebSocket connect,
+      `/api/waypoints` pre-creation is wired, `applySample` reuses
+      meshes via `getDrone()` (no destroy/recreate), and the
+      camera-follow markers stay present. A future Playwright/headless
+      DOM smoke would be a stronger check, kept for when the viewer
+      grows enough frontend logic to warrant the toolchain.
+- [ ] Regression test: after a replay loop completes (`--loop` mode), a
+      DOM snapshot still contains the same drone meshes. Open until
+      Playwright lands.
+
+Anything in sections 1–5 below that conflicts with this invariant must
+be reworked rather than weakening the invariant.
+
 ## 1. Terrain Rendering in Live Viewer
 
 **Current state:** The Three.js scene uses a flat grid (`GridHelper`).

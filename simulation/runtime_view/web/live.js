@@ -35,6 +35,10 @@ dirLight.position.set(30, 40, 20);
 scene.add(dirLight);
 
 // ── Ground grid ────────────────────────────────────────────────────
+// Phase 7-1: when the server has terrain data the grid + ground plane
+// are hidden and a real terrain mesh is loaded in their place. Until
+// then the grid stays visible so the always-visible-drone invariant
+// still has a reference frame.
 
 const grid = new THREE.GridHelper(500, 50, 0x2a3360, 0x161b3d);
 grid.position.y = 0;
@@ -51,6 +55,49 @@ const groundMat = new THREE.MeshStandardMaterial({
 const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
 scene.add(ground);
+
+let terrainMesh = null;
+
+function loadTerrainMesh() {
+  return fetch('/api/terrain')
+    .then((r) => (r.status === 204 ? null : r.json()))
+    .then((data) => {
+      if (!data || !data.vertices || !data.faces) return;
+      // Fresh mesh — destroy any previous one before adding the new.
+      if (terrainMesh) {
+        scene.remove(terrainMesh);
+        terrainMesh.geometry.dispose();
+        terrainMesh.material.dispose();
+        terrainMesh = null;
+      }
+      const verts = new Float32Array(data.vertices.length * 3);
+      for (let i = 0; i < data.vertices.length; i++) {
+        verts[i * 3 + 0] = data.vertices[i][0];
+        verts[i * 3 + 1] = data.vertices[i][1];
+        verts[i * 3 + 2] = data.vertices[i][2];
+      }
+      const idx = new Uint32Array(data.faces.length * 3);
+      for (let i = 0; i < data.faces.length; i++) {
+        idx[i * 3 + 0] = data.faces[i][0];
+        idx[i * 3 + 1] = data.faces[i][1];
+        idx[i * 3 + 2] = data.faces[i][2];
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+      geom.setIndex(new THREE.BufferAttribute(idx, 1));
+      geom.computeVertexNormals();
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0x3a5f3a, metalness: 0.05, roughness: 0.9,
+      });
+      terrainMesh = new THREE.Mesh(geom, mat);
+      scene.add(terrainMesh);
+      // Hide the placeholder grid + plane so they don't fight the mesh.
+      grid.visible = false;
+      ground.visible = false;
+    })
+    .catch(() => {});
+}
+loadTerrainMesh();
 
 // ── Multi-drone state ─────────────────────────────────────────────
 

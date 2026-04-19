@@ -94,6 +94,9 @@ class SeparationMonitor:
         self.near_miss_threshold = near_miss_threshold
         self.events: List[SafetyEvent] = []
         self.min_distance: float = float("inf")
+        self.mean_distance: float = float("inf")
+        self._distance_sum: float = 0.0
+        self._distance_count: int = 0
         self._samples: int = 0
 
     def check(self, positions: Dict[int, np.ndarray], t: float) -> None:
@@ -102,6 +105,9 @@ class SeparationMonitor:
         for (i, pi), (j, pj) in combinations(positions.items(), 2):
             dist = float(np.linalg.norm(pi - pj))
             self.min_distance = min(self.min_distance, dist)
+            self._distance_sum += dist
+            self._distance_count += 1
+            self.mean_distance = self._distance_sum / self._distance_count
             if dist < self.min_separation:
                 self.events.append(CollisionEvent(
                     t=t, drone_a=i, drone_b=j, distance=dist))
@@ -230,3 +236,22 @@ class SafetyReport:
             "min_agl_m": self.min_agl,
             "total_events": self.total_events,
         }
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────
+
+
+def monitor_records(records, terrain,
+                    min_agl: float = 5.0,
+                    drone_id: int = 1) -> "TerrainMonitor":
+    """Walk a SimRecord list and return a populated :class:`TerrainMonitor`.
+
+    Used by the Phase 3 regression tests and by post-flight tooling that
+    wants the safety verdict without re-running the simulation. For
+    in-loop enforcement, pass a `TerrainMonitor` to
+    `drone_physics.run_simulation(..., terrain_monitor=...)` instead.
+    """
+    mon = TerrainMonitor(terrain, min_agl=min_agl)
+    for r in records:
+        mon.check(drone_id, r.position, r.t)
+    return mon

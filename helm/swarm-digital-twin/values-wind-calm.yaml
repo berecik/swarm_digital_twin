@@ -1,0 +1,14 @@
+# Wind profile: calm (~0.5 m/s ambient).
+# Mirrors the `[calm]` entry in `gazebo/worlds/terrain/../wind/manifest.toml`.
+# Phase 5c: data-only stub. Wiring into the Gazebo wind plugin is opt-in
+# nightly work (no Gazebo CI lane today).
+#
+# Usage:
+#   helm upgrade --install swarm helm/swarm-digital-twin/ \
+#     -f helm/swarm-digital-twin/values-wind-calm.yaml \
+#     -n swarm --create-namespace
+
+wind:
+  profile: constant
+  speed_ms: 0.5
+  direction: [1.0, 0.0, 0.0]

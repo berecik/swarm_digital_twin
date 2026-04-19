@@ -46,7 +46,7 @@ The framework enables:
 │   ├── visualize_drone_3d.py   # Post-flight matplotlib 3D replay tool
 │   ├── runtime_view/           # Live Run-time View web app (FastAPI + Three.js)
 │   ├── mavlink_bridge.py       # MAVLink v2 UDP bridge to QGroundControl
-│   └── test_drone_physics.py   # 322 physics/RTV tests
+│   └── test_drone_physics.py   # 453 physics/RTV tests
 ├── gazebo/                     # Gazebo SITL integration
 │   ├── worlds/                 # World files (empty, terrain)
 │   ├── models/x500/            # Holybro X500 V2 SDF model
@@ -145,7 +145,7 @@ No Docker, no ROS 2 — just Python 3 and a terminal:
 ./run_scenario.sh
 
 # Or step by step:
-./run_scenario.sh --test       # run 322 physics/RTV tests
+./run_scenario.sh --test       # run 453 physics/RTV tests
 ./run_scenario.sh --viz-live   # launch live Run-time View web app
 ./run_scenario.sh --sim-only   # run scenario (no GUI)
 ./run_scenario.sh --viz-only   # open matplotlib replay with existing data
