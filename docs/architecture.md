@@ -77,6 +77,21 @@ See [Physics Engine](physics.md) for an overview and [Physics Details](physics_d
 ### 6. Gazebo SITL Integration (`gazebo/`)
 Full Gazebo Harmonic integration for hardware-in-the-loop testing.
 
+Phase 1 (K8s + Gazebo baseline) implementation artifacts are present, but
+documentation and verification synchronization still has open fixes tracked in
+`ROADMAP.md` (Phase 1 implementation audit, 2026-04-19) and `TODO.md` (1.1).
+
+Phase 2 (real physics in Kubernetes loop) parity foundations are implemented in
+`simulation/physics_parity.py` and covered by `TestPhysicsParity`, while open
+acceptance/documentation consistency fixes are tracked in `ROADMAP.md` (Phase 2
+implementation audit, 2026-04-19) and `TODO.md` (2.1).
+
+Phase 4 (collision detection and safety) detection/KPI foundations are
+implemented in `simulation/safety.py` (`SeparationMonitor`, `TerrainMonitor`,
+`SafetyReport`), while open response/acceptance/documentation consistency fixes
+are tracked in `ROADMAP.md` (Phase 4 implementation audit, 2026-04-19) and
+`TODO.md` (4.1).
+
 - **Worlds**: `empty.world` (flat ground, ISA atmosphere), `terrain.world` (terrain mesh with wind plugin).
 - **Models**: Holybro X500 V2 SDF with 4 rotors, LiftDrag plugin, and ArduPilot SITL plugin.
 - **Launch**: ROS 2 launch file (`sitl_empty.launch.py`) orchestrating Gazebo, SITL, XRCE-DDS agent, and wind node.
@@ -153,7 +168,7 @@ Standard ROS 2 publishers/subscribers for local sensing and control.
 
 The project maintains comprehensive automated tests:
 
-- **282 Physics + Run-time View Tests** (`test_drone_physics.py`): Rotation math, gravity, hover, drag (linear + quadratic), PID, position control, energy conservation, atmosphere, wind, inertia, body-frame dynamics, validation, terrain, fixed-wing aerodynamics (AoA, stall, lift), MAVLink bridge, telemetry queue/parser, runtime-view HTTP/WebSocket integration, physics-live replay pipeline, and waypoint visualization.
+- **453 Physics + Run-time View Tests** (split across `test_drone_physics.py`, `test_runtime_view.py`, `test_terrain.py`, `test_acceptance_matrix.py`): Rotation math, gravity, hover, drag, PID, position control, energy, atmosphere, wind, inertia, body-frame dynamics, validation, terrain, fixed-wing aero, MAVLink, telemetry, runtime-view HTTP/WebSocket, physics-live replay, multi-drone, post-flight replay, browser launch, DataFlash recorder, safety monitor, physics parity.
 - **13 Perception Tests** (`perception/test/`): Detection pipeline and 3D localization.
 - **1 Simulation Placeholder** (`test_sim.py`): ROS 2 swarm flight smoke test.
 - **Rust Swarm Tests** (`swarm_control/`): Boids, FSM, PX4 interface (requires ROS 2 env).

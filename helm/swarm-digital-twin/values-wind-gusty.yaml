@@ -1,0 +1,10 @@
+# Wind profile: gusty (Dryden, base 6 m/s + 0.35 intensity).
+# Mirrors the `[gusty]` entry in `gazebo/worlds/wind/manifest.toml`.
+# Phase 5c: data-only stub. `seed` keeps gust history reproducible across runs.
+
+wind:
+  profile: dryden
+  base_speed_ms: 6.0
+  direction: [1.0, 0.3, 0.0]
+  gust_intensity: 0.35
+  seed: 42

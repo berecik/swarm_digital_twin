@@ -966,6 +966,7 @@ class SimRecord:
     thrust: float
     angular_velocity: np.ndarray
     euler_rates: Optional[np.ndarray] = None  # [phi_dot, theta_dot, psi_dot] from Eq. 2
+    wind_velocity: Optional[np.ndarray] = None  # ENU wind seen by the drone (Phase 5e)
 
 
 def run_simulation(waypoints: List[np.ndarray],
@@ -975,7 +976,8 @@ def run_simulation(waypoints: List[np.ndarray],
                    hover_time: float = 2.0,
                    max_time: float = 120.0,
                    wind=None,
-                   terrain=None) -> List[SimRecord]:
+                   terrain=None,
+                   terrain_monitor=None) -> List[SimRecord]:
     """
     Fly through waypoints in order. Hover at each for hover_time seconds.
     Returns a list of SimRecord for every timestep.
@@ -983,6 +985,10 @@ def run_simulation(waypoints: List[np.ndarray],
     Args:
         wind: Optional WindField for wind perturbation during simulation.
         terrain: Optional TerrainMap for ground collision detection.
+        terrain_monitor: Optional :class:`safety.TerrainMonitor` invoked
+            on every step with ``(drone_id=1, position, t)`` so AGL and
+            clearance violations are detected during the run rather than
+            in a post-processing pass.
     """
     if params is None:
         params = DroneParams()
@@ -1007,6 +1013,8 @@ def run_simulation(waypoints: List[np.ndarray],
             e_rates = euler_rates_from_body_rates(roll, pitch, p, q, r)
         except ValueError:
             e_rates = np.zeros(3)  # gimbal lock fallback
+        wv = (wind.get_wind_velocity(t, state.position).copy()
+              if wind is not None else None)
         records.append(SimRecord(
             t=t,
             position=state.position.copy(),
@@ -1015,7 +1023,10 @@ def run_simulation(waypoints: List[np.ndarray],
             thrust=cmd.thrust,
             angular_velocity=state.angular_velocity.copy(),
             euler_rates=e_rates,
+            wind_velocity=wv,
         ))
+        if terrain_monitor is not None:
+            terrain_monitor.check(1, state.position, t)
 
         # Check waypoint reached
         dist = np.linalg.norm(state.position - target)
@@ -1039,7 +1050,8 @@ def run_trajectory_tracking(ref_times: np.ndarray,
                             params: Optional[DroneParams] = None,
                             dt: float = 0.005,
                             wind=None,
-                            terrain=None) -> List[SimRecord]:
+                            terrain=None,
+                            terrain_monitor=None) -> List[SimRecord]:
     """Track a reference trajectory point-by-point (real-flight-data validation mode).
 
     At each simulation timestep, the controller targets the reference position
@@ -1055,6 +1067,8 @@ def run_trajectory_tracking(ref_times: np.ndarray,
         dt:            Simulation timestep.
         wind:          Optional WindField.
         terrain:       Optional TerrainMap.
+        terrain_monitor: Optional :class:`safety.TerrainMonitor` invoked
+            on every step with ``(drone_id=1, position, t)``.
 
     Returns:
         List of SimRecord for every timestep.
@@ -1088,6 +1102,8 @@ def run_trajectory_tracking(ref_times: np.ndarray,
             e_rates = euler_rates_from_body_rates(roll, pitch, p, q, r)
         except ValueError:
             e_rates = np.zeros(3)
+        wv = (wind.get_wind_velocity(t, state.position).copy()
+              if wind is not None else None)
         records.append(SimRecord(
             t=t,
             position=state.position.copy(),
@@ -1096,7 +1112,10 @@ def run_trajectory_tracking(ref_times: np.ndarray,
             thrust=cmd.thrust,
             angular_velocity=state.angular_velocity.copy(),
             euler_rates=e_rates,
+            wind_velocity=wv,
         ))
+        if terrain_monitor is not None:
+            terrain_monitor.check(1, state.position, t)
 
         t += dt
 
@@ -1114,8 +1133,16 @@ def run_swarm_simulation(drone_waypoints: Dict[str, List[np.ndarray]],
                          flocking_params: Optional[FlockingParams] = None,
                          avoidance_gain: float = 0.8,
                          min_separation: float = 1.5,
-                         max_speed: float = 8.0) -> List[SwarmRecord]:
-    """Run N-drone standalone simulation with shared wind/terrain and avoidance."""
+                         max_speed: float = 8.0,
+                         terrain_monitor=None) -> List[SwarmRecord]:
+    """Run N-drone standalone simulation with shared wind/terrain and avoidance.
+
+    *terrain_monitor*: optional :class:`safety.TerrainMonitor` invoked with
+    ``(drone_id, position, t)`` for every drone on every step. Drone IDs
+    are mapped from the original keys of ``drone_waypoints`` to integers
+    via ``int(drone_id_key)`` when possible, otherwise the 1-based index
+    in ``sorted(drone_ids)``.
+    """
     if params is None:
         params = DroneParams()
     if flocking_params is None:
@@ -1196,6 +1223,14 @@ def run_swarm_simulation(drone_waypoints: Dict[str, List[np.ndarray]],
         positions = np.array([states[drone_id].position.copy() for drone_id in drone_ids])
         velocities = np.array([states[drone_id].velocity.copy() for drone_id in drone_ids])
         records.append(SwarmRecord(t=t, positions=positions, velocities=velocities))
+
+        if terrain_monitor is not None:
+            for idx, key in enumerate(drone_ids, start=1):
+                try:
+                    did = int(key)
+                except (TypeError, ValueError):
+                    did = idx
+                terrain_monitor.check(did, positions[idx - 1], t)
 
         if all_done:
             break

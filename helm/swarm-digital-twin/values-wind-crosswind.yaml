@@ -1,0 +1,8 @@
+# Wind profile: crosswind (5 m/s northbound).
+# Mirrors the `[crosswind]` entry in `gazebo/worlds/wind/manifest.toml`.
+# Phase 5c: data-only stub.
+
+wind:
+  profile: constant
+  speed_ms: 5.0
+  direction: [0.0, 1.0, 0.0]

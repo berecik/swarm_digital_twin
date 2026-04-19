@@ -46,7 +46,7 @@ The framework enables:
 │   ├── visualize_drone_3d.py   # Post-flight matplotlib 3D replay tool
 │   ├── runtime_view/           # Live Run-time View web app (FastAPI + Three.js)
 │   ├── mavlink_bridge.py       # MAVLink v2 UDP bridge to QGroundControl
-│   └── test_drone_physics.py   # 282 physics/RTV tests
+│   └── test_drone_physics.py   # 453 physics/RTV tests
 ├── gazebo/                     # Gazebo SITL integration
 │   ├── worlds/                 # World files (empty, terrain)
 │   ├── models/x500/            # Holybro X500 V2 SDF model
@@ -90,6 +90,37 @@ Detailed documentation is available in the [docs/](docs/) directory:
 - [**Execution Backlog**](TODO.md) — Actionable tasks derived from roadmap phases.
 - [**Agent Guide**](AGENTS.md) — Protocols and context for autonomous developers.
 
+## Phase 1 (K8s + Gazebo Baseline) — Current Implementation Status
+
+Phase 1 has key artifacts in place (`values-playground.yaml`, topology Helm test,
+K8s runbook), but requires a focused fix pass to keep implementation and planning
+documents synchronized.
+
+Tracked Phase 1 required fixes are now listed in:
+- `ROADMAP.md` → **Phase 1 implementation audit (2026-04-19)**
+- `TODO.md` → **1.1) Phase 1 required fixes (implementation audit 2026-04-19)**
+
+## Phase 2 (Real Physics in Kubernetes Loop) — Current Implementation Status
+
+Phase 2 parity foundations are implemented (`ParityContract`, trajectory RMSE
+comparison, timing determinism checks, telemetry truth export), but the
+acceptance/maintenance layer still needs a focused fix pass for consistent
+status tracking and verification evidence.
+
+Tracked Phase 2 required fixes are now listed in:
+- `ROADMAP.md` → **Phase 2 implementation audit (2026-04-19)**
+- `TODO.md` → **2.1) Phase 2 required fixes (implementation audit 2026-04-19)**
+
+## Phase 4 (Collision Detection & Safety) — Current Implementation Status
+
+Phase 4 foundations are implemented (`SeparationMonitor`, `TerrainMonitor`,
+and `SafetyReport` KPIs), but response/acceptance and cross-doc consistency
+still require a focused fix pass.
+
+Tracked Phase 4 required fixes are now listed in:
+- `ROADMAP.md` → **Phase 4 implementation audit (2026-04-19)**
+- `TODO.md` → **4.1) Phase 4 required fixes (implementation audit 2026-04-19)**
+
 ## Tech Stack
 
 | Component | Technology |
@@ -114,7 +145,7 @@ No Docker, no ROS 2 — just Python 3 and a terminal:
 ./run_scenario.sh
 
 # Or step by step:
-./run_scenario.sh --test       # run 282 physics/RTV tests
+./run_scenario.sh --test       # run 453 physics/RTV tests
 ./run_scenario.sh --viz-live   # launch live Run-time View web app
 ./run_scenario.sh --sim-only   # run scenario (no GUI)
 ./run_scenario.sh --viz-only   # open matplotlib replay with existing data

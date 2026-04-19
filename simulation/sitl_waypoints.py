@@ -157,6 +157,25 @@ def write_mission_files(missions, output_dir: str):
     return paths
 
 
+def write_enu_sidecar(enu_wps, output_dir: str,
+                      filename: str = "waypoints_enu.json") -> str:
+    """Dump per-drone ENU waypoints as JSON next to the WPL files.
+
+    Keys are 1-based system_ids (drone_index + 1) so the live view's
+    multi-drone demux (which keys on MAVLink system_id) can match
+    waypoints to telemetry without a translation step.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    payload = {
+        str(int(idx) + 1): [[float(p[0]), float(p[1]), float(p[2])] for p in wps]
+        for idx, wps in enu_wps.items()
+    }
+    path = os.path.join(output_dir, filename)
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2)
+    return path
+
+
 # ── Formation mission generation ─────────────────────────────────────────────
 
 def build_formation_patrol(n_drones: int, radius: float = 8.0,
@@ -262,12 +281,14 @@ if __name__ == "__main__":
             args.n, args.ref_lat, args.ref_lon, args.ref_alt,
             args.radius, args.altitude)
         paths = write_mission_files(missions, args.output_dir)
+        sidecar = write_enu_sidecar(enu_wps, args.output_dir)
         for drone_id in sorted(missions.keys()):
             lat, lon, alt = home_gps[drone_id]
             n_wps = len(enu_wps[drone_id])
             print(f"  drone_{drone_id}: {n_wps} waypoints, "
                   f"home=({lat:.6f}, {lon:.6f}), file={paths[drone_id]}")
         print(f"Generated {len(missions)} mission files in {args.output_dir}/")
+        print(f"  ENU sidecar: {sidecar}")
 
     elif args.mode == "formation":
         config = build_formation_patrol(

@@ -24,6 +24,7 @@ Usage:
 """
 
 import argparse
+import math
 import os
 import signal
 import sys
@@ -108,6 +109,90 @@ def load_npz_records(path: str, data=None) -> List[SimRecord]:
     return records
 
 
+def load_bin_records(path: str,
+                     ref_lat: Optional[float] = None,
+                     ref_lon: Optional[float] = None,
+                     ref_alt_msl: Optional[float] = None) -> List[SimRecord]:
+    """Parse an ArduPilot DataFlash ``.BIN`` file into a SimRecord list.
+
+    Phase 7-5. Uses pymavlink's :class:`DFReader_binary` to walk the log
+    and aligns ATT (attitude) with GPS (position + ground speed) on
+    timestamp. The first GPS sample with a valid fix is used as the ENU
+    origin unless explicit reference coordinates are passed in.
+
+    Returns an empty list if the log has no usable GPS samples.
+    """
+    from pymavlink import DFReader
+
+    reader = DFReader.DFReader_binary(path)
+    records: List[SimRecord] = []
+    last_att = (0.0, 0.0, 0.0)  # roll, pitch, yaw in radians
+    origin_set = ref_lat is not None and ref_lon is not None
+    if origin_set:
+        ref = (float(ref_lat), float(ref_lon), float(ref_alt_msl or 0.0))
+    else:
+        ref = None
+
+    while True:
+        msg = reader.recv_match(type=["ATT", "GPS"])
+        if msg is None:
+            break
+        mtype = msg.get_type()
+        if mtype == "ATT":
+            # ArduPilot ATT records degrees; SimRecord wants radians.
+            last_att = (
+                math.radians(float(msg.Roll)),
+                math.radians(float(msg.Pitch)),
+                math.radians(float(msg.Yaw)),
+            )
+            continue
+        # GPS message — skip until we have a 3D fix.
+        status = int(getattr(msg, "Status", 0))
+        if status < 3:
+            continue
+        lat = float(msg.Lat)
+        lon = float(msg.Lng)
+        alt = float(msg.Alt)
+        if ref is None:
+            ref = (lat, lon, alt)
+        ex, ny, uz = _gps_to_enu_shim(lat, lon, alt, *ref)
+        spd = float(getattr(msg, "Spd", 0.0))
+        crs_deg = float(getattr(msg, "GCrs", 0.0))
+        vz = float(getattr(msg, "VZ", 0.0))
+        crs_rad = math.radians(crs_deg)
+        velocity = np.array([
+            spd * math.sin(crs_rad),  # East
+            spd * math.cos(crs_rad),  # North
+            vz,
+        ])
+        t = float(msg.TimeUS) / 1.0e6
+        records.append(SimRecord(
+            t=t,
+            position=np.array([ex, ny, uz]),
+            velocity=velocity,
+            euler=last_att,
+            thrust=0.5,
+            angular_velocity=np.zeros(3),
+        ))
+    return records
+
+
+def _gps_to_enu_shim(lat: float, lon: float, alt: float,
+                     ref_lat: float, ref_lon: float, ref_alt: float) -> tuple:
+    """Local copy of live_telemetry._gps_to_enu's small-angle formula.
+
+    Avoids dragging the live_telemetry module into the .BIN replay path
+    just for one helper.
+    """
+    lat_m_per_deg = 111320.0
+    lon_m_per_deg = 111320.0 * math.cos(math.radians(ref_lat))
+    return (
+        (lon - ref_lon) * lon_m_per_deg,    # East
+        (lat - ref_lat) * lat_m_per_deg,    # North
+        alt - ref_alt,                       # Up
+    )
+
+
 def load_swarm_npz_records(path: str, drone_index: int = 0, data=None) -> List[SimRecord]:
     """Load one drone's trajectory from a swarm_data.npz file."""
     if data is None:
@@ -139,6 +224,7 @@ def run_physics_live(
     swarm_records_per_drone: Optional[Dict[int, List[SimRecord]]] = None,
     waypoints_per_drone: Optional[Dict[int, List[np.ndarray]]] = None,
     record_bin: Optional[str] = None,
+    auto_exit_s: Optional[float] = None,
 ) -> None:
     """
     Stream pre-computed SimRecords to the live viewer.
@@ -223,6 +309,15 @@ def run_physics_live(
                 pass
         threading.Thread(target=_open_browser, daemon=True).start()
 
+    # Callback when a non-looping replay finishes.
+    def _on_replay_done():
+        if auto_exit_s is not None:
+            print(f"Replay finished — auto-exit in {auto_exit_s:.0f}s")
+            time.sleep(auto_exit_s)
+            os._exit(0)
+        else:
+            print("Replay finished — press Ctrl-C to quit.")
+
     # 4. Start replay thread(s).
     if swarm_records_per_drone:
         # Multi-drone: interleave all drones in a single thread by
@@ -252,8 +347,7 @@ def run_physics_live(
                 print(f"Swarm replay error: {e}")
             finally:
                 if not loop:
-                    print("Replay finished — server stays up. "
-                          "Press Ctrl-C to quit.")
+                    _on_replay_done()
 
         threading.Thread(target=_replay_swarm, daemon=True).start()
     else:
@@ -264,8 +358,7 @@ def run_physics_live(
                 print(f"Replay error: {e}")
             finally:
                 if not loop:
-                    print("Replay finished — server stays up. "
-                          "Press Ctrl-C to quit.")
+                    _on_replay_done()
         threading.Thread(target=_replay, daemon=True).start()
 
     try:
@@ -318,6 +411,10 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument(
         "--loop", action="store_true",
         help="Loop the replay indefinitely",
+    )
+    parser.add_argument(
+        "--auto-exit", type=float, default=None, metavar="SECONDS",
+        help="Exit automatically N seconds after replay finishes (non-loop only)",
     )
     parser.add_argument(
         "--http-port", type=int, default=8765,
@@ -438,6 +535,7 @@ def main(argv: Optional[list] = None) -> int:
             swarm_records_per_drone=swarm_records_per_drone,
             waypoints_per_drone=wp_per_drone,
             record_bin=args.record_bin,
+            auto_exit_s=args.auto_exit,
         )
     else:
         if not records:
@@ -452,6 +550,7 @@ def main(argv: Optional[list] = None) -> int:
             open_browser=not args.no_browser,
             waypoints=waypoints,
             record_bin=args.record_bin,
+            auto_exit_s=args.auto_exit,
         )
     return 0
 

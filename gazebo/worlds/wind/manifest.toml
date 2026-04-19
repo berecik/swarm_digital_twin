@@ -1,0 +1,48 @@
+# Wind Profile Manifest — Swarm Digital Twin
+#
+# Single source of truth for wind disturbance profiles available to the
+# simulator and the Gazebo/K8s pipeline. Loaded by
+# `simulation.wind_model.load_wind_profile(name)`.
+#
+# Each entry's `profile` selects the construction path:
+#   none      — no wind (baseline)
+#   constant  — uniform wind vector (`speed_ms`, `direction`)
+#   dryden    — MIL-F-8785C Dryden turbulence
+#               (`base_speed_ms`, `direction`, `gust_intensity`, `seed`)
+#   from_log  — replay altitude-derived wind from CSV
+#               (`csv_path`, columns: time, speed)
+#
+# Optional fields (any profile):
+#   gradient_e_e / gradient_e_n / gradient_e_u  (rows of the 3x3 gradient
+#   gradient_n_e / gradient_n_n / gradient_n_u   matrix; units (m/s) per
+#   gradient_u_e / gradient_u_n / gradient_u_u   metre). Missing entries
+#                                                default to 0.
+#   force_scale  — mission-level multiplier on the resulting force.
+#
+# Helm parity: keep the matching `helm/swarm-digital-twin/values-wind-*.yaml`
+# files in sync with these entries (data only, no Gazebo plugin runtime
+# parity until CI gains a Gazebo lane).
+
+[calm]
+profile = "constant"
+speed_ms = 0.5
+direction = [1.0, 0.0, 0.0]
+
+[crosswind]
+profile = "constant"
+speed_ms = 5.0
+direction = [0.0, 1.0, 0.0]
+
+[gusty]
+profile = "dryden"
+base_speed_ms = 6.0
+direction = [1.0, 0.3, 0.0]
+gust_intensity = 0.35
+seed = 42
+
+[storm]
+profile = "dryden"
+base_speed_ms = 12.0
+direction = [1.0, 0.0, 0.0]
+gust_intensity = 0.6
+seed = 42

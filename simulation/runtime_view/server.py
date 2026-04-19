@@ -41,8 +41,11 @@ _SIM_DIR = _THIS_DIR.parent                  # .../simulation
 if str(_SIM_DIR) not in sys.path:
     sys.path.insert(0, str(_SIM_DIR))
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect  # noqa: E402
+import os  # noqa: E402
+import secrets  # noqa: E402
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse  # noqa: E402
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
 import uvicorn  # noqa: E402
 
 from live_telemetry import (  # noqa: E402
@@ -87,12 +90,172 @@ live_source: Optional[MAVLinkLiveSource] = None
 # normalises it to ``{1: waypoints}``.
 mission_waypoints: dict = {}
 
+# Active terrain mesh (Phase 7-1). Either None (no terrain published —
+# the live viewer falls back to its flat grid) or a dict::
+#
+#   {"vertices": [[x, y, z], ...],   # ENU metres, Three.js handed Y=up
+#    "faces":    [[i0, i1, i2], ...],
+#    "bounds":   [x_min, y_min, x_max, y_max]}
+#
+# Set in-process by physics_live_replay or via POST /api/terrain.
+mission_terrain: Optional[dict] = None
+
 # Background replay thread (for /api/load file replay).
 _replay_bridge: Optional[object] = None
 _replay_thread: Optional[threading.Thread] = None
 
 # Background mission process (for /api/launch).
 _launch_proc: Optional["subprocess.Popen"] = None
+
+
+# ── Authentication & CSRF (Phase 7-3) ────────────────────────────────────────
+#
+# Off by default — the live view binds to 127.0.0.1 and read-only endpoints
+# stay open so the existing local workflow keeps working. Enable by setting
+# `RUNTIME_VIEW_AUTH_TOKEN` (or via `--auth-token` on the CLI). When set:
+#
+#   * Mutating endpoints (POST/PUT/DELETE) require both
+#       Authorization: Bearer <token>
+#     AND
+#       X-CSRF-Token: <token>
+#   * GET /api/csrf returns a per-process token clients fetch on load.
+#
+# The CSRF token equals the auth token in this minimal model — appropriate
+# for single-operator setups where the goal is "don't accept random
+# unauthenticated POSTs from a co-located browser tab", not full multi-user
+# session management. Multi-user is its own follow-up.
+
+_AUTH_TOKEN: Optional[str] = os.environ.get("RUNTIME_VIEW_AUTH_TOKEN") or None
+
+# Multi-user session isolation (Phase 7 close-out): each browser tab
+# can mint its own session via `POST /api/session`, then send the
+# returned token on `Authorization: Bearer <session_token>` for every
+# mutating call. The middleware accepts any of:
+#   * the global API key (back-compat),
+#   * any active session token in `_SESSIONS` whose `expires_at_s` is in
+#     the future.
+# Sessions auto-expire after `SESSION_TTL_S` of inactivity. Designed for
+# single-operator setups with one or two browser tabs — full RBAC is
+# still its own follow-up.
+SESSION_TTL_S: float = 3600.0
+_SESSIONS: dict = {}  # token -> {"created_s": float, "expires_at_s": float}
+
+
+def _purge_expired_sessions(now_s: Optional[float] = None) -> None:
+    if now_s is None:
+        now_s = time.time()
+    expired = [t for t, s in _SESSIONS.items() if s["expires_at_s"] <= now_s]
+    for t in expired:
+        _SESSIONS.pop(t, None)
+
+
+def create_session(ttl_s: Optional[float] = None) -> str:
+    """Mint a new per-browser session token. Returns the token."""
+    token = secrets.token_urlsafe(24)
+    now = time.time()
+    _SESSIONS[token] = {
+        "created_s": now,
+        "expires_at_s": now + (ttl_s if ttl_s is not None else SESSION_TTL_S),
+    }
+    return token
+
+
+def revoke_session(token: str) -> bool:
+    """Drop an active session; returns True if it was present."""
+    return _SESSIONS.pop(token, None) is not None
+
+
+def active_sessions() -> int:
+    _purge_expired_sessions()
+    return len(_SESSIONS)
+
+
+def reset_sessions() -> None:
+    """Clear all sessions (used by tests)."""
+    _SESSIONS.clear()
+
+# Endpoints that don't require auth even when it's enabled. The Read-only
+# REST surface and the WebSocket stream stay open so the static page can
+# load and keep showing telemetry. Add new mutating endpoints to
+# `_MUTATING_PATHS` below.
+_PUBLIC_PATHS = {
+    "/", "/live",
+    "/api/missions", "/api/status", "/api/snapshot",
+    "/api/waypoints", "/api/files", "/api/launch/status",
+    "/api/terrain",
+    "/api/csrf",
+}
+_MUTATING_PATHS = {
+    "/api/load",
+    "/api/launch", "/api/launch/stop",
+    "/api/waypoints",  # POST (the GET path is in _PUBLIC_PATHS)
+    "/api/terrain",    # POST
+    "/api/session",    # DELETE (POST is gated separately by the middleware)
+}
+
+
+def set_auth_token(token: Optional[str]) -> None:
+    """Configure the auth/CSRF token at runtime (also used by tests)."""
+    global _AUTH_TOKEN
+    _AUTH_TOKEN = token or None
+
+
+def auth_token() -> Optional[str]:
+    return _AUTH_TOKEN
+
+
+def _is_valid_token(supplied: str) -> bool:
+    """Accept the global API key OR any active session token."""
+    if _AUTH_TOKEN is not None and secrets.compare_digest(supplied, _AUTH_TOKEN):
+        return True
+    _purge_expired_sessions()
+    return supplied in _SESSIONS
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        token = _AUTH_TOKEN
+        if token is None:
+            return await call_next(request)
+
+        # Static asset path is always open.
+        if request.url.path.startswith("/web/"):
+            return await call_next(request)
+
+        method = request.method.upper()
+        path = request.url.path
+
+        if method in {"GET", "HEAD", "OPTIONS"}:
+            return await call_next(request)
+
+        # /api/session is the only POST that the global token alone may
+        # call (it's how a browser mints a per-session token in the first
+        # place).
+        if path in _MUTATING_PATHS or path == "/api/session":
+            auth_header = request.headers.get("authorization", "")
+            csrf_header = request.headers.get("x-csrf-token", "")
+            if not auth_header.lower().startswith("bearer "):
+                return JSONResponse(
+                    {"detail": "missing Bearer authorization header"},
+                    status_code=401,
+                )
+            supplied = auth_header.split(" ", 1)[1].strip()
+            if not _is_valid_token(supplied):
+                return JSONResponse(
+                    {"detail": "invalid auth token"}, status_code=401)
+            # CSRF must match the same token the caller authenticated with.
+            if not secrets.compare_digest(csrf_header, supplied):
+                return JSONResponse(
+                    {"detail": "missing or invalid CSRF token"},
+                    status_code=403,
+                )
+
+        return await call_next(request)
+
+
+# Auth middleware is always registered; it short-circuits when no token
+# is configured so the local default workflow is unchanged.
+app.add_middleware(AuthMiddleware)
 
 
 def _stop_replay() -> None:
@@ -224,6 +387,197 @@ def api_waypoints() -> JSONResponse:
     return JSONResponse(wps)
 
 
+@app.post("/api/session")
+def api_session_create() -> JSONResponse:
+    """Mint a per-browser session token (Phase 7 multi-user isolation).
+
+    The caller must be authenticated with the global API key. The
+    returned ``token`` carries CSRF authority for ``SESSION_TTL_S``
+    seconds; subsequent mutating calls send it on
+    ``Authorization: Bearer <session_token>`` and the matching
+    ``X-CSRF-Token`` header.
+
+    When auth is disabled (no global token configured) this returns 404
+    — sessions are an opt-in addition to the auth flow, not a separate
+    surface.
+    """
+    if _AUTH_TOKEN is None:
+        raise HTTPException(
+            status_code=404,
+            detail="sessions are only available when --auth-token is set",
+        )
+    token = create_session()
+    return JSONResponse({
+        "token": token,
+        "ttl_s": SESSION_TTL_S,
+    })
+
+
+@app.delete("/api/session")
+def api_session_revoke(payload: dict = Body(...)) -> JSONResponse:
+    """Revoke a session token early."""
+    token = payload.get("token") if isinstance(payload, dict) else None
+    if not token:
+        raise HTTPException(status_code=400, detail="missing 'token'")
+    revoked = revoke_session(token)
+    return JSONResponse({"revoked": revoked})
+
+
+@app.get("/api/csrf")
+def api_csrf() -> JSONResponse:
+    """Return the CSRF token clients must send on mutating endpoints.
+
+    When auth is disabled returns ``{"token": null, "auth_required": false}``
+    so callers can branch off a single GET. When enabled the response
+    contains the active token; the caller must echo it on the
+    `X-CSRF-Token` header alongside `Authorization: Bearer <token>`.
+    """
+    token = _AUTH_TOKEN
+    return JSONResponse({
+        "token": token,
+        "auth_required": token is not None,
+    })
+
+
+@app.get("/api/terrain")
+def api_terrain() -> JSONResponse:
+    """Return the active terrain mesh, or 204 No Content when none is set.
+
+    Phase 7-1. Live viewer fetches this on load to replace the flat grid
+    with the simulation's actual terrain mesh.
+    """
+    if not mission_terrain:
+        return JSONResponse({}, status_code=204)
+    return JSONResponse(mission_terrain)
+
+
+@app.post("/api/terrain")
+def api_terrain_set(payload: dict = Body(...)) -> JSONResponse:
+    """Replace the active terrain mesh.
+
+    Accepts either:
+      * ``{"vertices": [...], "faces": [...], "bounds": [...]}`` directly,
+      * ``{"terrain_name": "<name>", "manifest_path": "<optional>"}``
+        which loads via ``terrain.load_from_manifest`` and converts to
+        the wire format here.
+
+    Setting an empty payload clears the terrain (the live viewer
+    re-shows the flat grid).
+    """
+    global mission_terrain
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="payload must be a dict")
+    if not payload:
+        mission_terrain = None
+        return JSONResponse({"status": "cleared"})
+
+    if "terrain_name" in payload:
+        from terrain import load_from_manifest
+        try:
+            terrain = load_from_manifest(
+                payload["terrain_name"],
+                manifest_path=payload.get("manifest_path"),
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        mission_terrain = _terrain_to_mesh(terrain)
+        return JSONResponse({
+            "status": "ok",
+            "vertex_count": len(mission_terrain["vertices"]),
+            "face_count": len(mission_terrain["faces"]),
+        })
+
+    for required in ("vertices", "faces", "bounds"):
+        if required not in payload:
+            raise HTTPException(
+                status_code=400,
+                detail=f"missing required field '{required}'",
+            )
+    mission_terrain = {
+        "vertices": [list(map(float, v))[:3] for v in payload["vertices"]],
+        "faces": [list(map(int, f))[:3] for f in payload["faces"]],
+        "bounds": list(map(float, payload["bounds"]))[:4],
+    }
+    return JSONResponse({
+        "status": "ok",
+        "vertex_count": len(mission_terrain["vertices"]),
+        "face_count": len(mission_terrain["faces"]),
+    })
+
+
+def _terrain_to_mesh(terrain) -> dict:
+    """Convert a :class:`terrain.TerrainMap` into the live-viewer wire format.
+
+    Vertices are emitted as Three.js-friendly `[x, y, z]` triples where
+    `x = east`, `y = up` (the live viewer uses Y-up, ENU east as X), and
+    `z = -north`. Faces are zero-indexed triangles.
+    """
+    import numpy as np
+    elev = terrain.elevations
+    ny, nx = elev.shape
+    res = terrain.resolution
+    ox, oy = terrain.origin
+    vertices = []
+    for j in range(ny):
+        for i in range(nx):
+            ex = ox + i * res
+            ny_pos = oy + j * res
+            uz = float(elev[j, i])
+            # ENU → Three.js (Y-up, -Z = north).
+            vertices.append([float(ex), uz, float(-ny_pos)])
+    faces = []
+    for j in range(ny - 1):
+        for i in range(nx - 1):
+            a = j * nx + i
+            b = a + 1
+            c = a + nx
+            d = c + 1
+            faces.append([a, b, d])
+            faces.append([a, d, c])
+    x_min, y_min, x_max, y_max = terrain.bounds
+    return {
+        "vertices": vertices,
+        "faces": faces,
+        "bounds": [float(x_min), float(y_min), float(x_max), float(y_max)],
+    }
+
+
+@app.post("/api/waypoints")
+def api_waypoints_set(payload: dict = Body(...)) -> JSONResponse:
+    """Replace the active waypoint set.
+
+    Accepts ``{"waypoints": {drone_id: [[e,n,u], ...], ...}}`` or the bare
+    ``{drone_id: [[e,n,u], ...]}`` form. Used by SITL launchers to publish
+    mission waypoints into the live view (parity with what
+    physics_live_replay.run_physics_live does in-process).
+    """
+    global mission_waypoints
+    wps = payload.get("waypoints", payload)
+    if not isinstance(wps, dict):
+        raise HTTPException(status_code=400, detail="waypoints must be a dict")
+    norm: dict = {}
+    for k, v in wps.items():
+        if not isinstance(v, list):
+            raise HTTPException(status_code=400, detail=f"drone {k}: not a list")
+        coords = []
+        for p in v:
+            if not isinstance(p, (list, tuple)) or len(p) < 3:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"drone {k}: each waypoint must be [e, n, u]",
+                )
+            try:
+                coords.append([float(p[0]), float(p[1]), float(p[2])])
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"drone {k}: non-numeric waypoint",
+                )
+        norm[str(k)] = coords
+    mission_waypoints = norm
+    return JSONResponse({"status": "ok", "drones": list(norm.keys())})
+
+
 @app.get("/api/files")
 def api_files() -> JSONResponse:
     """List .npz and .BIN flight data files available for replay."""
@@ -262,12 +616,30 @@ def api_load(path: str = Query(...)) -> JSONResponse:
     file_path = Path(path)
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    if file_path.suffix.lower() != '.npz':
-        raise HTTPException(status_code=400, detail="Only .npz files supported")
+    suffix = file_path.suffix.lower()
+    if suffix not in {".npz", ".bin"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Only .npz and .bin files supported",
+        )
 
     # Stop any existing replay.
     _stop_replay()
     telemetry_queue.clear()
+
+    if suffix == ".bin":
+        from physics_live_replay import load_bin_records
+        try:
+            records = load_bin_records(str(file_path))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not records:
+            raise HTTPException(
+                status_code=400,
+                detail=".BIN file has no GPS samples with a 3D fix",
+            )
+        file_type = "bin"
+        return _start_records_replay(records, file_path, file_type)
 
     try:
         from physics_live_replay import load_npz_records, load_swarm_npz_records
@@ -300,7 +672,14 @@ def api_load(path: str = Query(...)) -> JSONResponse:
     if not records:
         raise HTTPException(status_code=400, detail="No records in file")
 
-    # Ensure the telemetry receiver is running.
+    return _start_records_replay(records, file_path, file_type)
+
+
+def _start_records_replay(records, file_path, file_type) -> JSONResponse:
+    """Spin up the MAVLinkBridge replay thread for a record list."""
+    global _replay_bridge, _replay_thread
+    from mavlink_bridge import MAVLinkBridge
+
     if live_source is None:
         start_telemetry(listen_port=14550)
 
@@ -477,8 +856,15 @@ async def telemetry_stream(ws: WebSocket) -> None:
 # ── Lifecycle helpers ───────────────────────────────────────────────────
 
 
-def start_telemetry(listen_port: int = 14550, listen_ip: str = "0.0.0.0") -> None:
-    """Open the MAVLink UDP socket and start the receiver thread."""
+def start_telemetry(listen_port: int = 14550, listen_ip: str = "0.0.0.0",
+                    ref_lat: float = 47.3769, ref_lon: float = 8.5417,
+                    ref_alt_msl: float = 408.0) -> None:
+    """Open the MAVLink UDP socket and start the receiver thread.
+
+    *ref_lat/ref_lon/ref_alt_msl* must match the GPS origin used by
+    the telemetry sender (SITL or MAVLinkBridge) so that GPS→ENU
+    conversion produces correct local coordinates.
+    """
     global live_source
     if live_source is not None:
         return
@@ -486,6 +872,9 @@ def start_telemetry(listen_port: int = 14550, listen_ip: str = "0.0.0.0") -> Non
         listen_ip=listen_ip,
         listen_port=listen_port,
         queue=telemetry_queue,
+        ref_lat=ref_lat,
+        ref_lon=ref_lon,
+        ref_alt_msl=ref_alt_msl,
     )
     live_source.start()
 
@@ -504,10 +893,15 @@ def run_server(
     port: int = 8765,
     listen_port: int = 14550,
     start_source: bool = True,
+    ref_lat: float = 47.3769,
+    ref_lon: float = 8.5417,
+    ref_alt_msl: float = 408.0,
 ) -> None:
     """Run uvicorn against the FastAPI app (blocking)."""
     if start_source:
-        start_telemetry(listen_port=listen_port)
+        start_telemetry(listen_port=listen_port,
+                        ref_lat=ref_lat, ref_lon=ref_lon,
+                        ref_alt_msl=ref_alt_msl)
     config = uvicorn.Config(
         app, host=host, port=port,
         log_level="info", access_log=False, lifespan="off",
@@ -532,16 +926,23 @@ def main(argv: Optional[list] = None) -> int:
     )
     parser.add_argument(
         "--no-source", action="store_true",
-        help="Skip binding the MAVLink UDP listener (useful when an "
-             "external bridge is already running on the port, or for "
-             "hermetic unit tests).",
+        help="Skip binding the MAVLink UDP listener.",
     )
+    parser.add_argument("--ref-lat", type=float, default=47.3769,
+                        help="GPS reference latitude (must match SITL origin)")
+    parser.add_argument("--ref-lon", type=float, default=8.5417,
+                        help="GPS reference longitude (must match SITL origin)")
+    parser.add_argument("--ref-alt", type=float, default=408.0,
+                        help="GPS reference altitude MSL in metres")
     args = parser.parse_args(argv)
     run_server(
         host=args.host,
         port=args.port,
         listen_port=args.listen_port,
         start_source=not args.no_source,
+        ref_lat=args.ref_lat,
+        ref_lon=args.ref_lon,
+        ref_alt_msl=args.ref_alt,
     )
     return 0
 

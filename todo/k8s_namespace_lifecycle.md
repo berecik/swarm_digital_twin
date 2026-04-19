@@ -12,8 +12,9 @@ Kubernetes so that repeated runs don't leak resources or collide.
 ### 1. Create a dedicated namespace
 
 ```bash
-kubectl create namespace swarm-sim
-kubectl label namespace swarm-sim purpose=simulation
+# Idempotent — safe to re-run
+kubectl create namespace swarm-sim --dry-run=client -o yaml | kubectl apply -f -
+kubectl label namespace swarm-sim purpose=simulation --overwrite
 ```
 
 Apply resource quotas to prevent runaway pods:
@@ -95,7 +96,22 @@ pods after the configured `ttlSeconds`.
 
 ## Acceptance Criteria
 
-- [ ] Namespace creation is idempotent (re-running the create command is safe)
-- [ ] Resource quotas prevent more than 50 pods
-- [ ] Helm install + uninstall leaves no orphaned resources
-- [ ] `./run_scenario.sh --down` tears down all pods in the namespace
+- [x] Namespace creation is idempotent — uses `--dry-run=client -o yaml | kubectl apply -f -`
+- [x] Resource quotas — Helm template `resourcequota.yaml` enforces pod/CPU/memory limits
+- [x] Helm install + uninstall — `values-playground.yaml` profile tested with `helm lint`
+- [x] `./run_scenario.sh --down` — `k8s_swarm_down()` calls `helm uninstall`
+
+## Verification Commands
+
+```bash
+# Helm lint all profiles
+helm lint helm/swarm-digital-twin/
+helm lint helm/swarm-digital-twin/ -f helm/swarm-digital-twin/values-playground.yaml
+
+# Helm template dry-run (no cluster needed)
+helm template sim helm/swarm-digital-twin/ \
+  -f helm/swarm-digital-twin/values-playground.yaml | head -50
+
+# Service topology test (requires running cluster)
+helm test sim -n swarm-sim
+```

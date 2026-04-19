@@ -1,0 +1,18 @@
+{{- if .Values.limitRange.enabled }}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ include "swarm.fullname" . }}-limits
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "swarm.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: {{ .Values.limitRange.defaultRequestCpu | quote }}
+        memory: {{ .Values.limitRange.defaultRequestMemory | quote }}
+      default:
+        cpu: {{ .Values.limitRange.defaultLimitCpu | quote }}
+        memory: {{ .Values.limitRange.defaultLimitMemory | quote }}
+{{- end }}

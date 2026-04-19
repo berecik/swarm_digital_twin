@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "swarm.fullname" . }}-test-topology
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "swarm.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: {{ .Values.images.initContainer.repository }}:{{ .Values.images.initContainer.tag }}
+      command: ["sh", "-c"]
+      args:
+        - |
+          set -e
+          NS={{ .Values.namespace }}
+          STS={{ include "swarm.fullname" . }}
+          DRONES={{ .Values.drones }}
+
+          echo "=== Service Topology Validation ==="
+
+          # 1. Check headless service DNS resolves for each pod.
+          echo "--- Headless DNS resolution ---"
+          for i in $(seq 0 $((DRONES - 1))); do
+            POD="${STS}-${i}.${STS}-headless.${NS}.svc.cluster.local"
+            if nslookup "$POD" >/dev/null 2>&1; then
+              echo "  PASS: $POD resolves"
+            else
+              echo "  FAIL: $POD does not resolve"
+              exit 1
+            fi
+          done
+
+          # 2. Check MAVLink port is reachable on each pod.
+          echo "--- MAVLink port check (5760/tcp) ---"
+          for i in $(seq 0 $((DRONES - 1))); do
+            POD="${STS}-${i}.${STS}-headless.${NS}.svc.cluster.local"
+            if nc -z -w 5 "$POD" 5760 2>/dev/null; then
+              echo "  PASS: $POD:5760 reachable"
+            else
+              echo "  WARN: $POD:5760 not reachable (SITL may still be starting)"
+            fi
+          done
+
+          # 3. Check Zenoh port is listening on each pod.
+          echo "--- Zenoh port check (7447/tcp) ---"
+          for i in $(seq 0 $((DRONES - 1))); do
+            POD="${STS}-${i}.${STS}-headless.${NS}.svc.cluster.local"
+            if nc -z -w 5 "$POD" {{ .Values.zenoh.port }} 2>/dev/null; then
+              echo "  PASS: $POD:{{ .Values.zenoh.port }} reachable"
+            else
+              echo "  WARN: $POD:{{ .Values.zenoh.port }} not reachable (swarm_node may still be compiling)"
+            fi
+          done
+
+          echo "=== Topology validation complete ==="
