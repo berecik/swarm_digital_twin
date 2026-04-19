@@ -5585,3 +5585,114 @@ class TestPhysicsParity:
         s = contract.summary()
         assert "ParityContract" in s
         assert len(s) > 10
+
+    @pytest.mark.timeout(15)
+    def test_k8s_ref_coordinates_roundtrip(self):
+        """GPS→ENU with matching ref produces ENU near [0,0,0] for the ref point.
+
+        This verifies that when SITL_REF_LAT/LNG/ALT match the SITL
+        origin, the GPS→ENU conversion produces coordinates near zero
+        (not thousands of km away as with mismatched refs).
+        """
+        import time
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+        from mavlink_bridge import MAVLinkBridge, SimState
+
+        # Simulate K8s SITL at Quito coordinates
+        quito_lat, quito_lon, quito_alt = -0.508333, -78.141667, 4500.0
+
+        q = TelemetryQueue(maxlen=128)
+        src = MAVLinkLiveSource(
+            listen_ip='127.0.0.1', listen_port=0, queue=q,
+            ref_lat=quito_lat, ref_lon=quito_lon, ref_alt_msl=quito_alt,
+        )
+        src.start()
+        port = src._sock.getsockname()[1]
+
+        # Bridge sends from ENU [5, 10, 20] with matching Quito ref
+        bridge = MAVLinkBridge(
+            target_ip='127.0.0.1', target_port=port, listen_port=0,
+        )
+        bridge.start()
+        try:
+            state = SimState(
+                time_s=1.0,
+                position=np.array([5.0, 10.0, 20.0]),
+                ref_lat=quito_lat, ref_lon=quito_lon, ref_alt_msl=quito_alt,
+            )
+            bridge.send_state(state)
+            time.sleep(0.5)
+
+            assert len(q) >= 1, "No samples received"
+            sample = q.latest()
+            # With matching refs, pos_enu should be near [5, 10, 20]
+            np.testing.assert_allclose(
+                sample.pos_enu, [5.0, 10.0, 20.0], atol=0.5,
+                err_msg="GPS roundtrip with matching refs should preserve ENU")
+        finally:
+            bridge.stop()
+            src.stop()
+
+    @pytest.mark.timeout(15)
+    def test_mismatched_ref_produces_large_offset(self):
+        """GPS→ENU with MISMATCHED refs produces enormous offsets.
+
+        This is the bug that the ref-coordinate fix prevents.
+        """
+        import time
+        from live_telemetry import MAVLinkLiveSource, TelemetryQueue
+        from mavlink_bridge import MAVLinkBridge, SimState
+
+        q = TelemetryQueue(maxlen=128)
+        # Receiver uses Zurich ref (default)
+        src = MAVLinkLiveSource(
+            listen_ip='127.0.0.1', listen_port=0, queue=q,
+            ref_lat=47.3769, ref_lon=8.5417, ref_alt_msl=408.0,
+        )
+        src.start()
+        port = src._sock.getsockname()[1]
+
+        # Bridge sends from ENU [0, 0, 5] but with QUITO ref
+        bridge = MAVLinkBridge(
+            target_ip='127.0.0.1', target_port=port, listen_port=0,
+        )
+        bridge.start()
+        try:
+            state = SimState(
+                time_s=1.0,
+                position=np.array([0.0, 0.0, 5.0]),
+                ref_lat=-0.508333, ref_lon=-78.141667, ref_alt_msl=4500.0,
+            )
+            bridge.send_state(state)
+            time.sleep(0.5)
+
+            assert len(q) >= 1
+            sample = q.latest()
+            # With mismatched refs (Quito sender, Zurich receiver), the
+            # ENU position should be thousands of km away — not near [0,0,5]
+            offset = np.linalg.norm(sample.pos_enu)
+            assert offset > 1000.0, (
+                f"Expected large offset with mismatched refs, got {offset:.1f} m")
+        finally:
+            bridge.stop()
+            src.stop()
+
+    def test_run_scenario_exports_sitl_ref_for_k8s(self):
+        """run_single_mission_live must export SITL_REF_LAT/LNG/ALT."""
+        script = Path(__file__).resolve().parents[1] / 'run_scenario.sh'
+        body = script.read_text(encoding='utf-8')
+        assert 'SITL_REF_LAT' in body
+        assert 'SITL_REF_LNG' in body
+        assert 'SITL_REF_ALT' in body
+
+    def test_server_cli_accepts_ref_args(self):
+        """runtime_view.server --help must list --ref-lat/--ref-lon/--ref-alt."""
+        import subprocess, sys as _sys
+        sim_dir = str(Path(__file__).resolve().parent)
+        result = subprocess.run(
+            [_sys.executable, '-m', 'runtime_view.server', '--help'],
+            capture_output=True, text=True, timeout=10, cwd=sim_dir,
+        )
+        assert result.returncode == 0
+        for flag in ('--ref-lat', '--ref-lon', '--ref-alt'):
+            assert flag in result.stdout, f"{flag} missing from --help"

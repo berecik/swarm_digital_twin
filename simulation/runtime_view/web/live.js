@@ -6,15 +6,15 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 const canvas = document.getElementById('viewport');
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x04081a);
-scene.fog = new THREE.Fog(0x04081a, 60, 220);
+scene.fog = new THREE.Fog(0x04081a, 150, 500);
 
 const camera = new THREE.PerspectiveCamera(
   60,
   window.innerWidth / window.innerHeight,
   0.1,
-  2000
+  5000
 );
-camera.position.set(25, 25, 25);
+camera.position.set(15, 20, 15);
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
@@ -24,6 +24,8 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.target.set(0, 0, 0);
+controls.minDistance = 3;
+controls.maxDistance = 500;
 
 // ── Lighting ───────────────────────────────────────────────────────
 
@@ -34,11 +36,11 @@ scene.add(dirLight);
 
 // ── Ground grid ────────────────────────────────────────────────────
 
-const grid = new THREE.GridHelper(200, 40, 0x2a3360, 0x161b3d);
+const grid = new THREE.GridHelper(500, 50, 0x2a3360, 0x161b3d);
 grid.position.y = 0;
 scene.add(grid);
 
-const groundGeo = new THREE.PlaneGeometry(200, 200);
+const groundGeo = new THREE.PlaneGeometry(500, 500);
 const groundMat = new THREE.MeshStandardMaterial({
   color: 0x0b1130,
   metalness: 0.1,
@@ -53,8 +55,11 @@ scene.add(ground);
 // ── Multi-drone state ─────────────────────────────────────────────
 
 // Per-drone colour palette (up to 8; wraps for more).
-// Reusable scratch vector — avoids per-frame allocation in camera follow.
+// Reusable scratch vectors — avoids per-frame allocation in camera follow.
 const _tmpVec = new THREE.Vector3();
+const _tmpVec2 = new THREE.Vector3();
+let _firstSampleReceived = false;
+let _cameraFollowActive = true;
 
 const DRONE_COLORS = [
   0x22d3ee, // cyan
@@ -78,35 +83,41 @@ function createDroneMesh(droneId) {
   const group = new THREE.Group();
   group.name = `drone-${droneId}`;
 
+  // Scale factor — larger than real life so drones stay visible from distance.
+  const S = 1.5;
+
   const body = new THREE.Mesh(
-    new THREE.BoxGeometry(0.6, 0.15, 0.6),
-    new THREE.MeshStandardMaterial({ color, metalness: 0.3, roughness: 0.5 })
+    new THREE.BoxGeometry(0.6 * S, 0.15 * S, 0.6 * S),
+    new THREE.MeshStandardMaterial({
+      color, metalness: 0.3, roughness: 0.5,
+      emissive: color, emissiveIntensity: 0.1,
+    })
   );
   group.add(body);
 
-  const armGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.0, 8);
+  const armGeo = new THREE.CylinderGeometry(0.04 * S, 0.04 * S, 1.0 * S, 8);
   const armMat = new THREE.MeshStandardMaterial({ color: 0x7a809e });
   for (const [dx, dz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
     const arm = new THREE.Mesh(armGeo, armMat);
     arm.rotation.z = Math.PI / 2;
-    arm.position.set(dx * 0.35, 0, dz * 0.35);
+    arm.position.set(dx * 0.35 * S, 0, dz * 0.35 * S);
     arm.rotation.y = Math.atan2(dz, dx);
     group.add(arm);
 
     const rotor = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.25, 0.25, 0.03, 16),
-      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.15 })
+      new THREE.CylinderGeometry(0.3 * S, 0.3 * S, 0.04 * S, 16),
+      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.3 })
     );
-    rotor.position.set(dx * 0.55, 0.08, dz * 0.55);
+    rotor.position.set(dx * 0.55 * S, 0.1 * S, dz * 0.55 * S);
     group.add(rotor);
   }
 
   const nose = new THREE.Mesh(
-    new THREE.ConeGeometry(0.08, 0.2, 16),
-    new THREE.MeshStandardMaterial({ color: 0xec4899 })
+    new THREE.ConeGeometry(0.1 * S, 0.25 * S, 16),
+    new THREE.MeshStandardMaterial({ color: 0xec4899, emissive: 0xec4899, emissiveIntensity: 0.2 })
   );
   nose.rotation.x = Math.PI / 2;
-  nose.position.set(0, 0, 0.38);
+  nose.position.set(0, 0, 0.4 * S);
   group.add(nose);
 
   // ID label above the drone
@@ -122,8 +133,8 @@ function createDroneMesh(droneId) {
   const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: tex, transparent: true })
   );
-  sprite.position.set(0, 1.2, 0);
-  sprite.scale.set(2.0, 1.0, 1);
+  sprite.position.set(0, 1.5 * S, 0);
+  sprite.scale.set(3.0, 1.5, 1);
   group.add(sprite);
 
   scene.add(group);
@@ -134,9 +145,14 @@ function createDroneMesh(droneId) {
   trailGeom.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
   const trailLine = new THREE.Line(
     trailGeom,
-    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.6 })
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.7 })
   );
   scene.add(trailLine);
+
+  // Glowing point light on each drone so it's visible from any distance.
+  const beacon = new THREE.PointLight(color, 0.8, 50);
+  beacon.position.set(0, 0.3, 0);
+  group.add(beacon);
 
   const state = {
     group,
@@ -282,16 +298,38 @@ function renderAllWaypoints(wpData) {
   }
 }
 
-// Fetch waypoints from the server
-fetch('/api/waypoints')
-  .then(r => r.json())
-  .then(data => {
-    if (data && (Array.isArray(data) ? data.length > 0 : Object.keys(data).length > 0)) {
+// ── Create default drone immediately so it's visible on page load ────
+// The mesh will be repositioned once real telemetry arrives.
+createDroneMesh(1);
+
+// Fetch waypoints from the server. When the server publishes a
+// multi-drone dict, also pre-create a placeholder mesh for each
+// drone_id so swarm flights show all drones at the origin during the
+// SITL boot phase (before any telemetry arrives).
+function _refreshWaypoints() {
+  return fetch('/api/waypoints')
+    .then(r => r.json())
+    .then(data => {
+      if (!data) return;
+      const isList = Array.isArray(data);
+      if ((isList && data.length === 0) || (!isList && Object.keys(data).length === 0)) {
+        return;
+      }
       rawWaypointsData = data;
+      if (!isList) {
+        for (const droneIdStr of Object.keys(data)) {
+          const id = parseInt(droneIdStr, 10);
+          if (Number.isFinite(id)) getDrone(id);
+        }
+      }
       renderAllWaypoints(data);
-    }
-  })
-  .catch(() => {});
+    })
+    .catch(() => {});
+}
+_refreshWaypoints();
+// Re-poll once after SITL has had time to publish — cheap insurance for
+// launchers that POST waypoints a few seconds after the page loads.
+setTimeout(_refreshWaypoints, 4000);
 
 // ── HUD ────────────────────────────────────────────────────────────
 
@@ -335,14 +373,57 @@ function applySample(s) {
 
   pushDroneTrail(ds, x, y, z);
 
-  // Camera follow — lerp toward centroid of all drones.
-  if (drones.size === 1) {
-    controls.target.lerp(_tmpVec.set(x, y, z), 0.05);
+  // ── Camera auto-follow ────────────────────────────────────────
+  if (!_cameraFollowActive) return; // user disabled via OrbitControls drag
+
+  // Compute the centroid of all visible drones.
+  _tmpVec.set(0, 0, 0);
+  for (const d of drones.values()) _tmpVec.add(d.group.position);
+  _tmpVec.divideScalar(drones.size || 1);
+
+  if (!_firstSampleReceived) {
+    // SNAP camera on first data — don't lerp, just jump so the
+    // drone is immediately visible.
+    _firstSampleReceived = true;
+    controls.target.copy(_tmpVec);
+    // Position the camera behind and above the centroid.
+    camera.position.set(
+      _tmpVec.x - 10,
+      _tmpVec.y + 15,
+      _tmpVec.z + 20,
+    );
+    controls.update();
+  } else if (drones.size === 1) {
+    // Single drone: strong follow so it never leaves the screen.
+    const dist = controls.target.distanceTo(_tmpVec);
+    const lerpFactor = Math.min(0.3, 0.1 + dist * 0.01);
+    controls.target.lerp(_tmpVec, lerpFactor);
+    // Also move the camera to track, keeping a steady offset.
+    _tmpVec2.copy(camera.position).sub(controls.target);
+    camera.position.copy(_tmpVec).add(_tmpVec2);
   } else {
-    _tmpVec.set(0, 0, 0);
-    for (const d of drones.values()) _tmpVec.add(d.group.position);
-    _tmpVec.divideScalar(drones.size);
-    controls.target.lerp(_tmpVec, 0.03);
+    // Multi-drone: follow centroid more gently.
+    const dist = controls.target.distanceTo(_tmpVec);
+    const lerpFactor = Math.min(0.15, 0.03 + dist * 0.005);
+    controls.target.lerp(_tmpVec, lerpFactor);
+  }
+
+  // Auto-zoom: if all drones are in a tight cluster, move closer;
+  // if spread wide, pull back.
+  if (drones.size > 1) {
+    let maxSpread = 0;
+    for (const d of drones.values()) {
+      const dd = d.group.position.distanceTo(_tmpVec);
+      if (dd > maxSpread) maxSpread = dd;
+    }
+    const idealDist = Math.max(15, maxSpread * 2.5);
+    const camDist = camera.position.distanceTo(controls.target);
+    if (Math.abs(camDist - idealDist) > 5) {
+      // Gently adjust distance along the camera→target direction.
+      _tmpVec2.copy(camera.position).sub(controls.target).normalize();
+      const newDist = camDist + (idealDist - camDist) * 0.02;
+      camera.position.copy(controls.target).addScaledVector(_tmpVec2, newDist);
+    }
   }
 
   // HUD updates (show the latest sample regardless of drone).
@@ -404,6 +485,14 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Pause auto-follow when user drags the camera manually.
+controls.addEventListener('start', () => { _cameraFollowActive = false; });
+// Double-click re-enables auto-follow.
+canvas.addEventListener('dblclick', () => {
+  _cameraFollowActive = true;
+  _firstSampleReceived = false;  // triggers snap on next sample
 });
 
 function animate() {

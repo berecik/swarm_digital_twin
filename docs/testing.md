@@ -136,8 +136,8 @@ Agents receiving the "do tests", "do maintenance", or "do test-fix loop" command
 | Swarm Control | ✅ 17 Pass | ⏳ Pending | ✅ Pass |
 | Perception | ✅ 13 Pass | ⏳ Pending | ✅ Pass |
 | Heavy Lift | ✅ 1 Pass | ⏳ Pending | ⏳ Pending |
-| Physics Engine + Run-time View | ✅ 318 Pass | ✅ Pass | N/A |
-| **Total** | **349+ Pass** | **Green** | **Green** |
+| Physics Engine + Run-time View | ✅ 322 Pass | ✅ Pass | N/A |
+| **Total** | **353+ Pass** | **Green** | **Green** |
 
 ## Phase 1 (K8s + Gazebo Baseline) audit status (2026-04-19)
 

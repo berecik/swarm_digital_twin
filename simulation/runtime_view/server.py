@@ -41,7 +41,7 @@ _SIM_DIR = _THIS_DIR.parent                  # .../simulation
 if str(_SIM_DIR) not in sys.path:
     sys.path.insert(0, str(_SIM_DIR))
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse  # noqa: E402
 import uvicorn  # noqa: E402
 
@@ -222,6 +222,42 @@ def api_waypoints() -> JSONResponse:
     if isinstance(wps, list):
         wps = {"1": wps} if wps else {}
     return JSONResponse(wps)
+
+
+@app.post("/api/waypoints")
+def api_waypoints_set(payload: dict = Body(...)) -> JSONResponse:
+    """Replace the active waypoint set.
+
+    Accepts ``{"waypoints": {drone_id: [[e,n,u], ...], ...}}`` or the bare
+    ``{drone_id: [[e,n,u], ...]}`` form. Used by SITL launchers to publish
+    mission waypoints into the live view (parity with what
+    physics_live_replay.run_physics_live does in-process).
+    """
+    global mission_waypoints
+    wps = payload.get("waypoints", payload)
+    if not isinstance(wps, dict):
+        raise HTTPException(status_code=400, detail="waypoints must be a dict")
+    norm: dict = {}
+    for k, v in wps.items():
+        if not isinstance(v, list):
+            raise HTTPException(status_code=400, detail=f"drone {k}: not a list")
+        coords = []
+        for p in v:
+            if not isinstance(p, (list, tuple)) or len(p) < 3:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"drone {k}: each waypoint must be [e, n, u]",
+                )
+            try:
+                coords.append([float(p[0]), float(p[1]), float(p[2])])
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"drone {k}: non-numeric waypoint",
+                )
+        norm[str(k)] = coords
+    mission_waypoints = norm
+    return JSONResponse({"status": "ok", "drones": list(norm.keys())})
 
 
 @app.get("/api/files")
@@ -477,8 +513,15 @@ async def telemetry_stream(ws: WebSocket) -> None:
 # ── Lifecycle helpers ───────────────────────────────────────────────────
 
 
-def start_telemetry(listen_port: int = 14550, listen_ip: str = "0.0.0.0") -> None:
-    """Open the MAVLink UDP socket and start the receiver thread."""
+def start_telemetry(listen_port: int = 14550, listen_ip: str = "0.0.0.0",
+                    ref_lat: float = 47.3769, ref_lon: float = 8.5417,
+                    ref_alt_msl: float = 408.0) -> None:
+    """Open the MAVLink UDP socket and start the receiver thread.
+
+    *ref_lat/ref_lon/ref_alt_msl* must match the GPS origin used by
+    the telemetry sender (SITL or MAVLinkBridge) so that GPS→ENU
+    conversion produces correct local coordinates.
+    """
     global live_source
     if live_source is not None:
         return
@@ -486,6 +529,9 @@ def start_telemetry(listen_port: int = 14550, listen_ip: str = "0.0.0.0") -> Non
         listen_ip=listen_ip,
         listen_port=listen_port,
         queue=telemetry_queue,
+        ref_lat=ref_lat,
+        ref_lon=ref_lon,
+        ref_alt_msl=ref_alt_msl,
     )
     live_source.start()
 
@@ -504,10 +550,15 @@ def run_server(
     port: int = 8765,
     listen_port: int = 14550,
     start_source: bool = True,
+    ref_lat: float = 47.3769,
+    ref_lon: float = 8.5417,
+    ref_alt_msl: float = 408.0,
 ) -> None:
     """Run uvicorn against the FastAPI app (blocking)."""
     if start_source:
-        start_telemetry(listen_port=listen_port)
+        start_telemetry(listen_port=listen_port,
+                        ref_lat=ref_lat, ref_lon=ref_lon,
+                        ref_alt_msl=ref_alt_msl)
     config = uvicorn.Config(
         app, host=host, port=port,
         log_level="info", access_log=False, lifespan="off",
@@ -532,16 +583,23 @@ def main(argv: Optional[list] = None) -> int:
     )
     parser.add_argument(
         "--no-source", action="store_true",
-        help="Skip binding the MAVLink UDP listener (useful when an "
-             "external bridge is already running on the port, or for "
-             "hermetic unit tests).",
+        help="Skip binding the MAVLink UDP listener.",
     )
+    parser.add_argument("--ref-lat", type=float, default=47.3769,
+                        help="GPS reference latitude (must match SITL origin)")
+    parser.add_argument("--ref-lon", type=float, default=8.5417,
+                        help="GPS reference longitude (must match SITL origin)")
+    parser.add_argument("--ref-alt", type=float, default=408.0,
+                        help="GPS reference altitude MSL in metres")
     args = parser.parse_args(argv)
     run_server(
         host=args.host,
         port=args.port,
         listen_port=args.listen_port,
         start_source=not args.no_source,
+        ref_lat=args.ref_lat,
+        ref_lon=args.ref_lon,
+        ref_alt_msl=args.ref_alt,
     )
     return 0
 

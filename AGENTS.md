@@ -63,7 +63,7 @@ Each drone is an independent ROS 2 entity.
   - `runtime_view/server.py`: FastAPI server — REST API, WebSocket telemetry, mission launch, file replay.
   - `runtime_view/web/live.js`: Three.js multi-drone scene with dynamic meshes, trails, waypoints.
   - `mavlink_bridge.py`: MAVLink v2 UDP bridge with per-drone system_id support.
-  - `test_drone_physics.py`: **318 tests** covering physics, RTV, multi-drone, replay, launch, recorder.
+  - `test_drone_physics.py`: **322 tests** covering physics, RTV, multi-drone, replay, launch, recorder.
 - `/gazebo`: Gazebo SITL integration (worlds, models, launch files).
 - `/docs`: Project documentation.
 - [`ROADMAP.md`](ROADMAP.md): Strategic roadmap (K8s Gazebo phases).
@@ -87,7 +87,7 @@ Complete the requested implementation or fix before entering maintenance.
 
 #### Step 2 — Run all tests
 ```bash
-# Python physics + RTV (must show 318+ passed, 0 warnings)
+# Python physics + RTV (must show 322+ passed, 0 warnings)
 .venv/bin/python -m pytest simulation/test_drone_physics.py -q
 
 # Rust (if swarm_control was modified)
@@ -226,4 +226,4 @@ Current priorities: K8s + Gazebo realistic simulation (Phases 1–6), live view 
 
 ---
 
-*Last Maintenance: 2026-04-19 — 318 tests passing, 0 warnings. Live Run-time View with multi-drone, post-flight replay, browser launch, DataFlash recording. Full roadmap expanded with per-phase todo/ instructions.*
+*Last Maintenance: 2026-04-19 — 322 tests passing, 0 warnings. Live Run-time View with multi-drone, post-flight replay, browser launch, DataFlash recording. SITL `--single`/`--swarm` now use the live HUD with auto-published waypoints; `run_scenario.sh` reclaims stale ports/processes/helm releases on every sim start and waits for helm teardown on exit. Full roadmap expanded with per-phase todo/ instructions.*

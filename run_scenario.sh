@@ -950,9 +950,6 @@ run_live_viz() {
     info "Starting Run-time View on ${url}"
     info "Listening for MAVLink on UDP ${mav_port} (Ctrl-C to quit)…"
 
-    # Open the user's default browser shortly after the server boots.
-    # macOS uses `open`, most Linux desktops use `xdg-open`. Windows
-    # auto-open follow-ups are tracked in ROADMAP/TODO docs.
     (
         sleep 1
         if command -v open &>/dev/null; then
@@ -964,12 +961,21 @@ run_live_viz() {
         fi
     ) &
 
+    # Pass SITL GPS reference to the server so GPS→ENU conversion
+    # produces correct local coordinates. For K8s, these come from
+    # Helm values (SITL_REF_LAT/LNG/ALT set by run_single_mission_live).
+    local ref_args=()
+    if [ -n "${SITL_REF_LAT:-}" ]; then
+        ref_args+=(--ref-lat "$SITL_REF_LAT" --ref-lon "$SITL_REF_LNG" --ref-alt "$SITL_REF_ALT")
+    fi
+
     (
         cd "$SIM_DIR"
         python -m runtime_view.server \
             --host 127.0.0.1 \
             --port "$http_port" \
-            --listen-port "$mav_port"
+            --listen-port "$mav_port" \
+            "${ref_args[@]}"
     )
 }
 
@@ -985,16 +991,135 @@ run_single_mission_live() {
     info "Launching single-drone SITL mission with the live Run-time View"
     info "  Mission timeout: ${timeout}s | Live view: http://127.0.0.1:8765/live"
 
+    # Export SITL GPS reference so run_live_viz passes matching
+    # coordinates to MAVLinkLiveSource (GPS→ENU conversion origin).
+    export SITL_REF_LAT="${SITL_REF_LAT:--0.508333}"
+    export SITL_REF_LNG="${SITL_REF_LNG:--78.141667}"
+    export SITL_REF_ALT="${SITL_REF_ALT:-4500}"
+
+    # Generate the single-drone ring waypoints up front so we can publish
+    # the ENU sidecar to the live view (parity with --physics-live).
+    local wp_dir="$ROOT_DIR/logs/.single_waypoints_tmp"
+    rm -rf "$wp_dir"
+    python "$SIM_DIR/sitl_waypoints.py" ring \
+        --n 1 \
+        --ref-lat "$SITL_REF_LAT" --ref-lon "$SITL_REF_LNG" \
+        --ref-alt "$SITL_REF_ALT" \
+        --output-dir "$wp_dir" >/dev/null
+
+    # Start the mission in background.
     SITL_TELEMETRY_FORWARD="udpout:127.0.0.1:14550" \
         run_single_mission "$timeout" &
     local mission_pid=$!
-    # Reap the background mission on any exit path so users don't end up
-    # with orphan SITL containers when they Ctrl-C the live view.
-    trap 'kill '"$mission_pid"' 2>/dev/null || true' EXIT INT TERM
 
-    run_live_viz 14550 8765 /live
+    # Start the live view in background.
+    run_live_viz 14550 8765 /live &
+    local viz_pid=$!
 
+    # Clean up both on any exit.
+    trap 'kill '"$viz_pid"' '"$mission_pid"' 2>/dev/null || true' EXIT INT TERM
+
+    # Publish waypoints to the live view (uvicorn just booted; helper retries).
+    publish_waypoints_to_live "$wp_dir/waypoints_enu.json" || true
+
+    # Wait for the mission to finish (it has a timeout).
     wait "$mission_pid" 2>/dev/null || true
+    local mission_rc=$?
+
+    info "Mission finished (exit code $mission_rc)"
+    info "Waiting for helm uninstall to complete before exiting..."
+    wait_helm_uninstalled 60 || warn "Helm release still present after 60s"
+
+    # Stop the live view server.
+    kill "$viz_pid" 2>/dev/null || true
+    wait "$viz_pid" 2>/dev/null || true
+    info "Live view stopped"
+}
+
+# Swarm sibling of run_single_mission_live: deploys the SITL stack, runs
+# the formation orchestrator with per-drone telemetry forwarding to the
+# live view, publishes per-drone waypoints, exits cleanly when helm tears
+# down.
+run_swarm_mission_live() {
+    local n="${1:-$MAX_DRONES}"
+    local timeout="${2:-}"
+    info "Launching ${n}-drone swarm SITL mission with the live Run-time View"
+    info "  Live view: http://127.0.0.1:8765/live"
+
+    export SITL_REF_LAT="${SITL_REF_LAT:--0.508333}"
+    export SITL_REF_LNG="${SITL_REF_LNG:--78.141667}"
+    export SITL_REF_ALT="${SITL_REF_ALT:-4500}"
+
+    # Pre-generate waypoints (orchestrator also needs them on disk).
+    local tmp_mission="$ROOT_DIR/logs/.swarm_mission_tmp.json"
+    local tmp_wp_dir="$ROOT_DIR/logs/.swarm_waypoints_tmp"
+    mkdir -p "$ROOT_DIR/logs"
+    rm -rf "$tmp_wp_dir"
+    info "Generating formation mission for $n drones..."
+    python "$SIM_DIR/sitl_waypoints.py" formation \
+        --n "$n" --radius 8 --altitude 20 --patrol-size 40 --cruise-speed 4.0 \
+        --output "$tmp_mission" >/dev/null
+    info "Generating per-drone ring waypoints for $n drones..."
+    python "$SIM_DIR/sitl_waypoints.py" ring \
+        --n "$n" --radius 8 --altitude 20 \
+        --ref-lat "$SITL_REF_LAT" --ref-lon "$SITL_REF_LNG" \
+        --ref-alt "$SITL_REF_ALT" \
+        --output-dir "$tmp_wp_dir" >/dev/null
+
+    local backend
+    backend=$(detect_backend)
+    local log_dir
+    if [ "$backend" = "k8s" ]; then
+        log_dir=$(k8s_swarm_up "$n" "$tmp_mission")
+    else
+        log_dir=$(swarm_up "$n")
+        cp "$tmp_mission" "$log_dir/swarm_mission.json"
+        for i in $(seq 1 "$n"); do
+            docker cp "$tmp_mission" "${SERVICE_SWARM}_${i}:/root/workspace/swarm_mission.json" 2>/dev/null || true
+        done
+    fi
+
+    _CLEANUP_DRONE_COUNT="$n"
+    _CLEANUP_LOG_DIR="$log_dir"
+    _SWARM_CLEANUP_DONE=false
+
+    # Start live view in background.
+    run_live_viz 14550 8765 /live &
+    local viz_pid=$!
+    trap 'kill '"$viz_pid"' 2>/dev/null || true; swarm_cleanup' EXIT INT TERM
+
+    publish_waypoints_to_live "$tmp_wp_dir/waypoints_enu.json" || true
+
+    # Resolve MAVLink host/port (NodePort under k8s).
+    local mav_host="127.0.0.1" mav_base_port=5760 mav_port_step=10
+    if [ "$backend" = "k8s" ]; then
+        mav_host=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+        mav_base_port=$(kubectl get svc "${K8S_STS_NAME}-mavlink-1" -n "$K8S_NAMESPACE" \
+            -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo 30760)
+    fi
+
+    local timeout_flag=()
+    [ -n "$timeout" ] && timeout_flag=(--timeout "$timeout")
+
+    # The orchestrator forwards every received MAVLink frame (with its
+    # original system_id) to UDP 14550. MAVLinkLiveSource demuxes by
+    # system_id, so the live view sees N drones automatically.
+    python "$SIM_DIR/sitl_orchestrator.py" swarm-formation \
+        --n "$n" \
+        --host "$mav_host" \
+        --base-port "$mav_base_port" \
+        --port-step "$mav_port_step" \
+        --mission-dir "$tmp_wp_dir" \
+        --telemetry-forward "udpout:127.0.0.1:14550" \
+        "${timeout_flag[@]}" || true
+
+    info "Swarm mission finished — waiting for helm uninstall..."
+    swarm_cleanup
+    wait_helm_uninstalled 60 || warn "Helm release still present after 60s"
+
+    kill "$viz_pid" 2>/dev/null || true
+    wait "$viz_pid" 2>/dev/null || true
+    info "Live view stopped"
 }
 
 # Run a Python physics simulation and stream the results through the
@@ -1008,6 +1133,139 @@ run_physics_live() {
         cd "$SIM_DIR"
         python -m physics_live_replay "${extra_args[@]}"
     )
+}
+
+# ── Pre-flight cleanup ───────────────────────────────────────────────────────
+# Reclaim resources from a previous run before starting a new simulation.
+# Without this, a leftover python process holds UDP 14550 / TCP 8765 and
+# the next launch dies with "OSError: [Errno 48] Address already in use".
+
+LIVE_HTTP_PORT=8765
+LIVE_MAV_PORT=14550
+
+_kill_pids() {
+    local pids=("$@")
+    [ ${#pids[@]} -eq 0 ] && return 0
+    kill "${pids[@]}" 2>/dev/null || true
+    local i pid
+    for i in 1 2 3; do
+        sleep 1
+        local alive=()
+        for pid in "${pids[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                alive+=("$pid")
+            fi
+        done
+        [ ${#alive[@]} -eq 0 ] && return 0
+        pids=("${alive[@]}")
+    done
+    kill -9 "${pids[@]}" 2>/dev/null || true
+}
+
+# pgrep/lsof return non-zero on "no match" — that is the common case here,
+# so every pipeline below ends with `|| true` to keep `set -euo pipefail`
+# from killing the whole script on a clean machine.
+_kill_pattern() {
+    local pattern="$1"
+    local pids
+    pids=$(pgrep -f "$pattern" 2>/dev/null | tr '\n' ' ' || true)
+    [ -z "${pids// /}" ] && return 0
+    info "  Killing stale: $pattern (pids: $pids)"
+    # shellcheck disable=SC2086
+    _kill_pids $pids
+}
+
+_free_port() {
+    local kind="$1" port="$2"  # kind: tcp|udp
+    if ! command -v lsof &>/dev/null; then
+        return 0
+    fi
+    local pids
+    if [ "$kind" = "tcp" ]; then
+        pids=$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ' || true)
+    else
+        pids=$(lsof -ti "udp:${port}" 2>/dev/null | tr '\n' ' ' || true)
+    fi
+    [ -z "${pids// /}" ] && return 0
+    info "  Freeing ${kind}/${port} (pids: $pids)"
+    # shellcheck disable=SC2086
+    _kill_pids $pids
+}
+
+# pre_start_cleanup [--with-stack]
+#   Always: kill stale runtime_view / physics_live_replay / sitl_orchestrator
+#           processes and free the live-view ports.
+#   --with-stack: also tear down a leftover helm release / docker compose
+#           stack so simulation pods don't double-bind GPS or accumulate.
+pre_start_cleanup() {
+    local with_stack=false
+    [ "${1:-}" = "--with-stack" ] && with_stack=true
+
+    info "Pre-flight cleanup"
+    _kill_pattern "python.*runtime_view\\.server"
+    _kill_pattern "python.*physics_live_replay"
+    _kill_pattern "python.*sitl_orchestrator"
+    _free_port tcp "$LIVE_HTTP_PORT"
+    _free_port udp "$LIVE_MAV_PORT"
+
+    if [ "$with_stack" = true ]; then
+        local backend
+        backend=$(detect_backend)
+        if [ "$backend" = "k8s" ]; then
+            if helm status "$HELM_RELEASE" -n "$K8S_NAMESPACE" &>/dev/null; then
+                info "  Uninstalling stale helm release '$HELM_RELEASE'..."
+                helm uninstall "$HELM_RELEASE" -n "$K8S_NAMESPACE" 2>/dev/null || true
+                # Wait briefly for pods to terminate so the next deploy isn't
+                # racing the old StatefulSet.
+                local elapsed=0
+                while kubectl get pods -n "$K8S_NAMESPACE" \
+                        -l "app.kubernetes.io/instance=$HELM_RELEASE" \
+                        --no-headers 2>/dev/null | grep -q .; do
+                    [ "$elapsed" -ge 30 ] && break
+                    sleep 2; elapsed=$((elapsed + 2))
+                done
+            fi
+        else
+            if $COMPOSE_CMD --profile "$COMPOSE_PROFILE" ps -q 2>/dev/null | grep -q .; then
+                info "  Stopping stale docker compose stack..."
+                $COMPOSE_CMD --profile "$COMPOSE_PROFILE" down --timeout 15 2>/dev/null || true
+            fi
+        fi
+    fi
+    ok "Cleanup done"
+}
+
+# Wait until the helm release is gone (best-effort, bounded).
+wait_helm_uninstalled() {
+    local timeout="${1:-60}"
+    local backend
+    backend=$(detect_backend)
+    [ "$backend" != "k8s" ] && return 0
+    local elapsed=0
+    while helm status "$HELM_RELEASE" -n "$K8S_NAMESPACE" &>/dev/null; do
+        [ "$elapsed" -ge "$timeout" ] && return 1
+        sleep 2; elapsed=$((elapsed + 2))
+    done
+    return 0
+}
+
+# POST a waypoints_enu.json sidecar to the live view.
+# Tries up to ~10s to give uvicorn time to come up.
+publish_waypoints_to_live() {
+    local sidecar_path="$1"
+    [ -z "$sidecar_path" ] || [ ! -f "$sidecar_path" ] && return 0
+    local url="http://127.0.0.1:${LIVE_HTTP_PORT}/api/waypoints"
+    local i
+    for i in 1 2 3 4 5; do
+        if curl -fsS -X POST -H 'Content-Type: application/json' \
+                --data-binary "@${sidecar_path}" "$url" >/dev/null 2>&1; then
+            ok "  Waypoints published to live view"
+            return 0
+        fi
+        sleep 1
+    done
+    warn "  Could not publish waypoints to $url (continuing without)"
+    return 1
 }
 
 # ── Parse args ───────────────────────────────────────────────────────────────
@@ -1039,27 +1297,37 @@ case "$MODE" in
     # follow-up — flipping the default away from matplotlib).
     --single|--sitl|--single-live)
         NEED_PYMAVLINK=1 NEED_RUNTIME_VIEW=1 ensure_venv
+        pre_start_cleanup --with-stack
         run_single_mission_live 300
         ;;
     --single-static)
         # Backwards-compat path for the old post-flight matplotlib viewer.
         NEED_PYMAVLINK=1 ensure_venv
+        pre_start_cleanup --with-stack
         run_single_mission 300
         run_single_viz
         ;;
     --swarm|--sitl-swarm)
+        NEED_PYMAVLINK=1 NEED_RUNTIME_VIEW=1 ensure_venv
+        if ! [[ "$SWARM_DRONES" =~ ^[1-6]$ ]]; then
+            SWARM_DRONES=6
+        fi
+        pre_start_cleanup --with-stack
+        run_swarm_mission_live "$SWARM_DRONES" "${PYTEST_TIMEOUT:-}"
+        ;;
+    --swarm-static)
+        # Legacy path: swarm + post-flight matplotlib (no live view).
         NEED_PYMAVLINK=1 ensure_venv
         if ! [[ "$SWARM_DRONES" =~ ^[1-6]$ ]]; then
             SWARM_DRONES=6
         fi
+        pre_start_cleanup --with-stack
         run_swarm_mission "$SWARM_DRONES" "${PYTEST_TIMEOUT:-}"
-        # NOTE: live view multi-drone demux follow-ups are tracked in ROADMAP/TODO
-        # §2.1.H follow-ups; swarm modes still fall back to the static
-        # matplotlib post-flight replayer until that lands.
         run_viz "$SIM_DIR/swarm_data.npz"
         ;;
     --sim-only)
         NEED_PYMAVLINK=1 ensure_venv
+        pre_start_cleanup --with-stack
         run_single_mission 300
         ;;
     --swarm-only)
@@ -1067,6 +1335,7 @@ case "$MODE" in
         if ! [[ "$SWARM_DRONES" =~ ^[1-6]$ ]]; then
             SWARM_DRONES=6
         fi
+        pre_start_cleanup --with-stack
         run_swarm_mission "$SWARM_DRONES" "${PYTEST_TIMEOUT:-}"
         ;;
     --viz-only)
@@ -1079,6 +1348,7 @@ case "$MODE" in
         ;;
     --viz-live)
         NEED_RUNTIME_VIEW=1 ensure_venv
+        pre_start_cleanup
         run_live_viz "${POSITIONAL[1]:-14550}" "${POSITIONAL[2]:-8765}" /live
         ;;
 
@@ -1115,6 +1385,7 @@ case "$MODE" in
     # ── Physics + live viewer (no Docker needed) ────────────────────────────
     --physics-live)
         NEED_RUNTIME_VIEW=1 ensure_venv
+        pre_start_cleanup
         local extra=()
         [[ "${POSITIONAL[1]:-}" == "--loop" ]] && extra+=(--loop)
         run_physics_live "${extra[@]}"
@@ -1124,6 +1395,7 @@ case "$MODE" in
         if ! [[ "$SWARM_DRONES" =~ ^[1-9][0-9]*$ ]]; then
             SWARM_DRONES=6
         fi
+        pre_start_cleanup
         run_physics_live --swarm --drones "$SWARM_DRONES" --loop
         ;;
     --replay-live)
@@ -1136,6 +1408,7 @@ case "$MODE" in
         if [ ! -f "$replay_file" ]; then
             fail "File not found: $replay_file — run a simulation first or specify a path"
         fi
+        pre_start_cleanup
         run_physics_live --replay "$replay_file" --loop
         ;;
 
@@ -1187,10 +1460,11 @@ case "$MODE" in
         echo "  --single-live    Same as --single — explicit live-view alias"
         echo "  --single-static  Run the single-drone SITL stack and open the legacy"
         echo "                   matplotlib post-flight replayer (no live view)"
-        echo "  --swarm [N]      Run N-drone formation flight (default: 6) then open"
-        echo "                   the post-flight replayer; multi-drone live view is"
-        echo "                   tracked under ROADMAP/TODO follow-ups."
-        echo "                   Drones fly in ring formation, offboard-controlled via Zenoh."
+        echo "  --swarm [N]      Run N-drone formation flight (default: 6) with the"
+        echo "                   live multi-drone HUD. Drones fly in ring formation,"
+        echo "                   offboard-controlled via Zenoh, telemetry forwarded to"
+        echo "                   the live view."
+        echo "  --swarm-static [N] Legacy: swarm + post-flight matplotlib replayer."
         echo "  --sim-only       Run single-drone stack only (no GUI)"
         echo "  --swarm-only [N] Run N-drone stack only (no GUI)"
         echo "  --status [N]     Show health status of running containers/pods"
@@ -1257,6 +1531,7 @@ case "$MODE" in
     # telemetry, or --single-live for SITL + live HUD.
     --default)
         NEED_RUNTIME_VIEW=1 ensure_venv
+        pre_start_cleanup
         run_physics_live --loop
         ;;
     *)

@@ -139,6 +139,7 @@ def run_physics_live(
     swarm_records_per_drone: Optional[Dict[int, List[SimRecord]]] = None,
     waypoints_per_drone: Optional[Dict[int, List[np.ndarray]]] = None,
     record_bin: Optional[str] = None,
+    auto_exit_s: Optional[float] = None,
 ) -> None:
     """
     Stream pre-computed SimRecords to the live viewer.
@@ -223,6 +224,15 @@ def run_physics_live(
                 pass
         threading.Thread(target=_open_browser, daemon=True).start()
 
+    # Callback when a non-looping replay finishes.
+    def _on_replay_done():
+        if auto_exit_s is not None:
+            print(f"Replay finished — auto-exit in {auto_exit_s:.0f}s")
+            time.sleep(auto_exit_s)
+            os._exit(0)
+        else:
+            print("Replay finished — press Ctrl-C to quit.")
+
     # 4. Start replay thread(s).
     if swarm_records_per_drone:
         # Multi-drone: interleave all drones in a single thread by
@@ -252,8 +262,7 @@ def run_physics_live(
                 print(f"Swarm replay error: {e}")
             finally:
                 if not loop:
-                    print("Replay finished — server stays up. "
-                          "Press Ctrl-C to quit.")
+                    _on_replay_done()
 
         threading.Thread(target=_replay_swarm, daemon=True).start()
     else:
@@ -264,8 +273,7 @@ def run_physics_live(
                 print(f"Replay error: {e}")
             finally:
                 if not loop:
-                    print("Replay finished — server stays up. "
-                          "Press Ctrl-C to quit.")
+                    _on_replay_done()
         threading.Thread(target=_replay, daemon=True).start()
 
     try:
@@ -318,6 +326,10 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument(
         "--loop", action="store_true",
         help="Loop the replay indefinitely",
+    )
+    parser.add_argument(
+        "--auto-exit", type=float, default=None, metavar="SECONDS",
+        help="Exit automatically N seconds after replay finishes (non-loop only)",
     )
     parser.add_argument(
         "--http-port", type=int, default=8765,
@@ -438,6 +450,7 @@ def main(argv: Optional[list] = None) -> int:
             swarm_records_per_drone=swarm_records_per_drone,
             waypoints_per_drone=wp_per_drone,
             record_bin=args.record_bin,
+            auto_exit_s=args.auto_exit,
         )
     else:
         if not records:
@@ -452,6 +465,7 @@ def main(argv: Optional[list] = None) -> int:
             open_browser=not args.no_browser,
             waypoints=waypoints,
             record_bin=args.record_bin,
+            auto_exit_s=args.auto_exit,
         )
     return 0
 

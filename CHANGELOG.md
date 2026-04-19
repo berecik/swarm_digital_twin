@@ -5,6 +5,54 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2026-04-19] — Live-view parity for SITL modes + pre-flight cleanup
+
+### Added
+
+- `POST /api/waypoints` on `runtime_view/server.py` so external launchers can
+  publish ENU waypoints into the live view (parity with the in-process call
+  done by `physics_live_replay.run_physics_live`).
+- `write_enu_sidecar()` in `simulation/sitl_waypoints.py`: emits
+  `waypoints_enu.json` (1-based system_id keys) alongside the per-drone
+  `.waypoints` files when the `ring` mode runs.
+- `pre_start_cleanup()` in `run_scenario.sh`: kills stale
+  `runtime_view.server` / `physics_live_replay` / `sitl_orchestrator`
+  processes, frees UDP 14550 + TCP 8765, and (with `--with-stack`)
+  helm-uninstalls a leftover release before launching a new sim. Wired
+  into every sim-starting mode.
+- `wait_helm_uninstalled()` and `publish_waypoints_to_live()` shell
+  helpers.
+- `run_swarm_mission_live()`: swarm sibling of `run_single_mission_live`.
+  Spawns the live view in parallel with the formation orchestrator, forwards
+  per-drone MAVLink to UDP 14550 (system_id demux already in place), POSTs
+  per-drone waypoints, exits cleanly when helm tears down.
+
+### Changed
+
+- `--single` / `--swarm` modes now publish their mission waypoints to the
+  live view automatically.
+- `--swarm` default switched from the post-flight matplotlib replayer to
+  the live multi-drone HUD; legacy path preserved as `--swarm-static`.
+- `run_single_mission_live` replaces the unconditional `sleep 10` after
+  mission completion with a bounded `wait_helm_uninstalled 60`.
+- `simulation/runtime_view/web/live.js`: when `/api/waypoints` returns a
+  multi-drone dict, pre-creates a placeholder mesh per drone_id so all
+  swarm drones are visible from page load (during the SITL boot phase).
+
+### Verification
+
+- `bash -n run_scenario.sh`.
+- `node --check simulation/runtime_view/web/live.js`.
+- `python -m pytest simulation/test_drone_physics.py -q` → **322 passed**.
+- `python -m pytest perception/test/` → **13 passed**.
+- `POST /api/waypoints` round-trip + bad-input validation tested via
+  `fastapi.testclient.TestClient` (good/bad-shape/non-numeric/wrong-type
+  payloads).
+- `sitl_waypoints.py ring --n 2` produces a valid `waypoints_enu.json`
+  with 1-based system_id keys and 3-tuple ENU coordinates.
+
+---
+
 ## [2026-04-19] — Phase 4 implementation audit and documentation synchronization
 
 ### Changed

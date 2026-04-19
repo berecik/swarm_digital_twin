@@ -2,14 +2,14 @@
 
 This document tracks the high-level testing status and provides detailed explanations of the verification suite across the Swarm Digital Twin project.
 
-## Current Status (2026-04-18)
+## Current Status (2026-04-19)
 
 | Module | Unit Tests | Integration Tests | SITL / Hardware | Status |
 | :--- | :---: | :---: | :---: | :--- |
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM + Transport + Timing Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics + Run-time View** (Python) | ✅ Pass (318) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + real-log gate + aero-area gate + battery/energy gate + terrain satellite-texture gate + wind auto-tuning gate + trajectory-tracking validation + live telemetry/runtime-view integration) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation + trajectory tracking + quadrotor effective aero-area model + battery & energy model + satellite-texture terrain overlay + wind disturbance auto-tuning + FastAPI/Three.js live view telemetry pipeline |
+| **Drone Physics + Run-time View** (Python) | ✅ Pass (322) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + real-log gate + aero-area gate + battery/energy gate + terrain satellite-texture gate + wind auto-tuning gate + trajectory-tracking validation + live telemetry/runtime-view integration) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation + trajectory tracking + quadrotor effective aero-area model + battery & energy model + satellite-texture terrain overlay + wind disturbance auto-tuning + FastAPI/Three.js live view telemetry pipeline |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
 ## Phase 1 — K8s + Gazebo Baseline (verified 2026-04-19)
