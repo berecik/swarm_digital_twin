@@ -5,6 +5,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2026-04-19] — ROADMAP / TODO cleanup (move closed history to CHANGELOG)
+
+### Changed
+
+- `ROADMAP.md` shrunk from 403 → 133 lines: Phases 1–7 now collapse
+  into a single status table with pointers to `CHANGELOG.md` for
+  the per-phase implementation summaries that previously lived
+  inline. Audit-fix subsections (which had grown into multi-paragraph
+  blocks for each phase) removed entirely — that history is in
+  `CHANGELOG.md` already. Phase 8 (the only open phase) kept verbatim.
+- `TODO.md` shrunk from 195 → 80 lines: §1–§8 (closed phases)
+  collapsed into one section pointing at ROADMAP / CHANGELOG. Phase 8
+  ML/CV backlog kept verbatim. §0 Project Controls trimmed to two
+  process items. §3 Documentation reduced to a per-maintenance-gate
+  reminder.
+- The "Definition of Done" block in ROADMAP now correctly reflects
+  shipped state — three `[x]` items, one `[/]` for the nightly K8s
+  lane, no remaining `[ ]`.
+
+No code changed in this round. Test count, behaviour, and file
+layout unchanged.
+
+---
+
 ## [2026-04-19] — Test surface re-organised as Python packages
 
 ### Changed
