@@ -35,10 +35,10 @@ dirLight.position.set(30, 40, 20);
 scene.add(dirLight);
 
 // ── Ground grid ────────────────────────────────────────────────────
-// Phase 7-1: when the server has terrain data the grid + ground plane
-// are hidden and a real terrain mesh is loaded in their place. Until
-// then the grid stays visible so the always-visible-drone invariant
-// still has a reference frame.
+// When the server has terrain data the grid + ground plane are hidden
+// and a real terrain mesh is loaded in their place. Until then the
+// grid stays visible so the always-visible-drone invariant still has a
+// reference frame.
 
 const grid = new THREE.GridHelper(500, 50, 0x2a3360, 0x161b3d);
 grid.position.y = 0;

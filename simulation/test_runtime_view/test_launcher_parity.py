@@ -76,7 +76,7 @@ _PROFILE_BASE_SPEED_MS = PROFILE_BASE_SPEED_MS
 
 
 class TestLauncherParity:
-    """Phase 7 close-out — every mission card resolves to real assets."""
+    """Every mission card resolves to real assets."""
 
     def test_every_mission_thumbnail_exists(self):
         import json
@@ -120,7 +120,7 @@ class TestLauncherParity:
 
 
 class TestThumbnailGenerator:
-    """Phase 7 close-out — deterministic per-mission thumbnail PNGs."""
+    """Deterministic per-mission thumbnail PNGs."""
 
     def test_regenerate_writes_unique_files_per_mission(self, tmp_path):
         import json

@@ -314,7 +314,7 @@ class TestPositionAwareWind:
 
 
 class TestWindProfileManifest:
-    """Phase 5c — manifest loader for wind profiles."""
+    """Manifest loader for wind profiles."""
 
     def test_unknown_profile_name_raises(self):
         from wind_model import load_wind_profile
@@ -372,7 +372,7 @@ class TestWindProfileManifest:
 
 
 class TestWindDeterminism:
-    """Phase 5a — seeded Dryden produces bit-identical timeseries."""
+    """Seeded Dryden produces bit-identical timeseries."""
 
     def test_seeded_dryden_is_reproducible(self):
         from wind_model import WindField
@@ -415,7 +415,7 @@ class TestWindDeterminism:
 
 
 class TestWindSpatialGradient:
-    """Phase 5b — spatially varying wind for multi-drone operations."""
+    """Spatially varying wind for multi-drone operations."""
 
     def test_constant_with_east_gradient(self):
         from wind_model import WindField
@@ -441,14 +441,14 @@ class TestWindSpatialGradient:
 
 
 class TestWindStressEnvelopes:
-    """Phase 5d — each manifest profile completes a default mission and
+    """Each manifest profile completes a default mission and
     leaves a populated wind log in the SimRecord stream.
 
     These are intentionally soft envelopes: we verify the wind layer
     does what the manifest promises (correct base speed, deterministic
     Dryden, gradient applies) and that the existing controller still
-    flies through it. Tighter aborts/RTL behavior is Phase 4 (PX4
-    integration); Gazebo-runtime parity is Phase 7.
+    flies through it. Tighter aborts/RTL behavior needs PX4
+    integration; Gazebo-runtime parity is a nightly-lane item.
     """
 
     @pytest.mark.parametrize("name", _wind_profile_names())
@@ -467,7 +467,7 @@ class TestWindStressEnvelopes:
             wind=wind,
         )
         assert records, f"{name}: no records produced"
-        # Wind logging (Phase 5e): every record carries the ENU wind seen.
+        # Wind logging: every record carries the ENU wind seen.
         assert all(r.wind_velocity is not None for r in records), (
             f"{name}: SimRecord.wind_velocity must be populated when wind is set"
         )
@@ -493,5 +493,5 @@ class TestWindStressEnvelopes:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Phase 6: scenario matrix + acceptance report.
+# Scenario matrix + acceptance report.
 # ──────────────────────────────────────────────────────────────────────────────

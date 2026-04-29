@@ -1,5 +1,5 @@
 """
-Scenario matrix for full-system K8s validation (Phase 6).
+Scenario matrix for full-system K8s validation.
 
 Single source of truth for the dimensions:
   drone_count × terrain × wind × mission × fault.

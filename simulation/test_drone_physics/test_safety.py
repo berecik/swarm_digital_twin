@@ -76,7 +76,7 @@ _PROFILE_BASE_SPEED_MS = PROFILE_BASE_SPEED_MS
 
 
 class TestSafetyMonitor:
-    """Tests for inter-drone and terrain collision detection (roadmap Phase 4)."""
+    """Tests for inter-drone and terrain collision detection."""
 
     def test_no_events_when_well_separated(self):
         """No events when all drones are far apart."""
@@ -236,7 +236,7 @@ class TestSafetyMonitor:
 
 
 class TestSafetyResponseController:
-    """Phase 4 close-out — Warning → HOVER → RTL → EMERGENCY state machine."""
+    """Warning → HOVER → RTL → EMERGENCY state machine."""
 
     def test_no_events_stays_normal(self):
         from safety_response import SafetyMode, SafetyResponseController
@@ -353,6 +353,6 @@ class TestSafetyResponseController:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Phase 7 close-out — multi-user session isolation, launcher parity,
+# Multi-user session isolation, launcher parity,
 # replay-loop static smoke, mission-aware thumbnail generator.
 # ──────────────────────────────────────────────────────────────────────────────

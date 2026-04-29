@@ -58,7 +58,7 @@ _PROFILE_BASE_SPEED_MS = PROFILE_BASE_SPEED_MS
 
 
 class TestPhysicsParity:
-    """Tests for physics parity contract (roadmap Phase 2)."""
+    """Tests for physics parity contract."""
 
     def test_sdf_parameter_match(self):
         """X500 SDF model parameters must match DroneParams exactly."""
@@ -265,7 +265,7 @@ class TestPhysicsParity:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Phase 3a/3b: terrain manifest + export-roundtrip parity gate.
+# Terrain manifest + export-roundtrip parity gate.
 #
 # Contract: TerrainMap.get_elevation(x, y) must agree with itself when the
 # same source is round-tripped through the STL pipeline that ships to
@@ -289,7 +289,7 @@ def _parity_entry_names() -> list:
 
 
 class TestScenarioMatrix:
-    """Phase 6a — matrix generator + CI subset selector."""
+    """Matrix generator + CI subset selector."""
 
     def test_full_matrix_count(self):
         from scenario_matrix import full_matrix
@@ -326,7 +326,7 @@ class TestScenarioMatrix:
 
 
 class TestMissionFactory:
-    """Phase 6b — mission kind → per-drone waypoint dict."""
+    """Mission kind → per-drone waypoint dict."""
 
     @pytest.mark.parametrize("kind", ["patrol", "lawnmower", "escort", "heavy_lift"])
     @pytest.mark.parametrize("n", [1, 3, 6, 12])
@@ -359,7 +359,7 @@ class TestMissionFactory:
 
 
 class TestAcceptanceReport:
-    """Phase 6c/6d — KPI computation, verdict, report writer."""
+    """KPI computation, verdict, report writer."""
 
     def test_single_drone_calm_passes(self, tmp_path):
         """The lightest scenario must pass the Python-pipeline gates."""
@@ -467,7 +467,7 @@ class TestPhase6Smoke:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Phase 7: live view & replay backlog.
+# Live view & replay backlog.
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -480,7 +480,7 @@ def _live_js_source() -> str:
 
 
 class TestGazeboWindPluginEmulator:
-    """Phase 5 close-out — file-level parity vs Gazebo's wind-plugin algorithm."""
+    """File-level parity vs Gazebo's wind-plugin algorithm."""
 
     @pytest.mark.parametrize("name", ["calm", "crosswind"])
     def test_constant_profile_matches_gazebo_emulator(self, name):
@@ -501,7 +501,7 @@ class TestGazeboWindPluginEmulator:
 
 
 class TestCruiseAttitudeGate:
-    """Phase 5 close-out — hard gate on cruise-window median attitude."""
+    """Hard gate on cruise-window median attitude."""
 
     def test_cruise_p50_replaces_max_for_verdict(self):
         """The verdict must use cruise_p50_*, not the noisy cruise_max_*."""
@@ -558,7 +558,7 @@ class TestCruiseAttitudeGate:
 
 
 class TestFaultInjection:
-    """Phase 6 close-out — in-process versions of the K8s fault classes."""
+    """In-process versions of the K8s fault classes."""
 
     def _records(self) -> list:
         from drone_physics import SimRecord
@@ -621,7 +621,7 @@ class TestFaultInjection:
 
 
 class TestScalabilityTiming:
-    """Phase 6 close-out — setup_time_s + sim_wall_time_s in kpis.json."""
+    """setup_time_s + sim_wall_time_s in kpis.json."""
 
     def test_kpis_carry_timing_fields(self, tmp_path):
         import json
@@ -649,5 +649,5 @@ class TestScalabilityTiming:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Phase 4 close-out — safety response state machine.
+# Safety response state machine.
 # ──────────────────────────────────────────────────────────────────────────────

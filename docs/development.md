@@ -154,7 +154,7 @@ Autonomous agents working on this repository MUST follow the protocols defined i
 ```text
 .
 ├── swarm_control/              # Rust (Safety-critical logic)
-├── heavy_lift_core/            # Rust (Phase 2 heavy lift)
+├── heavy_lift_core/            # Rust (Heavy-Lift mode)
 ├── perception/                 # Python (Computer Vision & AI)
 ├── simulation/                 # Python (Physics & Scenarios)
 ├── docs/                       # Detailed Documentation

@@ -76,7 +76,7 @@ _PROFILE_BASE_SPEED_MS = PROFILE_BASE_SPEED_MS
 
 
 class TestTerrainEndpoint:
-    """Phase 7-1 — GET/POST /api/terrain serve the live viewer's mesh."""
+    """GET/POST /api/terrain serve the live viewer's mesh."""
 
     def _client(self):
         from fastapi.testclient import TestClient

@@ -26,48 +26,59 @@ The truly-runtime follow-ups deferred to the nightly K8s + Gazebo +
 Playwright lane have a single contract: [`docs/nightly_lane.md`](docs/nightly_lane.md).
 Their CI-deliverable Python equivalents already ship.
 
-## 2) Phase 8 — ML/Computer Vision Pipeline (open)
+## 2) Phase 8 — ML/Computer Vision Pipeline
 
-The only remaining roadmap section. Deserves its own branch — the
-sub-phase work is large enough that it should not interleave with
-Phase 1–7 maintenance.
+Python/CI side closed; heavy-ML side deferred to a future branch
+(needs PyTorch / Ultralytics / ONNX / TensorRT / Jetson / W&B /
+Gazebo / CVAT). See [`docs/nightly_lane.md`](docs/nightly_lane.md)
+for the deferred contract.
 
-**Instructions:** see [`todo/ml_*.md`](todo/) (six files: overview,
+**Instructions:** [`todo/ml_*.md`](todo/) — six files (overview,
 training pipeline, model zoo, edge deployment, sim-to-real,
 continuous improvement).
 
+**Reference docs:**
+- [`docs/ml_pipeline.md`](docs/ml_pipeline.md) — per-module API
+  reference for `simulation/ml/` (data flow, schemas, KPI tables,
+  promotion logic, deferred-backend matrix).
+- [`docs/ml_tutorial.md`](docs/ml_tutorial.md) — end-to-end
+  developer walkthrough: dataset → augment → infer → mine →
+  register → promote → wire to drone.
+
 ### 2.1) Synthetic data generation
-- [ ] Gazebo SAR training world with 20+ human / vehicle models.
-- [ ] Automated image capture during lawnmower flights.
-- [ ] COCO-format annotation from Gazebo ground-truth poses.
-- [ ] Domain randomisation augmentations (albumentations).
+- [x] SAR target catalogue — `simulation/ml/sar_targets.py` (21 classes).
+- [x] COCO-format annotation pipeline — `simulation/ml/coco_annotator.py`.
+- [x] Domain randomisation augmentations — `simulation/ml/image_augment.py`.
+- [ ] Gazebo SAR training world (deferred — needs Gazebo).
+- [ ] Automated RGB-D capture during lawnmower flights (deferred — needs Gazebo).
 
 ### 2.2) Training pipeline
-- [ ] YOLOv8s fine-tune on SAR data (mAP@50 > 0.75).
-- [ ] RT-DETR for high-accuracy pass.
-- [ ] ViT scene classifier (damage, terrain type).
-- [ ] Weights & Biases experiment tracking.
-- [ ] ONNX export + validation.
+- [x] Acceptance KPI thresholds + verdict — `simulation/ml/kpi.py`.
+- [ ] YOLOv8s fine-tune on SAR data (deferred — needs PyTorch).
+- [ ] RT-DETR / ViT (deferred).
+- [ ] W&B experiment tracking (deferred).
+- [ ] ONNX export + validation (deferred — needs ONNX runtime).
 
 ### 2.3) Model zoo
-- [ ] `ModelZoo` unified API replacing hard-coded YOLO in `detector.py`.
-- [ ] Backends: YOLO, RT-DETR, DETR, FCOS, ONNX, TensorRT.
-- [ ] ROS 2 parameter-driven model selection.
+- [x] `ModelZoo` unified API + `Detector` ABC + `MockDetector` — `simulation/ml/model_zoo.py`.
+- [x] Stub registrations for YOLO / RT-DETR / DETR / FCOS / ONNX / TensorRT (raise `NotImplementedError` with pointer at `docs/nightly_lane.md`).
+- [ ] Real backend implementations (deferred — needs each backend's heavy deps).
+- [ ] `detector.py` uses `ModelZoo` with ROS 2 parameter-driven model swap (deferred — needs ROS 2 + ultralytics in CI).
 
 ### 2.4) Edge deployment
-- [ ] TensorRT FP16/INT8 builds on Jetson Orin Nano.
-- [ ] INT8 calibration dataset (500+ images).
-- [ ] `edge_runtime.py` with inference metrics.
-- [ ] `Dockerfile.jetson` for JetPack 6.0.
-- [ ] Fleet deployment script.
+- [ ] TensorRT FP16/INT8 builds on Jetson Orin Nano (deferred — Jetson hardware).
+- [ ] INT8 calibration dataset (deferred).
+- [ ] Edge runtime + inference metrics (deferred).
+- [ ] `Dockerfile.jetson` for JetPack 6.0 (deferred).
+- [ ] Fleet deployment script (deferred).
 
 ### 2.5) Continuous improvement
-- [ ] Inference logger (1 frame/sec with metadata).
-- [ ] Hard example miner (low confidence + missed detections).
-- [ ] CVAT / Label Studio labelling integration.
-- [ ] Automated retraining pipeline.
-- [ ] Model registry with version lineage.
-- [ ] CI gate: ONNX check + mAP threshold.
+- [x] Inference logger — `simulation/ml/inference_logger.py` (JSONL).
+- [x] Hard example miner — `simulation/ml/hard_example_miner.py`.
+- [x] Model registry with version lineage — `simulation/ml/model_registry.py`.
+- [x] Promotion gate (`compare_models`) — `simulation/ml/kpi.py`.
+- [ ] CVAT / Label Studio labelling integration (deferred — needs CVAT).
+- [ ] Automated retraining pipeline (deferred — needs PyTorch + GPU).
 
 ## 3) Documentation — per-maintenance gates
 

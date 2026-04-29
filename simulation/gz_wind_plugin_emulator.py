@@ -1,5 +1,5 @@
 """
-Gazebo-equivalent wind-plugin math (Phase 5 close-out).
+Gazebo-equivalent wind-plugin math.
 
 A pure-Python port of the algorithm `libgazebo_wind_plugin` runs against
 its `<wind>` element. Lets CI assert that

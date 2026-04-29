@@ -1,5 +1,5 @@
 """
-Acceptance report generation for Phase 6 (full-system K8s validation).
+Acceptance report generation for full-system K8s validation.
 
 Given a scenario config and the records produced by running it, computes
 the documented KPIs, picks a PASS/FAIL verdict, and writes a per-scenario
@@ -120,8 +120,8 @@ class AcceptanceKPIs:
     mean_agl_m: float
     max_roll_deg: float
     max_pitch_deg: float
-    # Cruise-window attitudes (Phase 5 close-out): filtered to t > 6 s
-    # to drop the takeoff transient. The MEDIAN — not the max — is what
+    # Cruise-window attitudes: filtered to t > 6 s to drop the takeoff
+    # transient. The MEDIAN — not the max — is what
     # WIND_ATTITUDE_LIMITS_DEG gates against, because the default PD
     # controller still oscillates during cruise and the resulting peaks
     # don't track wind. The median tracks wind and is the right
@@ -130,14 +130,13 @@ class AcceptanceKPIs:
     cruise_p50_pitch_deg: float = 0.0
     cruise_max_roll_deg: float = 0.0
     cruise_max_pitch_deg: float = 0.0
-    # Scalability timing (Phase 6 close-out): in-process analogue of
-    # K8s pod-startup + scheduling-delay. Trendable in kpis.json.
+    # Scalability timing: in-process analogue of K8s pod-startup +
+    # scheduling-delay. Trendable in kpis.json.
     setup_time_s: float = 0.0
     sim_wall_time_s: float = 0.0
     records_per_drone: int = 0
-    # Fault-injection telemetry (Phase 6 close-out): timestamps in
-    # SECONDS of sim time. None when no fault was injected for the
-    # scenario.
+    # Fault-injection telemetry: timestamps in SECONDS of sim time.
+    # None when no fault was injected for the scenario.
     fault_injected_at_s: Optional[float] = None
     fault_detected_at_s: Optional[float] = None
     fault_recovered_at_s: Optional[float] = None
@@ -178,7 +177,7 @@ def _trajectory_rmse(records: List[SimRecord],
         return float("inf"), float("inf")
     # Reference at any time: the nearest waypoint. Crude but good enough
     # for the matrix-level acceptance gate (a tighter trajectory model
-    # belongs to Phase 4 once the controller is tuned).
+    # belongs to the safety layer once the controller is tuned).
     ref = np.asarray(reference)
     deltas = []
     for r in cruise:
@@ -280,8 +279,8 @@ def compute_kpis(config: ScenarioConfig,
         failures.append(
             f"agl_violations={ter.terrain_collision_count}"
         )
-    # Phase 5 close-out: the wind-stress envelope hard-gates on the
-    # CRUISE MEDIAN attitude (after the takeoff transient settles).
+    # The wind-stress envelope hard-gates on the CRUISE MEDIAN attitude
+    # (after the takeoff transient settles).
     # `max_*_deg` and `cruise_max_*_deg` are exported for trend-KPI
     # tracking; the actual gate uses the median because the default PD
     # controller still produces brief 100°+ transients during waypoint
@@ -325,7 +324,7 @@ def compute_kpis(config: ScenarioConfig,
     )
 
 
-# ── Fault injection (Phase 6 close-out) ──────────────────────────────────────
+# ── Fault injection ──────────────────────────────────────────────────────────
 # In-process versions of the K8s fault classes. The K8s nightly lane
 # applies the real fault (kubectl delete pod, tc qdisc, etc); this
 # applies the equivalent symptom to the recorded telemetry so the same
@@ -461,7 +460,7 @@ def run_scenario(config: ScenarioConfig,
                  max_time: float = 180.0) -> AcceptanceKPIs:
     """Run one scenario through the pure-Python pipeline.
 
-    Faults are now *applied in-process* (Phase 6 close-out): the runner
+    Faults are *applied in-process*: the runner
     runs the sim normally, then mutates the recorded telemetry to match
     what each fault would produce. The K8s nightly lane swaps that step
     out for real `kubectl delete pod` / `tc qdisc` injections.

@@ -246,7 +246,7 @@ def monitor_records(records, terrain,
                     drone_id: int = 1) -> "TerrainMonitor":
     """Walk a SimRecord list and return a populated :class:`TerrainMonitor`.
 
-    Used by the Phase 3 regression tests and by post-flight tooling that
+    Used by the terrain regression tests and by post-flight tooling that
     wants the safety verdict without re-running the simulation. For
     in-loop enforcement, pass a `TerrainMonitor` to
     `drone_physics.run_simulation(..., terrain_monitor=...)` instead.

@@ -1,5 +1,5 @@
 """
-Safety Response Controller (Phase 4 close-out).
+Safety Response Controller.
 
 A pure-Python state machine that consumes the :class:`safety.SafetyEvent`
 stream and decides what mode the autopilot should be in. The actual

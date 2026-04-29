@@ -1,5 +1,5 @@
 """
-CLI entry point for the Phase 6 acceptance matrix.
+CLI entry point for the acceptance matrix.
 
 Usage::
 
@@ -42,7 +42,7 @@ from scenario_matrix import (  # noqa: E402
 def _parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="acceptance_matrix",
-        description="Run the Phase 6 K8s validation matrix (Python-only path).",
+        description="Run the K8s validation matrix (Python-only path).",
     )
     p.add_argument("--subset", choices=["ci", "full"],
                    help="Run a named scenario subset.")

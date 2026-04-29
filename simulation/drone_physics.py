@@ -966,7 +966,7 @@ class SimRecord:
     thrust: float
     angular_velocity: np.ndarray
     euler_rates: Optional[np.ndarray] = None  # [phi_dot, theta_dot, psi_dot] from Eq. 2
-    wind_velocity: Optional[np.ndarray] = None  # ENU wind seen by the drone (Phase 5e)
+    wind_velocity: Optional[np.ndarray] = None  # ENU wind seen by the drone
 
 
 def run_simulation(waypoints: List[np.ndarray],
@@ -977,7 +977,8 @@ def run_simulation(waypoints: List[np.ndarray],
                    max_time: float = 120.0,
                    wind=None,
                    terrain=None,
-                   terrain_monitor=None) -> List[SimRecord]:
+                   terrain_monitor=None,
+                   policy_gains=None) -> List[SimRecord]:
     """
     Fly through waypoints in order. Hover at each for hover_time seconds.
     Returns a list of SimRecord for every timestep.
@@ -989,12 +990,19 @@ def run_simulation(waypoints: List[np.ndarray],
             on every step with ``(drone_id=1, position, t)`` so AGL and
             clearance violations are detected during the run rather than
             in a post-processing pass.
+        policy_gains: Optional ``ml.waypoint_optimizer.PolicyGains``
+            instance applied to the cascaded `PositionController` before
+            the loop starts. Lets callers fly the same waypoints with a
+            tuned controller without forking this function. When None,
+            the controller keeps its production-default gains.
     """
     if params is None:
         params = DroneParams()
 
     state = DroneState()
     controller = PositionController(params)
+    if policy_gains is not None:
+        policy_gains.apply_to(controller)
     records: List[SimRecord] = []
 
     wp_idx = 0

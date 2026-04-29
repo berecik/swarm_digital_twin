@@ -2,19 +2,19 @@
 
 This document tracks the high-level testing status and provides detailed explanations of the verification suite across the Swarm Digital Twin project.
 
-## Current Status (2026-04-19)
+## Current Status (2026-04-21)
 
 | Module | Unit Tests | Integration Tests | SITL / Hardware | Status |
 | :--- | :---: | :---: | :---: | :--- |
 | `swarm_control_core` (Rust) | ✅ Pass (17)* | ⏳ Pending | ✅ Pass (Sim) | Boids & Mission FSM + Transport + Timing Verified. |
 | `perception_core` (Python) | ✅ Pass (13) | ⏳ Pending | ✅ Pass (Sim) | 3D Localization & Lawnmower Verified |
 | `heavy_lift_core` (Rust) | ✅ Pass (1) | ⏳ Pending | ⏳ Pending | Extraction State Machine Verified |
-| **Drone Physics + Run-time View** (Python) | ✅ Pass (453) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + real-log gate + aero-area gate + battery/energy gate + terrain satellite-texture gate + wind auto-tuning gate + trajectory-tracking validation + live telemetry/runtime-view integration) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation + trajectory tracking + quadrotor effective aero-area model + battery & energy model + satellite-texture terrain overlay + wind disturbance auto-tuning + FastAPI/Three.js live view telemetry pipeline |
+| **Drone Physics + Run-time View + ML/CV** (Python) | ✅ Pass (603) | ✅ Pass (Scenario + 6 FW/IRS-4 Benchmarks + Swarm parity + real-log gate + aero-area gate + battery/energy gate + terrain satellite-texture gate + wind auto-tuning gate + trajectory-tracking validation + live telemetry/runtime-view integration + ML pipeline cross-module + single-drone PID waypoint tuning) | N/A | Full physics + terrain + fixed-wing + MAVLink + sensor noise + motor dynamics + fixed-wing control surfaces + validation gates + real flight log validation + trajectory tracking + quadrotor effective aero-area model + battery & energy model + satellite-texture terrain overlay + wind disturbance auto-tuning + FastAPI/Three.js live view telemetry pipeline + SAR detection ML pipeline + single-drone waypoint-achievement optimiser (`simulation/ml/`, 150 tests across 12 files) |
 | **Swarm Simulation** | - | ✅ Pass (3) | ✅ Pass (Sim) | Mock Drone Flight Logic Verified |
 
-## Phase 1 — K8s + Gazebo Baseline (verified 2026-04-19)
+## K8s + Gazebo Baseline (verified 2026-04-19)
 
-All Phase 1 items implemented. Docs synchronized.
+All baseline items implemented. Docs synchronized.
 
 | Check | Command | Status |
 | :--- | :--- | :--- |
@@ -24,9 +24,9 @@ All Phase 1 items implemented. Docs synchronized.
 | Topology Helm test | `test -f helm/swarm-digital-twin/templates/tests/test-service-topology.yaml` | ✅ Exists |
 | Operational runbook | `test -f docs/k8s_runbook.md` | ✅ Exists |
 
-## Phase 2 — Real Physics Parity (verified 2026-04-19)
+## Real Physics Parity (verified 2026-04-19)
 
-All Phase 2 items implemented. 9 tests in `TestPhysicsParity`.
+All parity items implemented. 9 tests in `TestPhysicsParity`.
 
 | Check | Command | Status |
 | :--- | :--- | :--- |
@@ -42,7 +42,7 @@ Remaining (requires K8s cluster):
 - [ ] Energy consumption delta (< 15%) — threshold defined, not yet wired as test
 - [ ] End-to-end K8s parity against real Gazebo traces
 
-## Phase 4 — Collision Detection & Safety (verified 2026-04-19)
+## Collision Detection & Safety (verified 2026-04-19)
 
 Detection and KPI foundations implemented. 10 tests in `TestSafetyMonitor`.
 
@@ -524,9 +524,48 @@ Run with: `./run_scenario.sh --test` or `pytest simulation/test_drone_physics.py
     - **Purpose**: Validates the end-to-end swarm flight logic in the mock simulator.
     - **Verification**: Ensures drones reach targets and maintain boid constraints.
 
+## 🤖 ML/CV Pipeline Tests (verified 2026-04-21)
+
+`simulation/test_ml/` ships **150 tests across 12 files** covering the
+ML pipeline scaffolding (`simulation/ml/`) — both the SAR detection
+side and the single-drone PID-policy waypoint-achievement optimiser:
+
+| File | Tests | Surface |
+| :--- | :---: | :--- |
+| `test_sar_targets.py`            | 10 | 21-class catalogue, COCO mapping, frozen dataclass |
+| `test_coco_annotator.py`         | 10 | Pinhole projection, multi-frame IDs, partial-bbox clipping, write side-effects |
+| `test_image_augment.py`          | 13 | Seeded reproducibility, all 5 augmentations, weather kinds, default spec |
+| `test_model_zoo.py`              | 17 | Detector ABC, registry, custom backends, kwargs forwarding, all 6 deferred stubs |
+| `test_inference_logger.py`       |  9 | JSONL round-trip, append-mode resume, corrupted-line tolerance |
+| `test_hard_example_miner.py`     | 11 | Uncertainty + missed heuristics, score ordering, `to_dict` |
+| `test_model_registry.py`         | 13 | Persistence, duplicate rejection, lineage walking, cycle detection |
+| `test_kpi.py`                    | 16 | Acceptance thresholds, promotion gate, exact-delta acceptance |
+| `test_pipeline_integration.py`   |  7 | Cross-module: annotate→write, augment+annotate, infer→mine, registry+kpi promotion |
+| `test_waypoint_optimizer.py`     | 18 | PolicyGains round-trip + apply, episode determinism, baseline completes patrol/lawnmower, divergence handling, multi-mission averaging, search bounds, seeded reproducibility |
+| `test_waypoint_kpi.py`           | 17 | Threshold constants, every failure path, promotion gate (energy regression, completion-tie rmse fallback, identical-metrics rejection) |
+
+Reference docs:
+- [`docs/ml_pipeline.md`](docs/ml_pipeline.md) ([`pl`](docs/ml_pipeline.pl.md)) — per-module API reference
+  with data flow diagram and KPI tables.
+- [`docs/ml_tutorial.md`](docs/ml_tutorial.md) ([`pl`](docs/ml_tutorial.pl.md)) — end-to-end developer
+  walkthrough: dataset → augment → infer → mine → register → deploy.
+
+Run subsets:
+- All ML: `.venv/bin/python -m pytest simulation/test_ml/ -q`
+  (141 passed in ~12 s — no GPU/PyTorch required).
+- Just detection: `.venv/bin/python -m pytest simulation/test_ml/ -q --ignore=simulation/test_ml/test_waypoint_optimizer.py --ignore=simulation/test_ml/test_waypoint_kpi.py`
+- Just waypoint optimizer: `.venv/bin/python -m pytest simulation/test_ml/test_waypoint_optimizer.py simulation/test_ml/test_waypoint_kpi.py -q`
+
+Driver scripts (under `scripts/`):
+- `ml_run_pipeline.sh` — end-to-end SAR detection demo.
+- `ml_train_waypoint.sh` — random-search PID tuner.
+- `ml_evaluate_waypoint.sh` — policy evaluator.
+
 ## 📂 Detailed Documentation
 
 - [**Complete Testing Guide**](docs/testing.md) — Strategy, Catalog, and Verification.
+- [**ML Pipeline Reference**](docs/ml_pipeline.md) — `simulation/ml/` module reference.
+- [**ML Tutorial**](docs/ml_tutorial.md) — Develop & deploy SAR detection on the drones.
 - [Physics Engine Deep Dive](docs/physics.md)
 - [swarm_control Testing Guide](swarm_control/TESTING.md)
 

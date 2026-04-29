@@ -1,11 +1,11 @@
-# Mission Thumbnail Capture (Phase 7-2)
+# Mission Thumbnail Capture
 
 The mission cards in `web/index.html` reference PNGs in
 `simulation/runtime_view/web/img/`. Today those are Pillow-generated
 placeholders (`fw.png`, `physics.png`, `real.png`, `single.png`,
-`swarm3.png`, `swarm6.png`). The Phase 7-2 acceptance criterion asks for
-real screenshots from SITL runs; this is an **operator-only** workflow
-because CI cannot drive a browser to screenshot the live 3D view.
+`swarm3.png`, `swarm6.png`). Real screenshots from SITL runs are an
+**operator-only** workflow because CI cannot drive a browser to
+screenshot the live 3D view.
 
 ## Per-mission steps
 
@@ -43,6 +43,6 @@ After replacing each placeholder, verify:
 
 The natural automation path (Playwright + headless Chrome) would add
 a Node toolchain and ~200 MB of browser deps to CI for one acceptance
-item. The cost-benefit doesn't pencil today; revisit when Phase 7's
-broader frontend testing story (DOM smoke, replay-loop regression)
-needs Playwright anyway.
+item. The cost-benefit doesn't pencil today; revisit when the broader
+frontend testing story (DOM smoke, replay-loop regression) needs
+Playwright anyway.

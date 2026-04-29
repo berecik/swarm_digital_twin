@@ -1271,6 +1271,8 @@ publish_waypoints_to_live() {
 # ── Parse args ───────────────────────────────────────────────────────────────
 PYTEST_TIMEOUT=""
 BACKEND=""
+POLICY=""
+POLICY_REGISTRY=""
 POSITIONAL=()
 
 for arg in "$@"; do
@@ -1281,11 +1283,22 @@ for arg in "$@"; do
         --backend=*)
             BACKEND="${arg#--backend=}"
             ;;
+        --policy=*)
+            POLICY="${arg#--policy=}"
+            ;;
+        --policy-registry=*)
+            POLICY_REGISTRY="${arg#--policy-registry=}"
+            ;;
         *)
             POSITIONAL+=("$arg")
             ;;
     esac
 done
+
+# Build the policy arg list once so physics-live paths can forward it.
+POLICY_ARGS=()
+[[ -n "$POLICY"          ]] && POLICY_ARGS+=(--policy "$POLICY")
+[[ -n "$POLICY_REGISTRY" ]] && POLICY_ARGS+=(--policy-registry "$POLICY_REGISTRY")
 
 MODE="${POSITIONAL[0]:---default}"
 SWARM_DRONES="${POSITIONAL[1]:-6}"
@@ -1388,7 +1401,7 @@ case "$MODE" in
         pre_start_cleanup
         local extra=()
         [[ "${POSITIONAL[1]:-}" == "--loop" ]] && extra+=(--loop)
-        run_physics_live "${extra[@]}"
+        run_physics_live "${extra[@]}" "${POLICY_ARGS[@]}"
         ;;
     --physics-swarm-live)
         NEED_RUNTIME_VIEW=1 ensure_venv
@@ -1396,7 +1409,7 @@ case "$MODE" in
             SWARM_DRONES=6
         fi
         pre_start_cleanup
-        run_physics_live --swarm --drones "$SWARM_DRONES" --loop
+        run_physics_live --swarm --drones "$SWARM_DRONES" --loop "${POLICY_ARGS[@]}"
         ;;
     --replay-live)
         NEED_RUNTIME_VIEW=1 ensure_venv
@@ -1412,7 +1425,7 @@ case "$MODE" in
         run_physics_live --replay "$replay_file" --loop
         ;;
 
-    # ── Phase 6: full-system K8s validation matrix (Python pipeline) ──────
+    # ── Full-system K8s validation matrix (Python pipeline) ──────────────
     --acceptance-matrix)
         ensure_venv
         local subset="${POSITIONAL[1]:-ci}"
@@ -1433,16 +1446,16 @@ case "$MODE" in
         ;;
     --all)
         RUN_TESTS=1 NEED_PYMAVLINK=1 ensure_venv
-        # Phase 1: offline tests & validation (no Docker needed)
+        # Step 1: offline tests & validation (no Docker needed)
         run_rust_tests
         run_physics_tests
         run_benchmark
         run_real_log
-        # Phase 2: Docker-based mission (starts containers)
+        # Step 2: Docker-based mission (starts containers)
         run_single_mission 300
-        # Phase 3: integration tests (containers now running)
+        # Step 3: integration tests (containers now running)
         run_integration_tests
-        # Phase 4: visualization
+        # Step 4: visualization
         run_single_viz
         ;;
     --benchmark)
@@ -1491,10 +1504,13 @@ case "$MODE" in
         echo "  --physics-single       Run Python physics scenario + matplotlib post-flight"
         echo "  --physics-swarm [N]    Run Python physics swarm (default: 6) + matplotlib"
         echo "  --physics-sim-only     Run Python physics scenario only (no GUI)"
-        echo "  --physics-live [--loop]"
+        echo "  --physics-live [--loop] [--policy=VERSION] [--policy-registry=PATH]"
         echo "                         Run Python physics single-drone scenario and stream"
         echo "                         to the live Three.js viewer in real time. No Docker"
         echo "                         or SITL needed. Pass --loop to replay indefinitely."
+        echo "                         With --policy, seed the cascaded PID controller from"
+        echo "                         an ML-trained policy registered by"
+        echo "                         scripts/ml_train_waypoint.sh."
         echo "  --physics-swarm-live [N]"
         echo "                         Run Python physics swarm (default: 6) and stream all"
         echo "                         drones to the live viewer (looping). Each drone gets"

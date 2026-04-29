@@ -5,13 +5,13 @@ This document provides a detailed technical overview of the **Swarm Digital Twin
 ---
 
 ## 🚁 Project Essence
-**Swarm Digital Twin** is a dual-phase autonomous mission system designed for rapid deployment and high-capacity evacuation.
+**Swarm Digital Twin** is a two-mode autonomous mission system designed for rapid deployment and high-capacity evacuation.
 
-1.  **Phase 1 (Scout Swarm):**
+1.  **Scout Swarm:**
     - **Hardware:** Agile, man-portable drones (e.g., Holybro X500 V2).
     - **Objective:** Autonomous area search and human detection.
     - **Autonomy:** Boids-inspired flocking, state-machine-driven search patterns (Lawnmower/Boustrophedon).
-2.  **Phase 2 (Heavy Lift):**
+2.  **Heavy Lift:**
     - **Hardware:** Coaxial X8 heavy-lift agents.
     - **Objective:** Evacuate 100kg+ casualties using a Distributed Lift System (DLS).
     - **Control:** 6-agent minimum for 6-DOF payload control, Admittance Control, and Distributed Control Allocation (DCA).
@@ -55,7 +55,7 @@ Written in **Python** to leverage the AI ecosystem.
 - **3D Projection:** Deprojects 2D pixel coordinates to 3D world coordinates using depth maps and drone odometry.
 - **Coordination:** Publishes global human positions to the swarm.
 
-### 4. Distributed Lift System (Phase 2)
+### 4. Distributed Lift System (Heavy Lift mode)
 The DLS is a critical innovation allowing multiple drones to act as a single "virtual crane".
 - **6-DOF Control:** Requires 6 agents to control both position and orientation of the payload.
 - **Admittance Control:** Drones admit external forces (tether tension) to prevent fighting against each other.
@@ -77,20 +77,12 @@ See [Physics Engine](physics.md) for an overview and [Physics Details](physics_d
 ### 6. Gazebo SITL Integration (`gazebo/`)
 Full Gazebo Harmonic integration for hardware-in-the-loop testing.
 
-Phase 1 (K8s + Gazebo baseline) implementation artifacts are present, but
-documentation and verification synchronization still has open fixes tracked in
-`ROADMAP.md` (Phase 1 implementation audit, 2026-04-19) and `TODO.md` (1.1).
-
-Phase 2 (real physics in Kubernetes loop) parity foundations are implemented in
-`simulation/physics_parity.py` and covered by `TestPhysicsParity`, while open
-acceptance/documentation consistency fixes are tracked in `ROADMAP.md` (Phase 2
-implementation audit, 2026-04-19) and `TODO.md` (2.1).
-
-Phase 4 (collision detection and safety) detection/KPI foundations are
-implemented in `simulation/safety.py` (`SeparationMonitor`, `TerrainMonitor`,
-`SafetyReport`), while open response/acceptance/documentation consistency fixes
-are tracked in `ROADMAP.md` (Phase 4 implementation audit, 2026-04-19) and
-`TODO.md` (4.1).
+K8s + Gazebo baseline implementation artifacts are present. Physics-parity
+foundations are implemented in `simulation/physics_parity.py` and covered
+by `TestPhysicsParity`. Collision-detection and safety KPI foundations
+live in `simulation/safety.py` (`SeparationMonitor`, `TerrainMonitor`,
+`SafetyReport`) and the state machine in `simulation/safety_response.py`.
+Open follow-ups are tracked in `ROADMAP.md` and `TODO.md`.
 
 - **Worlds**: `empty.world` (flat ground, ISA atmosphere), `terrain.world` (terrain mesh with wind plugin).
 - **Models**: Holybro X500 V2 SDF with 4 rotors, LiftDrag plugin, and ArduPilot SITL plugin.
@@ -168,9 +160,39 @@ Standard ROS 2 publishers/subscribers for local sensing and control.
 
 The project maintains comprehensive automated tests:
 
-- **453 Physics + Run-time View Tests** (split across `test_drone_physics.py`, `test_runtime_view.py`, `test_terrain.py`, `test_acceptance_matrix.py`): Rotation math, gravity, hover, drag, PID, position control, energy, atmosphere, wind, inertia, body-frame dynamics, validation, terrain, fixed-wing aero, MAVLink, telemetry, runtime-view HTTP/WebSocket, physics-live replay, multi-drone, post-flight replay, browser launch, DataFlash recorder, safety monitor, physics parity.
+- **603 Python tests** split across `test_drone_physics/` (16 files), `test_runtime_view/` (10 files), `test_terrain.py`, `test_acceptance_matrix.py`, `test_ml/` (12 files, 150 tests): Rotation math, gravity, hover, drag, PID, position control, energy, atmosphere, wind, inertia, body-frame dynamics, validation, terrain, fixed-wing aero, MAVLink, telemetry, runtime-view HTTP/WebSocket, physics-live replay, multi-drone, post-flight replay, browser launch, DataFlash recorder, safety monitor, physics parity, SAR detection ML pipeline (catalogue, COCO annotator, augmentation, model zoo, inference logger, hard-example miner, registry, KPI gates, integration flows), and single-drone PID-policy waypoint optimisation (PolicyGains, episode runner, random search trainer, acceptance + promotion gates).
 - **13 Perception Tests** (`perception/test/`): Detection pipeline and 3D localization.
 - **1 Simulation Placeholder** (`test_sim.py`): ROS 2 swarm flight smoke test.
 - **Rust Swarm Tests** (`swarm_control/`): Boids, FSM, PX4 interface (requires ROS 2 env).
 
 See [Testing Guide](testing.md) and [TESTING.md](../TESTING.md) for the full catalog.
+
+---
+
+## 🤖 ML / Computer-Vision Pipeline (`simulation/ml/`)
+
+SAR detection + single-drone control optimisation scaffolding. All modules are pure Python — the
+heavy backends (PyTorch training, ONNX/TensorRT export, Jetson
+deployment, Gazebo SAR-world capture) are registered as deferred stubs
+and land through the [nightly lane](nightly_lane.md).
+
+| Module | Purpose |
+| :--- | :--- |
+| `sar_targets.py`         | 21-class target catalogue (COCO-aligned IDs + SAR-specific 100-113) |
+| `coco_annotator.py`      | Pinhole projection → COCO 2017 JSON dataset |
+| `image_augment.py`       | Seeded Pillow-based domain randomisation (brightness, contrast, blur, cutout, rain/snow) |
+| `model_zoo.py`           | `Detector` ABC + registry (`mock` active, 6 backends deferred) |
+| `inference_logger.py`    | JSONL capture of every detection with frame metadata |
+| `hard_example_miner.py`  | Uncertainty-band + missed-target heuristics → re-label queue |
+| `model_registry.py`      | Append-only JSON registry with lineage walker and cycle detection |
+| `kpi.py`                 | Acceptance thresholds (`mAP_50 ≥ 0.75`, `recall ≥ 0.85`, `inference_ms ≤ 50`) and promotion gate |
+| `waypoint_optimizer.py`  | Single-drone PID tuner: `PolicyGains` (18 floats), `run_episode`, `evaluate_policy`, `random_search` |
+| `waypoint_kpi.py`        | Waypoint acceptance gate (`completion ≥ 0.95`, `rmse_settled ≤ 1 m`, `t_first ≤ 30 s`, `overshoot ≤ 6 m`) and policy-promotion logic |
+
+Driver scripts: `scripts/ml_run_pipeline.sh` (detection demo),
+`scripts/ml_train_waypoint.sh` (PID trainer),
+`scripts/ml_evaluate_waypoint.sh` (policy evaluator).
+
+Developer walkthrough: [ML Tutorial](ml_tutorial.md) (Polish:
+[ml_tutorial.pl.md](ml_tutorial.pl.md)).
+Full reference: [ML Pipeline](ml_pipeline.md).

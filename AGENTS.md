@@ -20,8 +20,8 @@ This document provides a comprehensive technical overview and context for autono
 ## Project Essence
 
 **Swarm Digital Twin** is a dual-phase autonomous mission system:
-1. **Phase 1 (Scout Swarm):** Agile, man-portable drones (Holybro X500 V2) for autonomous area search and human detection.
-2. **Phase 2 (Heavy Lift):** A **Distributed Lift System (DLS)** using a minimum of **6 heavy-lift agents** (coaxial X8) to evacuate human casualties (100kg+ payload).
+1. **Scout Swarm:** Agile, man-portable drones (Holybro X500 V2) for autonomous area search and human detection.
+2. **Heavy Lift:** A **Distributed Lift System (DLS)** using a minimum of **6 heavy-lift agents** (coaxial X8) to evacuate human casualties (100kg+ payload).
 
 **Core Philosophy:** Decentralization, Determinism (via Rust), and Fail-Operational Redundancy (6 agents for 6-DOF payload control).
 
@@ -53,7 +53,7 @@ Each drone is an independent ROS 2 entity.
 ## Repository & Workspace Structure
 
 - `/swarm_control`: Rust swarm logic (Boids, FSM, formation, Raft consensus).
-- `/heavy_lift_core`: Phase 2 core logic (DCA, Admittance Control, 6-agent redundancy).
+- `/heavy_lift_core`: Heavy-lift core logic (DCA, Admittance Control, 6-agent redundancy).
 - `/perception`: Python nodes for vision and 3D localization.
 - `/simulation`: Physics engine, live viewer, and test runners.
   - `drone_physics.py`: Full physics engine — rigid-body dynamics, quadratic drag, ISA atmosphere, wind, terrain, motor dynamics, battery model. 242+ physics tests.
@@ -74,7 +74,15 @@ Each drone is an independent ROS 2 entity.
     Shared parametrize-time helpers in `simulation/_test_common.py`,
     runtime-view uvicorn helpers in
     `simulation/test_runtime_view/_helpers.py`.
-    **453 tests, 3 skipped** total.
+    Plus `simulation/test_ml/` (12 files, 150 tests — 8 detection unit
+    modules + `test_pipeline_integration.py` + `test_waypoint_optimizer.py`
+    + `test_waypoint_kpi.py`) covering the ML/CV scaffolding
+    under `simulation/ml/` (detection + single-drone PID-policy
+    optimisation). Reference docs:
+    [`docs/ml_pipeline.md`](docs/ml_pipeline.md) (per-module)
+    and [`docs/ml_tutorial.md`](docs/ml_tutorial.md) (developer walkthrough).
+    Polish versions: [`docs/ml_pipeline.pl.md`](docs/ml_pipeline.pl.md) and [`docs/ml_tutorial.pl.md`](docs/ml_tutorial.pl.md).
+    **603 tests, 3 skipped** total.
 - `/gazebo`: Gazebo SITL integration (worlds, models, launch files).
 - `/docs`: Project documentation.
 - [`ROADMAP.md`](ROADMAP.md): Strategic roadmap (K8s Gazebo phases).
@@ -98,7 +106,7 @@ Complete the requested implementation or fix before entering maintenance.
 
 #### Step 2 — Run all tests
 ```bash
-# Python physics + RTV (must show 453+ passed, 0 warnings)
+# Python physics + RTV + ML (must show 603+ passed, 0 warnings)
 .venv/bin/python -m pytest simulation/ -q
 
 # Rust (if swarm_control was modified)
@@ -136,7 +144,7 @@ Repeat steps 2–6 until **all tests pass with 0 failures and 0 warnings**.
 #### Step 8 — Update and synchronize documentation
 Update **all** of the following to match the current state:
 - **`AGENTS.md`**: This file — test counts, file list, architecture changes.
-- **`ROADMAP.md`**: Phase status checkboxes, test coverage percentages.
+- **`ROADMAP.md`**: Status checkboxes, test coverage percentages.
 - **`TODO.md`**: Mark completed items, add discovered tasks.
 - **`CHANGELOG.md`**: Add entries for new features/fixes.
 - **`MAINTENANCE.log`**: Record date, summary, and test count.
@@ -173,8 +181,8 @@ This applies to all agents: Claude, Junie, and any other AI tool working on this
 2. State Machine: add new states to the FSM.
 3. PX4 Interface: use `TrajectorySetpoint` (ENU -> NED conversion required).
 
-### Phase 2: Distributed Lift System (DLS)
-- **6-Agent Minimum:** Phase 2 requires 6 agents for 6-DOF control.
+### Heavy-Lift: Distributed Lift System (DLS)
+- **6-Agent Minimum:** The Heavy-Lift mode requires 6 agents for 6-DOF control.
 - **Admittance Control:** Drones must "admit" tether forces.
 - **Emergency Detach:** Safety logic must handle immediate tether release.
 
@@ -218,7 +226,7 @@ If tasked with moving the project forward, check:
 2. [`TODO.md`](TODO.md) — actionable backlog with links to `todo/` instructions.
 3. [`todo/`](todo/) — detailed per-phase implementation guides.
 
-Current priorities: K8s + Gazebo realistic simulation (Phases 1–6), live view terrain rendering (Phase 7).
+Current priorities: K8s + Gazebo realistic simulation, live view terrain rendering. Consult ROADMAP.md for the up-to-date status table.
 
 ---
 
@@ -237,4 +245,4 @@ Current priorities: K8s + Gazebo realistic simulation (Phases 1–6), live view 
 
 ---
 
-*Last Maintenance: 2026-04-19 — 453 tests passing, 3 skipped, 0 warnings. Test surface organised per-domain as Python packages: `simulation/test_drone_physics/` (16 files, 53 classes — physics core, sensors, wind, validation, fixed-wing, MAVLink, telemetry, swarm, safety, flight log, SITL/Gazebo), `simulation/test_runtime_view/` (10 files, 16 classes — server, telemetry, multi-drone, replay, launch, recorder, invariant, terrain endpoint, auth, launcher parity), plus flat `simulation/test_terrain.py` (8 classes) and `simulation/test_acceptance_matrix.py` (9 classes). Shared parametrize-time helpers in `simulation/_test_common.py`; runtime-view uvicorn boot/teardown in `simulation/test_runtime_view/_helpers.py`. `simulation/conftest.py` puts `simulation/` on `sys.path` so subdirectory tests resolve `from drone_physics import …`. **Phases 1–7 complete.** Live Run-time View with multi-drone, post-flight replay, browser launch, DataFlash recording, terrain mesh rendering, .BIN replay, Bearer auth + CSRF + per-browser session tokens. Mission cards ship mission-aware Pillow thumbnails generated from each card's actual waypoint pattern. SITL `--single`/`--swarm` use the live HUD with auto-published waypoints. Phase 4 safety response playbook lands as `simulation/safety_response.SafetyResponseController` — pure-Python state machine over `NORMAL → WARNING → HOVER → RTL → EMERGENCY_STOP` with PX4 actuator hook. Phase 3/5/6 audit items closed via Python equivalents (Gazebo-algorithm emulators, in-process fault injection with detect/recover timestamps, scalability timing, cruise-p50 attitude hard gate). Strict K8s+PX4 thresholds preserved as `*_K8S` constants. The only deferred item is the Playwright headless DOM smoke (in `docs/nightly_lane.md`).*
+*Last Maintenance: 2026-04-23 — 603 tests passing, 3 skipped, 0 warnings. **Full Python/CI pipeline delivered.** ML/CV scaffolding lives under `simulation/ml/` — detection side (sar_targets, coco_annotator, image_augment, model_zoo, inference_logger, hard_example_miner, model_registry, kpi) and control side (waypoint_optimizer, waypoint_kpi for single-drone PID-policy tuning) — with `simulation/test_ml/` (12 files, 150 tests) covering both. Driver scripts: `scripts/ml_run_pipeline.sh` (detection demo), `scripts/ml_train_waypoint.sh` (random-search PID trainer), `scripts/ml_evaluate_waypoint.sh` (registered policy evaluator). Per-module reference at [`docs/ml_pipeline.md`](docs/ml_pipeline.md), developer walkthrough at [`docs/ml_tutorial.md`](docs/ml_tutorial.md). Heavy-ML runtime work (PyTorch training, ONNX/TensorRT, Jetson, CVAT, Gazebo SAR world capture, real RL trainers for control) deferred to `docs/nightly_lane.md`. Test surface organised per-domain as Python packages: `simulation/test_drone_physics/` (16 files, 53 classes — physics core, sensors, wind, validation, fixed-wing, MAVLink, telemetry, swarm, safety, flight log, SITL/Gazebo), `simulation/test_runtime_view/` (10 files, 16 classes — server, telemetry, multi-drone, replay, launch, recorder, invariant, terrain endpoint, auth, launcher parity), plus flat `simulation/test_terrain.py` (8 classes) and `simulation/test_acceptance_matrix.py` (9 classes). Shared parametrize-time helpers in `simulation/_test_common.py`; runtime-view uvicorn boot/teardown in `simulation/test_runtime_view/_helpers.py`. `simulation/conftest.py` puts `simulation/` on `sys.path` so subdirectory tests resolve `from drone_physics import …`. Live Run-time View with multi-drone, post-flight replay, browser launch, DataFlash recording, terrain mesh rendering, .BIN replay, Bearer auth + CSRF + per-browser session tokens. Mission cards ship mission-aware Pillow thumbnails generated from each card's actual waypoint pattern. SITL `--single`/`--swarm` use the live HUD with auto-published waypoints. Safety response playbook lands as `simulation/safety_response.SafetyResponseController` — pure-Python state machine over `NORMAL → WARNING → HOVER → RTL → EMERGENCY_STOP` with PX4 actuator hook. K8s/Gazebo audit items closed via Python equivalents (Gazebo-algorithm emulators, in-process fault injection with detect/recover timestamps, scalability timing, cruise-p50 attitude hard gate). Strict K8s+PX4 thresholds preserved as `*_K8S` constants. The only deferred runtime item is the Playwright headless DOM smoke (in `docs/nightly_lane.md`).*

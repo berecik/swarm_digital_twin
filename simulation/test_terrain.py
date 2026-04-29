@@ -376,7 +376,7 @@ class TestTerrainSatelliteTexture:
 
 
 class TestTerrainParity:
-    """Phase 3 (terrain integration) — manifest loader + export-roundtrip parity."""
+    """Manifest loader + export-roundtrip parity (terrain integration)."""
 
     def test_load_from_manifest_unknown_name(self):
         from terrain import load_from_manifest
@@ -518,7 +518,7 @@ class TestTerrainParity:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Phase 3c/3d: in-loop AGL enforcement + flat/rolling/steep regression suite.
+# In-loop AGL enforcement + flat/rolling/steep regression suite.
 #
 # Three terrain profiles, one mission each. Pass criteria:
 #   - no terrain collisions (AGL ever < 0)
@@ -556,7 +556,7 @@ def _regression_mission(terrain) -> list:
 
 
 class TestTerrainRegression:
-    """Phase 3d — flat / rolling / steep terrain mission regression."""
+    """Flat / rolling / steep terrain mission regression."""
 
     @pytest.fixture(params=["flat", "rolling", "steep"])
     def terrain_profile(self, request):
@@ -649,7 +649,7 @@ class TestTerrainRegression:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Phase 5: wind manifest + deterministic Dryden + spatial gradient + stress
+# Wind manifest + deterministic Dryden + spatial gradient + stress
 # envelopes + per-step wind logging in SimRecord.
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -681,7 +681,7 @@ def _stress_mission(z: float = 10.0):
 
 
 class TestGazeboTerrainEmulator:
-    """Phase 3 close-out — file-level parity vs Gazebo's heightmap algorithm."""
+    """File-level parity vs Gazebo's heightmap algorithm."""
 
     @pytest.mark.parametrize("name", _parity_entry_names())
     def test_terrain_matches_gazebo_emulator(self, name):

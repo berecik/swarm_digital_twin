@@ -1,5 +1,5 @@
 """
-Deterministic mission-aware thumbnail generator (Phase 7 close-out).
+Deterministic mission-aware thumbnail generator.
 
 The launcher's mission cards used to ship Pillow placeholders that all
 looked identical regardless of mission content. This script replaces

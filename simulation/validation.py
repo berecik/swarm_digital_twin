@@ -92,8 +92,8 @@ OSSITLQUAD_FLIGHT_LOGS_RAW_BASE_CANDIDATES: Tuple[str, ...] = (
 
 REAL_LOG_MISSIONS: Dict[str, RealLogMission] = {
     # Carolina 40m + 20m log: two distinct flight phases separated by landing.
-    # Phase 1 (40m): takeoff at ~t=10s, steady at 38-42m, descent at ~t=155s.
-    # Phase 2 (20m): takeoff at ~t=340s, steady at 18-20m, descent at ~t=480s.
+    # Leg 1 (40 m): takeoff at ~t=10 s, steady at 38-42 m, descent at ~t=155 s.
+    # Leg 2 (20 m): takeoff at ~t=340 s, steady at 18-20 m, descent at ~t=480 s.
     "quad_carolina_40": RealLogMission(
         name="quad_carolina_40",
         source_filename="Carolina_quad_40m_plus_20m.bin",

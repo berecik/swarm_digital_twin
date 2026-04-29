@@ -1,5 +1,5 @@
 """
-Gazebo-equivalent heightmap interpolation (Phase 3 close-out).
+Gazebo-equivalent heightmap interpolation.
 
 A pure-Python port of the algorithm Gazebo's
 ``gz::physics::HeightmapShape::HeightAt`` runs against the STL/heightmap

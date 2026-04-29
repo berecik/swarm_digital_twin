@@ -64,8 +64,15 @@ def run_physics_simulation(
     params: Optional[DroneParams] = None,
     dt: float = 0.02,
     max_time: float = 60.0,
+    policy_gains=None,
 ) -> List[SimRecord]:
-    """Run the Python physics engine and return the record list."""
+    """Run the Python physics engine and return the record list.
+
+    When ``policy_gains`` (a ``ml.waypoint_optimizer.PolicyGains``) is
+    supplied, the cascaded PID controller is seeded with those gains
+    instead of the production defaults — the same knob the waypoint
+    optimiser trains against. Pass ``None`` for baseline behaviour.
+    """
     if waypoints is None:
         waypoints = _default_waypoints()
     if params is None:
@@ -77,6 +84,47 @@ def run_physics_simulation(
         waypoint_radius=0.5,
         hover_time=1.0,
         max_time=max_time,
+        policy_gains=policy_gains,
+    )
+
+
+def load_policy_gains(registry_path: Path,
+                      version: Optional[str] = None):
+    """Load a :class:`PolicyGains` vector from a ``ml.model_registry``.
+
+    Resolution:
+      * If ``version`` is given, look it up by name (``KeyError`` if
+        missing).
+      * Otherwise, return the registry's best policy by
+        ``completion_ratio`` and fall back to ``None`` when the
+        registry is empty so callers can decide to run with defaults.
+
+    Gains are reconstructed from either the entry's ``kpis`` dict (the
+    18 named gain fields) or, when that's sparse, from the JSON file at
+    ``entry.weights_path`` that the trainer wrote alongside.
+    """
+    from ml.model_registry import ModelRegistry
+    from ml.waypoint_optimizer import PolicyGains
+
+    reg = ModelRegistry(registry_path)
+    entry = (reg.get(version) if version is not None
+             else reg.best_by_kpi("completion_ratio"))
+    if entry is None:
+        return None
+
+    gain_field_names = set(PolicyGains.from_baseline().to_dict().keys())
+    kpi_gains = {k: v for k, v in entry.kpis.items() if k in gain_field_names}
+    if len(kpi_gains) == len(gain_field_names):
+        return PolicyGains.from_dict(kpi_gains)
+
+    weights_path = Path(entry.weights_path)
+    if weights_path.is_file():
+        import json
+        return PolicyGains.from_dict(
+            json.loads(weights_path.read_text(encoding="utf-8")))
+    raise ValueError(
+        f"policy '{entry.version}' has neither full gain dict in kpis nor a "
+        f"readable weights sidecar at {entry.weights_path!r}"
     )
 
 
@@ -115,7 +163,7 @@ def load_bin_records(path: str,
                      ref_alt_msl: Optional[float] = None) -> List[SimRecord]:
     """Parse an ArduPilot DataFlash ``.BIN`` file into a SimRecord list.
 
-    Phase 7-5. Uses pymavlink's :class:`DFReader_binary` to walk the log
+    Uses pymavlink's :class:`DFReader_binary` to walk the log
     and aligns ATT (attitude) with GPS (position + ground speed) on
     timestamp. The first GPS sample with a valid fix is used as the ENU
     origin unless explicit reference coordinates are passed in.
@@ -436,8 +484,54 @@ def main(argv: Optional[list] = None) -> int:
         "--record-bin", metavar="FILE",
         help="Record telemetry to an ArduPilot-compatible .BIN file",
     )
+    parser.add_argument(
+        "--policy", metavar="VERSION",
+        help="Apply a trained PID policy from the model registry "
+             "(see scripts/ml_train_waypoint.sh). Use the version "
+             "string that appears in policy_registry.json. Without "
+             "--policy-registry, the most recent "
+             "reports/ml_waypoint/*/policy_registry.json wins.",
+    )
+    parser.add_argument(
+        "--policy-registry", metavar="PATH",
+        help="Explicit path to a policy_registry.json. Combine with "
+             "--policy to pick a specific version, or omit --policy to "
+             "auto-select the best-by-completion entry.",
+    )
 
     args = parser.parse_args(argv)
+
+    # ── Resolve the optional trained PID policy ──────────────────────
+    policy_gains = None
+    policy_registry = None
+    if args.policy_registry:
+        policy_registry = Path(args.policy_registry)
+    elif args.policy:
+        # Auto-discover the most recent report if only --policy was given.
+        reports_dir = _SIM_DIR.parent / "reports" / "ml_waypoint"
+        if reports_dir.is_dir():
+            candidates = sorted(reports_dir.glob("*/policy_registry.json"))
+            if candidates:
+                policy_registry = candidates[-1]
+    if args.policy and policy_registry is None:
+        print(f"ERROR: --policy {args.policy!r} requested but no "
+              "policy_registry.json found. Run scripts/ml_train_waypoint.sh "
+              "first or pass --policy-registry PATH.", file=sys.stderr)
+        return 2
+    if policy_registry is not None:
+        try:
+            policy_gains = load_policy_gains(policy_registry,
+                                             version=args.policy)
+        except KeyError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        if policy_gains is None:
+            print(f"NOTE: registry {policy_registry} is empty; "
+                  "falling back to baseline PIDs.")
+        else:
+            print(f"Using trained PID policy "
+                  f"{args.policy or '(best-by-completion)'} from "
+                  f"{policy_registry}")
 
     # ── Build records ────────────────────────────────────────────────
     waypoints = None
@@ -516,7 +610,8 @@ def main(argv: Optional[list] = None) -> int:
         print("Running single-drone physics simulation...")
         waypoints = _default_waypoints()
         records = run_physics_simulation(waypoints=waypoints,
-                                         max_time=args.max_time)
+                                         max_time=args.max_time,
+                                         policy_gains=policy_gains)
         print(f"Simulation complete: {len(records)} steps, "
               f"{records[-1].t:.1f}s")
 

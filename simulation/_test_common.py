@@ -29,7 +29,7 @@ SIM_DIR = Path(__file__).resolve().parent      # .../simulation
 PROJECT_ROOT = SIM_DIR.parent                  # repo root
 
 
-# ── Live-view static-inspection helpers (Phase 7 invariant gate) ─────────────
+# ── Live-view static-inspection helpers ──────────────────────────────────────
 
 _LIVE_JS = SIM_DIR / "runtime_view" / "web" / "live.js"
 
@@ -39,7 +39,7 @@ def live_js_source() -> str:
     return _LIVE_JS.read_text(encoding="utf-8")
 
 
-# ── Terrain manifest helpers (Phase 3 parity tests) ──────────────────────────
+# ── Terrain manifest helpers (Gazebo parity tests) ───────────────────────────
 
 PARITY_MAX_DELTA_M = 0.5
 PARITY_SAMPLE_COUNT = 100
@@ -55,7 +55,7 @@ def parity_entry_names() -> list:
         return []
 
 
-# ── Terrain regression helpers (Phase 3 sub-2) ───────────────────────────────
+# ── Terrain regression helpers ───────────────────────────────────────────────
 
 CRUISE_ALTITUDE_M = 25.0
 CRUISE_AGL_FLOOR_M = 5.0
@@ -85,7 +85,7 @@ def regression_mission(terrain) -> list:
     ]
 
 
-# ── Wind manifest helpers (Phase 5 stress envelopes) ─────────────────────────
+# ── Wind manifest helpers (stress envelopes) ─────────────────────────────────
 
 def wind_profile_names_safe() -> list:
     """Manifest profiles to exercise; safe to call at pytest collection time."""

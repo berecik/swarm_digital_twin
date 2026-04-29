@@ -1,5 +1,5 @@
 """
-Mission factory for the Phase 6 acceptance matrix.
+Mission factory for the full-system acceptance matrix.
 
 Maps mission kinds to per-drone waypoint lists. The terrain argument
 lets each mission keep a safe AGL clearance over rolling/steep terrain
@@ -10,7 +10,7 @@ Mission kinds:
   lawnmower  — area-search lawnmower scan; drones share lanes.
   escort     — single VIP path with N-1 escorts in offset slots.
   heavy_lift — N drones in a tight formation circling a pickup point
-               (proxy for the Phase 2 Distributed Lift System).
+               (proxy for the heavy-lift Distributed Lift System).
 """
 
 from __future__ import annotations

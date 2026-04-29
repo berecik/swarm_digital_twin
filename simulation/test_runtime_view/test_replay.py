@@ -179,7 +179,7 @@ class TestPostFlightReplay:
 
 
 class TestBinReplay:
-    """Phase 7-5 — POST /api/load accepts ArduPilot DataFlash .BIN logs."""
+    """POST /api/load accepts ArduPilot DataFlash .BIN logs."""
 
     def _write_synthetic_bin(self, path: Path) -> None:
         """Write a tiny .BIN log with ATT + 5 GPS samples."""
@@ -257,7 +257,7 @@ class TestBinReplay:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Phase 1-6 deferred items closed in CI via Python equivalents
+# Runtime items closed in CI via Python equivalents
 # (Gazebo emulators, in-process fault injection, scalability timing,
 # cruise-attitude hard gate).
 # ──────────────────────────────────────────────────────────────────────────────

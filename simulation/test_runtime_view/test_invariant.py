@@ -152,7 +152,7 @@ class TestDronesAlwaysVisibleInvariant:
 
 
 class TestReplayLoopStaticSmoke:
-    """Phase 7 close-out — `live.js` must survive replay-loop t-resets."""
+    """`live.js` must survive replay-loop t-resets."""
 
     def test_websocket_handler_reuses_meshes_on_snapshot(self):
         """The snapshot branch (sent on every reconnect) must call

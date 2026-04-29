@@ -317,7 +317,7 @@ def run_swarm(n_drones: int, base_port: int, port_step: int,
     results = {}
 
     try:
-        # Phase 1: Connect all drones sequentially
+        # Step 1: Connect all drones sequentially
         print(f"\n=== Connecting {n_drones} SITL drones ===")
         for i in range(n_drones):
             port = base_port + i * port_step
@@ -327,12 +327,12 @@ def run_swarm(n_drones: int, base_port: int, port_step: int,
             drone.request_streams(rate=2)  # Lower rate for swarm
             drones.append(drone)
 
-        # Phase 2: Wait for GPS/EKF on all
+        # Step 2: Wait for GPS/EKF on all
         print(f"\n=== Waiting for GPS/EKF ({n_drones} drones) ===")
         for drone in drones:
             drone.wait_gps_ekf(timeout=90)
 
-        # Phase 3: Upload missions
+        # Step 3: Upload missions
         print(f"\n=== Uploading missions ===")
         for drone in drones:
             mission_path = os.path.join(
@@ -346,7 +346,7 @@ def run_swarm(n_drones: int, base_port: int, port_step: int,
                 results[drone.drone_id] = False
                 continue
 
-        # Phase 4: Arm all with stagger
+        # Step 4: Arm all with stagger
         print(f"\n=== Arming {n_drones} drones (2s stagger) ===")
         for drone in drones:
             if drone.drone_id in results:
@@ -355,7 +355,7 @@ def run_swarm(n_drones: int, base_port: int, port_step: int,
             if drone.drone_id < n_drones - 1:
                 time.sleep(2)
 
-        # Phase 5: Monitor all in round-robin
+        # Step 5: Monitor all in round-robin
         print(f"\n=== Monitoring swarm (timeout={timeout}s) ===")
         start = time.time()
         active = {d.drone_id: d for d in drones if d.drone_id not in results}
@@ -411,7 +411,7 @@ def run_swarm_formation(n_drones: int, base_port: int, port_step: int,
     drones = []
 
     try:
-        # Phase 1: Connect all drones
+        # Step 1: Connect all drones
         print(f"\n=== Connecting {n_drones} SITL drones (formation mode) ===")
         for i in range(n_drones):
             port = base_port + i * port_step
@@ -421,12 +421,12 @@ def run_swarm_formation(n_drones: int, base_port: int, port_step: int,
             drone.request_streams(rate=2)
             drones.append(drone)
 
-        # Phase 2: Wait for GPS/EKF
+        # Step 2: Wait for GPS/EKF
         print(f"\n=== Waiting for GPS/EKF ({n_drones} drones) ===")
         for drone in drones:
             drone.wait_gps_ekf(timeout=90)
 
-        # Phase 3: Upload missions + arm + AUTO
+        # Step 3: Upload missions + arm + AUTO
         # ArduPilot SITL only speaks MAVLink, so the orchestrator must
         # actually fly the drones — the Rust swarm_node communicates via
         # Zenoh/PX4 messages and cannot drive ArduPilot directly.
@@ -454,7 +454,7 @@ def run_swarm_formation(n_drones: int, base_port: int, port_step: int,
         else:
             print(f"\n=== No mission_dir provided — passive monitoring only ===")
 
-        # Phase 4: Monitor
+        # Step 4: Monitor
         print(f"\n=== Formation flight active — monitoring "
               f"(timeout={timeout}s) ===")
 

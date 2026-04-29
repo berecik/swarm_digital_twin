@@ -1,6 +1,6 @@
 # Nightly K8s + Gazebo Validation Lane
 
-Some Phase 1–6 audit-fix items can only be honored against a running
+Some K8s + Gazebo audit-fix items can only be honored against a running
 Kubernetes cluster + Gazebo runtime. CI today is Python-only (pytest +
 shell + JS syntax) — fast, hermetic, and free, but unable to start a
 StatefulSet, inject pod restarts, or query a Gazebo heightmap. This
@@ -9,14 +9,14 @@ those items.
 
 ## Scope (deferred audit items)
 
-| Phase | Item | Why nightly |
+| Area | Item | Why nightly |
 |:---|:---|:---|
-| 3 | Live Gazebo terrain-parity (`get_elevation` vs `gz::physics::HeightmapShape::HeightAt`) | Needs Gazebo container + ROS topic |
-| 5 | Hard wind stress envelope (mission-completion + attitude-error gates per profile class) | Needs PX4-tuned controller; default Python PD controller produces 100°+ transient roll, would fail every gate |
-| 5 | Gazebo wind-plugin parity (`libgazebo_wind_plugin.so` numbers vs `WindField.get_wind_velocity()`) | Needs Gazebo container |
-| 6 | K8s fault injection (`pod_restart`, `packet_loss`, `telemetry_delay`, `sensor_dropout`) — measure detect/respond/recover timestamps | Needs K8s + `kubectl delete pod`, `tc qdisc`, etc. |
-| 6 | Scalability gates (pod startup time, scheduling delay) for 1/3/6/12-drone swarms | Needs K8s + Helm |
-| 7 | Headless DOM smoke + replay-loop snapshot for the live view | Needs Playwright/headless Chrome |
+| Terrain | Live Gazebo terrain-parity (`get_elevation` vs `gz::physics::HeightmapShape::HeightAt`) | Needs Gazebo container + ROS topic |
+| Wind | Hard wind stress envelope (mission-completion + attitude-error gates per profile class) | Needs PX4-tuned controller; default Python PD controller produces 100°+ transient roll, would fail every gate |
+| Wind | Gazebo wind-plugin parity (`libgazebo_wind_plugin.so` numbers vs `WindField.get_wind_velocity()`) | Needs Gazebo container |
+| Faults | K8s fault injection (`pod_restart`, `packet_loss`, `telemetry_delay`, `sensor_dropout`) — measure detect/respond/recover timestamps | Needs K8s + `kubectl delete pod`, `tc qdisc`, etc. |
+| Scale | Scalability gates (pod startup time, scheduling delay) for 1/3/6/12-drone swarms | Needs K8s + Helm |
+| Viewer | Headless DOM smoke + replay-loop snapshot for the live view | Needs Playwright/headless Chrome |
 
 ## Invocation contract
 
@@ -70,6 +70,5 @@ documented in code as `*_K8S` constants.
 
 ## Status today
 
-Not yet implemented. Tracked in
-[`ROADMAP.md`](../ROADMAP.md#phase-3-audit-fixes-2026-04-19--deferred-to-nightly-lane)
-and [`TESTING.md`](../TESTING.md).
+Not yet implemented. Tracked in [`ROADMAP.md`](../ROADMAP.md) and
+[`TESTING.md`](../TESTING.md).

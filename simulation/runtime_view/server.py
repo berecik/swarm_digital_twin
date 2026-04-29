@@ -45,7 +45,6 @@ import os  # noqa: E402
 import secrets  # noqa: E402
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse  # noqa: E402
-from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
 import uvicorn  # noqa: E402
 
 from live_telemetry import (  # noqa: E402
@@ -90,7 +89,7 @@ live_source: Optional[MAVLinkLiveSource] = None
 # normalises it to ``{1: waypoints}``.
 mission_waypoints: dict = {}
 
-# Active terrain mesh (Phase 7-1). Either None (no terrain published —
+# Active terrain mesh. Either None (no terrain published —
 # the live viewer falls back to its flat grid) or a dict::
 #
 #   {"vertices": [[x, y, z], ...],   # ENU metres, Three.js handed Y=up
@@ -108,7 +107,7 @@ _replay_thread: Optional[threading.Thread] = None
 _launch_proc: Optional["subprocess.Popen"] = None
 
 
-# ── Authentication & CSRF (Phase 7-3) ────────────────────────────────────────
+# ── Authentication & CSRF ────────────────────────────────────────────────────
 #
 # Off by default — the live view binds to 127.0.0.1 and read-only endpoints
 # stay open so the existing local workflow keeps working. Enable by setting
@@ -127,7 +126,7 @@ _launch_proc: Optional["subprocess.Popen"] = None
 
 _AUTH_TOKEN: Optional[str] = os.environ.get("RUNTIME_VIEW_AUTH_TOKEN") or None
 
-# Multi-user session isolation (Phase 7 close-out): each browser tab
+# Multi-user session isolation: each browser tab
 # can mint its own session via `POST /api/session`, then send the
 # returned token on `Authorization: Bearer <session_token>` for every
 # mutating call. The middleware accepts any of:
@@ -212,45 +211,84 @@ def _is_valid_token(supplied: str) -> bool:
     return supplied in _SESSIONS
 
 
-class AuthMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+class AuthMiddleware:
+    """Pure-ASGI auth + CSRF gate.
+
+    Implemented as a plain ASGI app (not Starlette's
+    `BaseHTTPMiddleware`) because `BaseHTTPMiddleware` re-buffers every
+    response and mishandles `Content-Length` when the downstream sends
+    streaming bodies (`FileResponse` / WebSockets). That triggered
+    ``h11._util.LocalProtocolError: Too much data for declared
+    Content-Length`` on `/web/*` asset fetches under uvicorn. See
+    Starlette docs §middleware ("Pure ASGI middleware") for the
+    pattern.
+
+    Behaviour matches the previous gate: short-circuit when no global
+    token is configured; let GET/HEAD/OPTIONS through; require Bearer
+    + matching CSRF on every mutating endpoint and on
+    `POST /api/session`.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            # WebSocket and lifespan events bypass the gate; the
+            # WebSocket telemetry stream stays open in the same
+            # local-by-default policy as before.
+            await self.app(scope, receive, send)
+            return
+
         token = _AUTH_TOKEN
         if token is None:
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        # Static asset path is always open.
-        if request.url.path.startswith("/web/"):
-            return await call_next(request)
+        path = scope.get("path", "")
+        method = scope.get("method", "GET").upper()
 
-        method = request.method.upper()
-        path = request.url.path
-
-        if method in {"GET", "HEAD", "OPTIONS"}:
-            return await call_next(request)
+        # Static asset path and read-only HTTP verbs are always open.
+        if path.startswith("/web/") or method in {"GET", "HEAD", "OPTIONS"}:
+            await self.app(scope, receive, send)
+            return
 
         # /api/session is the only POST that the global token alone may
-        # call (it's how a browser mints a per-session token in the first
-        # place).
+        # call (it's how a browser mints a per-session token in the
+        # first place).
         if path in _MUTATING_PATHS or path == "/api/session":
-            auth_header = request.headers.get("authorization", "")
-            csrf_header = request.headers.get("x-csrf-token", "")
+            headers = {k.decode("latin-1").lower(): v.decode("latin-1")
+                       for k, v in scope.get("headers", [])}
+            auth_header = headers.get("authorization", "")
+            csrf_header = headers.get("x-csrf-token", "")
             if not auth_header.lower().startswith("bearer "):
-                return JSONResponse(
-                    {"detail": "missing Bearer authorization header"},
-                    status_code=401,
-                )
+                await _send_json(send, 401,
+                                  {"detail": "missing Bearer authorization header"})
+                return
             supplied = auth_header.split(" ", 1)[1].strip()
             if not _is_valid_token(supplied):
-                return JSONResponse(
-                    {"detail": "invalid auth token"}, status_code=401)
-            # CSRF must match the same token the caller authenticated with.
+                await _send_json(send, 401, {"detail": "invalid auth token"})
+                return
             if not secrets.compare_digest(csrf_header, supplied):
-                return JSONResponse(
-                    {"detail": "missing or invalid CSRF token"},
-                    status_code=403,
-                )
+                await _send_json(send, 403,
+                                  {"detail": "missing or invalid CSRF token"})
+                return
 
-        return await call_next(request)
+        await self.app(scope, receive, send)
+
+
+async def _send_json(send, status: int, body: dict) -> None:
+    """Hand-rolled JSON response writer for the ASGI middleware path."""
+    payload = json.dumps(body).encode("utf-8")
+    await send({
+        "type": "http.response.start",
+        "status": status,
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(payload)).encode("latin-1")),
+        ],
+    })
+    await send({"type": "http.response.body", "body": payload})
 
 
 # Auth middleware is always registered; it short-circuits when no token
@@ -389,7 +427,7 @@ def api_waypoints() -> JSONResponse:
 
 @app.post("/api/session")
 def api_session_create() -> JSONResponse:
-    """Mint a per-browser session token (Phase 7 multi-user isolation).
+    """Mint a per-browser session token for multi-user isolation.
 
     The caller must be authenticated with the global API key. The
     returned ``token`` carries CSRF authority for ``SESSION_TTL_S``
@@ -443,8 +481,8 @@ def api_csrf() -> JSONResponse:
 def api_terrain() -> JSONResponse:
     """Return the active terrain mesh, or 204 No Content when none is set.
 
-    Phase 7-1. Live viewer fetches this on load to replace the flat grid
-    with the simulation's actual terrain mesh.
+    Live viewer fetches this on load to replace the flat grid with the
+    simulation's actual terrain mesh.
     """
     if not mission_terrain:
         return JSONResponse({}, status_code=204)

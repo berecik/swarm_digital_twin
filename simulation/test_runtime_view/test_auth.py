@@ -76,7 +76,7 @@ _PROFILE_BASE_SPEED_MS = PROFILE_BASE_SPEED_MS
 
 
 class TestAuthAndCSRF:
-    """Phase 7-3 — --auth flag turns on Bearer + CSRF for mutating endpoints."""
+    """--auth flag turns on Bearer + CSRF for mutating endpoints."""
 
     @pytest.fixture(autouse=True)
     def _reset_auth(self):
@@ -165,7 +165,7 @@ class TestAuthAndCSRF:
 
 
 class TestMultiUserSessionIsolation:
-    """Phase 7 close-out — POST /api/session mints per-browser tokens."""
+    """POST /api/session mints per-browser tokens."""
 
     @pytest.fixture(autouse=True)
     def _reset(self):

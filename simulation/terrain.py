@@ -719,10 +719,10 @@ def _fill_nan_nearest(grid: np.ndarray) -> None:
 
 
 # ── Manifest registry ────────────────────────────────────────────────────────
-# Phase 3 (terrain integration). Keeps the canonical "what terrains exist
-# and how to reproduce them" list in `gazebo/worlds/terrain/manifest.toml`
-# so simulator code, Gazebo worlds, and CI parity gates all share one
-# definition. Add new function-source terrains by registering them here.
+# Keeps the canonical "what terrains exist and how to reproduce them" list
+# in `gazebo/worlds/terrain/manifest.toml` so simulator code, Gazebo worlds,
+# and CI parity gates all share one definition. Add new function-source
+# terrains by registering them here.
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MANIFEST_PATH = _PROJECT_ROOT / "gazebo" / "worlds" / "terrain" / "manifest.toml"

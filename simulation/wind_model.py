@@ -8,7 +8,7 @@ Website: https://marysia.app
 Wind perturbation model following Valencia et al. (2025), Eq. 5-7.
 Supports: no wind, constant wind, Dryden turbulence, from-log replay,
 spatially varying gradient, deterministic seeded turbulence, and a
-manifest-driven profile loader (Phase 5).
+manifest-driven profile loader.
 """
 
 from pathlib import Path
@@ -28,14 +28,14 @@ class WindField:
       - "from_log": replay altitude-derived perturbation from real data (1D)
       - "from_log_3d": replay 3D wind profile from lateral deviation analysis
 
-    Spatial gradient (Phase 5b): when ``spatial_gradient`` is provided
+    Spatial gradient: when ``spatial_gradient`` is provided
     as a (3, 3) matrix, ``get_wind_velocity`` adds ``spatial_gradient @
     position`` to the base wind, giving multi-drone simulations spatially
     varying disturbances. Rows index the wind component (E, N, U); columns
     index the position component the partial derivative is taken with
     respect to. Units: (m/s) per metre.
 
-    Determinism (Phase 5a): pass ``seed`` to make stochastic profiles
+    Determinism: pass ``seed`` to make stochastic profiles
     (currently Dryden) reproducible. Two ``WindField`` instances with the
     same parameters and seed produce bit-identical timeseries.
     """
@@ -203,7 +203,7 @@ class WindField:
 
 
 # ── Wind profile manifest ────────────────────────────────────────────────────
-# Phase 5c. Mirrors the Phase 3 terrain manifest pattern: a TOML file is
+# Mirrors the terrain manifest pattern: a TOML file is
 # the single source of truth for available profiles, plus a small loader
 # that turns a named entry into a configured `WindField`.
 

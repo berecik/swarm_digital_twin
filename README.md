@@ -46,7 +46,9 @@ The framework enables:
 │   ├── visualize_drone_3d.py   # Post-flight matplotlib 3D replay tool
 │   ├── runtime_view/           # Live Run-time View web app (FastAPI + Three.js)
 │   ├── mavlink_bridge.py       # MAVLink v2 UDP bridge to QGroundControl
-│   └── test_drone_physics.py   # 453 physics/RTV tests
+│   ├── ml/                     # ML pipeline — detection (sar_targets, coco_annotator, image_augment, model_zoo, inference_logger, hard_example_miner, model_registry, kpi) + control (waypoint_optimizer, waypoint_kpi for single-drone PID tuning)
+│   ├── test_ml/                # 12 files, 150 ML pipeline tests
+│   └── test_drone_physics.py   # 603 physics/RTV/ML tests
 ├── gazebo/                     # Gazebo SITL integration
 │   ├── worlds/                 # World files (empty, terrain)
 │   ├── models/x500/            # Holybro X500 V2 SDF model
@@ -86,40 +88,30 @@ Detailed documentation is available in the [docs/](docs/) directory:
 - [**Development & Setup**](docs/development.md) — Environment setup and coding standards.
 - [**Physics Engine**](docs/physics.md) — Overview of the standalone simulation.
 - [**Physics Details**](docs/physics_details.md) — Full equations, derivations, and parameter tables.
+- [**ML Pipeline Reference**](docs/ml_pipeline.md) ([**PL**](docs/ml_pipeline.pl.md)) — Per-module reference for `simulation/ml/`.
+- [**ML Tutorial**](docs/ml_tutorial.md) ([**PL**](docs/ml_tutorial.pl.md)) — End-to-end developer walkthrough: dataset → augment → infer → mine → register → deploy.
 - [**Roadmap**](ROADMAP.md) — Current roadmap including migrated backlog from the former refactor plan.
 - [**Execution Backlog**](TODO.md) — Actionable tasks derived from roadmap phases.
 - [**Agent Guide**](AGENTS.md) — Protocols and context for autonomous developers.
 
-## Phase 1 (K8s + Gazebo Baseline) — Current Implementation Status
+## Implementation Status
 
-Phase 1 has key artifacts in place (`values-playground.yaml`, topology Helm test,
-K8s runbook), but requires a focused fix pass to keep implementation and planning
-documents synchronized.
+Major subsystems shipped on the Python/CI pipeline:
 
-Tracked Phase 1 required fixes are now listed in:
-- `ROADMAP.md` → **Phase 1 implementation audit (2026-04-19)**
-- `TODO.md` → **1.1) Phase 1 required fixes (implementation audit 2026-04-19)**
+- **K8s + Gazebo baseline** — `values-playground.yaml`, topology Helm
+  test, K8s runbook.
+- **Real physics in the Kubernetes loop** — `ParityContract`, trajectory
+  RMSE comparison, timing determinism checks, telemetry truth export.
+- **Collision detection & safety** — `SeparationMonitor`,
+  `TerrainMonitor`, `SafetyReport` KPIs; `SafetyResponseController`
+  state machine with PX4 actuator hook.
+- **ML pipeline** — SAR detection scaffolding + single-drone PID
+  waypoint-achievement optimiser (see
+  [ML Pipeline Reference](docs/ml_pipeline.md)).
 
-## Phase 2 (Real Physics in Kubernetes Loop) — Current Implementation Status
-
-Phase 2 parity foundations are implemented (`ParityContract`, trajectory RMSE
-comparison, timing determinism checks, telemetry truth export), but the
-acceptance/maintenance layer still needs a focused fix pass for consistent
-status tracking and verification evidence.
-
-Tracked Phase 2 required fixes are now listed in:
-- `ROADMAP.md` → **Phase 2 implementation audit (2026-04-19)**
-- `TODO.md` → **2.1) Phase 2 required fixes (implementation audit 2026-04-19)**
-
-## Phase 4 (Collision Detection & Safety) — Current Implementation Status
-
-Phase 4 foundations are implemented (`SeparationMonitor`, `TerrainMonitor`,
-and `SafetyReport` KPIs), but response/acceptance and cross-doc consistency
-still require a focused fix pass.
-
-Tracked Phase 4 required fixes are now listed in:
-- `ROADMAP.md` → **Phase 4 implementation audit (2026-04-19)**
-- `TODO.md` → **4.1) Phase 4 required fixes (implementation audit 2026-04-19)**
+Open work is tracked in [`ROADMAP.md`](ROADMAP.md) and
+[`TODO.md`](TODO.md). Runtime items that need Kubernetes + Gazebo +
+Playwright live in [`docs/nightly_lane.md`](docs/nightly_lane.md).
 
 ## Tech Stack
 
@@ -145,7 +137,7 @@ No Docker, no ROS 2 — just Python 3 and a terminal:
 ./run_scenario.sh
 
 # Or step by step:
-./run_scenario.sh --test       # run 453 physics/RTV tests
+./run_scenario.sh --test       # run 603 physics/RTV/ML tests
 ./run_scenario.sh --viz-live   # launch live Run-time View web app
 ./run_scenario.sh --sim-only   # run scenario (no GUI)
 ./run_scenario.sh --viz-only   # open matplotlib replay with existing data

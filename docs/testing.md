@@ -129,42 +129,33 @@ Agents receiving the "do tests", "do maintenance", or "do test-fix loop" command
 
 ---
 
-## 📈 Verification Status (Last Update: 2026-04-18)
+## 📈 Verification Status (Last Update: 2026-04-21)
 
 | Module | Unit Tests | Integration | SITL |
 | :--- | :---: | :---: | :---: |
 | Swarm Control | ✅ 17 Pass | ⏳ Pending | ✅ Pass |
 | Perception | ✅ 13 Pass | ⏳ Pending | ✅ Pass |
 | Heavy Lift | ✅ 1 Pass | ⏳ Pending | ⏳ Pending |
-| Physics Engine + Run-time View | ✅ 453 Pass | ✅ Pass | N/A |
-| **Total** | **484+ Pass** | **Green** | **Green** |
+| Physics Engine + Run-time View + ML | ✅ 603 Pass | ✅ Pass | N/A |
+| **Total** | **625+ Pass** | **Green** | **Green** |
 
-## Phase 1 (K8s + Gazebo Baseline) audit status (2026-04-19)
+## K8s + Gazebo baseline (audit 2026-04-19)
 
 - Baseline artifacts are present (`values-playground.yaml`, topology Helm test,
-  and `docs/k8s_runbook.md`).
-- A required-fixes pass is now tracked in `ROADMAP.md` (Phase 1 implementation
-  audit) and `TODO.md` (section 1.1).
-- Maintenance expectation: when Phase 1 implementation changes, update
-  `ROADMAP.md`, `TODO.md`, `README.md`, `TESTING.md`, and `CHANGELOG.md`
-  together in the same scenario.
+  `docs/k8s_runbook.md`).
+- Open follow-ups tracked in `ROADMAP.md` and `TODO.md`.
+- When baseline implementation changes, update `ROADMAP.md`, `TODO.md`,
+  `README.md`, `TESTING.md`, and `CHANGELOG.md` together.
 
-## Phase 2 (Real Physics in Kubernetes Loop) audit status (2026-04-19)
+## Real physics in the Kubernetes loop (audit 2026-04-19)
 
-- Phase 2 parity foundations are implemented (`simulation/physics_parity.py`,
-  `TestPhysicsParity` in `simulation/test_drone_physics.py`).
-- A required-fixes pass is now tracked in `ROADMAP.md` (Phase 2 implementation
-  audit) and `TODO.md` (section 2.1).
-- Maintenance expectation: when Phase 2 parity implementation changes, update
-  `ROADMAP.md`, `TODO.md`, `README.md`, `TESTING.md`, and `CHANGELOG.md`
-  together in the same scenario.
+- Parity foundations implemented in `simulation/physics_parity.py`,
+  covered by `TestPhysicsParity` in `simulation/test_drone_physics.py`.
+- Open follow-ups tracked in `ROADMAP.md` and `TODO.md`.
 
-## Phase 4 (Collision Detection & Safety) audit status (2026-04-19)
+## Collision detection & safety (audit 2026-04-19)
 
-- Phase 4 detection/KPI foundations are implemented (`simulation/safety.py`,
-  plus related coverage in `simulation/test_drone_physics.py`).
-- A required-fixes pass is now tracked in `ROADMAP.md` (Phase 4
-  implementation audit) and `TODO.md` (section 4.1).
-- Maintenance expectation: when Phase 4 safety implementation changes, update
-  `ROADMAP.md`, `TODO.md`, `README.md`, `TESTING.md`, and `CHANGELOG.md`
-  together in the same scenario.
+- Detection/KPI foundations implemented in `simulation/safety.py`
+  (`SeparationMonitor`, `TerrainMonitor`, `SafetyReport`) with response
+  state machine in `simulation/safety_response.py`.
+- Open follow-ups tracked in `ROADMAP.md` and `TODO.md`.

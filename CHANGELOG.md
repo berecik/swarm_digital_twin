@@ -5,6 +5,351 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2026-04-23] — Polish translation of ml_pipeline.md
+
+### Added
+
+- `docs/ml_pipeline.pl.md` — Polish translation of the ML Pipeline Reference.
+  Full per-module API details, data flow diagrams (translated), and KPI
+  thresholds.
+
+### Documentation
+
+- `AGENTS.md`, `README.md`, `TESTING.md` — added links to the Polish
+  translation of `ml_pipeline.md`.
+- `MAINTENANCE.log` — recorded translation task completion.
+
+---
+
+## [2026-04-23] — Wire trained PID policy into the single-drone live viewer
+
+### Added
+
+- `drone_physics.run_simulation()` now accepts an optional
+  `policy_gains` argument (a `ml.waypoint_optimizer.PolicyGains`).
+  When provided, the cascaded `PositionController` is seeded with
+  those gains via `gains.apply_to(controller)` before the loop
+  starts. Default `None` keeps production-default behaviour.
+- `physics_live_replay.load_policy_gains(registry_path, version=None)`
+  resolves a policy from a `ml.model_registry.ModelRegistry`. When
+  `version` is omitted, returns the best-by-completion policy.
+  Reconstructs the gain vector from the entry's bundled `kpis` dict
+  or from the JSON sidecar at `entry.weights_path`. Returns `None`
+  for an empty registry; raises `KeyError` for unknown versions and
+  `ValueError` when neither bundled gains nor sidecar is recoverable.
+- `physics_live_replay --policy VERSION [--policy-registry PATH]`
+  CLI flags. Without `--policy-registry`, auto-discovers the most
+  recent `reports/ml_waypoint/<ts>/policy_registry.json`. Exits
+  non-zero with a clear message before booting the viewer when the
+  registry/version can't be resolved.
+- `run_scenario.sh` parses `--policy=VERSION` and
+  `--policy-registry=PATH` and forwards them to the
+  `--physics-live` and `--physics-swarm-live` paths. Help text
+  updated.
+- 9 new tests in `simulation/test_ml/test_policy_wiring.py` covering
+  the run_simulation hook (policy applied vs default) and the loader
+  (explicit version, sidecar fallback, best-by-completion auto-pick,
+  empty registry, missing version, missing sidecar without bundled
+  gains).
+
+### Verification
+
+- `python -m pytest simulation/ -q` → **603 passed, 3 skipped** in
+  165 s (was 594 → +9 wiring tests).
+- End-to-end smoke: trained `pid_v1` from
+  `scripts/ml_train_waypoint.sh --trials 4 --max-time 60` loads via
+  `physics_live_replay --policy pid_v1` and the startup banner
+  confirms which policy is in use.
+
+### Documentation
+
+- `docs/ml_tutorial.md` (and `docs/ml_tutorial.pl.md`): "Flying the
+  trained policy" / "Latanie wytrenowaną polityką" subsection added
+  to the Bonus chapter with shell + Python examples.
+- `docs/ml_pipeline.md`: new "Flying a trained policy in
+  --physics-live" subsection under Driver Scripts documenting the
+  loader + KPI failure modes.
+- `AGENTS.md`, `README.md`, `ROADMAP.md`, `TESTING.md`,
+  `docs/architecture.md`, `docs/testing.md` — refreshed test counts
+  (594 → 603 project tests; 141 → 150 ML tests; 11 → 12 ml test files).
+
+---
+
+## [2026-04-21] — Maintenance pass on Phase 8F (cleanup)
+
+### Changed
+
+- `simulation/ml/waypoint_optimizer.py`: dropped 6 dead imports
+  (`replace`, `Callable`, `DroneCommand`, `GRAVITY`, `PIDController`,
+  `rotation_to_euler`).
+- `PolicyGains.apply_to()` — 19-line per-attribute assignment block
+  collapsed to a 4-line loop driven by a class-level `_PID_MAP` that
+  maps gain-field prefixes to `PositionController` PID attribute
+  names.
+- `_sample_gains()` — 18-line explicit per-field block collapsed to a
+  dict comprehension over `baseline.to_dict()`. Position vs. attitude
+  bounds still selected by field-name prefix.
+
+Net: ~30 lines removed, zero functional change.
+
+### Verification
+
+- `python -m pytest simulation/ -q` → **594 passed, 3 skipped** in
+  161 s. 35/35 waypoint tests green.
+- `bash -n` clean on all new scripts; `node --check live.js` clean.
+
+---
+
+## [2026-04-21] — Phase 8F: single-drone waypoint-achievement ML + driver scripts
+
+### Added
+
+- **New module `simulation/ml/waypoint_optimizer.py`** — control-side
+  counterpart of `model_zoo`/`inference_logger`. Optimises the
+  cascaded position+attitude PID gains for a single drone hitting
+  waypoints from `simulation/missions.py`.
+  - `PolicyGains` (frozen dataclass, 18 floats — six PIDs × kp/ki/kd)
+    with `from_baseline()` (matches production defaults), `to_dict()`/
+    `from_dict()` for JSON round-trip, and `apply_to(controller)` for
+    in-place mutation of a `PositionController`.
+  - `EpisodeMetrics` (waypoints_reached, waypoint_count,
+    rmse_xyz_m **measured during settled in-radius windows only**,
+    time_to_first_wp_s, total_time_s, energy_proxy_j, max_overshoot_m,
+    finite). The settled-RMSE design isolates controller quality from
+    the necessarily-large transit distance between distant waypoints.
+  - `run_episode(gains, mission_kind, …)` — single-drone deterministic
+    episode runner with NaN/Inf guards (returns sentinel
+    `_failed_metrics` on divergence rather than crashing).
+  - `evaluate_policy()` — multi-mission averaging (returns the dict
+    `evaluate_waypoint_kpis` consumes).
+  - `random_search()` — bounded random search over multiplicative gain
+    bounds (`SearchBounds`). Trial 0 is always the baseline so the
+    returned best is guaranteed at-least-as-good. Objective:
+    `100·completion − rmse − 0.001·energy`; divergent trials → `-inf`.
+- **New module `simulation/ml/waypoint_kpi.py`** — symmetric to
+  `kpi.py`. `WAYPOINT_ACCEPTANCE_THRESHOLDS` (completion ≥ 0.95,
+  rmse_settled ≤ 1 m, t_first ≤ 30 s, overshoot ≤ 6 m),
+  `WAYPOINT_PROMOTION_DELTA` (completion +0.01 OR rmse −0.05 m on a
+  completion tie; energy may not regress), `evaluate_waypoint_kpis`,
+  `compare_waypoint_policies`.
+- **35 new tests** (`simulation/test_ml/test_waypoint_optimizer.py`
+  — 18 tests, `test_waypoint_kpi.py` — 17 tests). Total ML suite:
+  106 → 141.
+- **Three driver shell scripts** under `scripts/`:
+  - `ml_run_pipeline.sh` — end-to-end SAR detection demo (synthetic
+    dataset → augment → log inferences → mine → register). Writes
+    `reports/ml_pipeline/<ts>/` artefacts.
+  - `ml_train_waypoint.sh` — random-search PID tuner. Promotes
+    through `compare_waypoint_policies` and writes
+    `reports/ml_waypoint/<ts>/policy_registry.json` + per-trial
+    history.
+  - `ml_evaluate_waypoint.sh` — loads a registered policy and re-runs
+    `evaluate_policy()` on one or more missions. Auto-discovers the
+    most recent registry under `reports/ml_waypoint/`.
+
+### Documentation
+
+- `docs/ml_pipeline.md` — added §9 (`waypoint_optimizer.py`) and §10
+  (`waypoint_kpi.py`) with full API, KPI tables, and promotion logic.
+  Refreshed architecture diagram to show the two parallel surfaces
+  (detection + control) sharing the model registry.
+- `docs/ml_tutorial.md` (and `docs/ml_tutorial.pl.md`) — added a "Bonus:
+  Waypoint-Achievement Optimisation" section with three-command shell
+  workflow, Python equivalent, KPI rationale table, and per-mission
+  retraining guidance.
+- `AGENTS.md`, `README.md`, `ROADMAP.md`, `TESTING.md`,
+  `docs/architecture.md`, `docs/testing.md` — refreshed totals
+  (559 → 594 project tests; 106 → 141 ML tests; 9 → 11 ml test files).
+
+### Verification
+
+- `python -m pytest simulation/ -q` → **594 passed, 3 skipped** in
+  162 s (was 559 → +35 net new waypoint tests).
+- `python -m pytest simulation/test_ml/ -q` → **141 passed in 12 s**.
+- All three driver scripts smoke-tested end-to-end (artefacts under
+  `/tmp/ml_pipe_smoke/` and `/tmp/wp_train_smoke/`).
+- Baseline `PolicyGains` PASSes the acceptance gate on `patrol`
+  (completion 1.00, rmse 0.44 m, t_first 14.2 s, overshoot 2.2 m).
+  Random search at 5 trials drops rmse to 0.29 m on the same mission.
+
+---
+
+## [2026-04-21] — ML pipeline test expansion + reference docs + tutorial
+
+### Added
+
+- **47 new ML pipeline tests** (`simulation/test_ml/`, 59 → 106) covering
+  previously-untested paths:
+  - `inference_logger.replay()`, `Detection` round-trip through the logger,
+    corrupted-JSONL tail tolerance, missing-field defaults in `from_dict`.
+  - `image_augment` snow weather, `random_contrast` size-preservation,
+    default `AugmentationSpec` invariants, unseeded path.
+  - `model_zoo` custom backend registration, kwargs forwarding to the
+    loader, `MockDetector(fixed=[])` empty-list semantics, sorted backend
+    listing.
+  - `coco_annotator` multi-frame unique annotation IDs, partial-bbox
+    clipping at the image edge, empty target lists, `Pose` default yaw.
+  - `model_registry` `ModelEntry.to_dict()` round-trip, defensive `all()`
+    copy, lineage on missing version (KeyError), single-root lineage,
+    register with unknown parent (deferred KeyError on lineage walk).
+  - `kpi` `PROMOTION_MIN_DELTA` constants, missing-keys defaults in
+    `evaluate_kpis`, identical-metrics non-promotion, exact-delta
+    promotion edge.
+  - `sar_targets` frozen-dataclass enforcement, canonical_yaw default,
+    coco_categories ↔ catalogue size.
+- **New file `simulation/test_ml/test_pipeline_integration.py`** (7 cross-
+  module tests): annotate→write, augment+annotate bbox bounds,
+  infer→mine for both heuristics, registry+kpi promotion happy/fail paths,
+  zoo→logger→registry handoff.
+- **`docs/ml_pipeline.md`** — per-module reference for `simulation/ml/`
+  with data-flow diagram, schemas, KPI tables, lineage rules, deferred-
+  backend matrix.
+- **`docs/ml_tutorial.md`** — end-to-end developer walkthrough: pick
+  targets → generate dataset → augment → pick backend → log → mine hard
+  examples → register → promote → wire to drone.
+
+### Fixed
+
+- `simulation/ml/model_zoo.MockDetector(fixed=[])` previously fell back
+  to the default two-detection list because of a `fixed or [...]`
+  truthiness check. Switched to `is not None` so an explicit empty list
+  yields zero detections — the integration tests rely on this distinction.
+
+### Verification
+
+- `python -m pytest simulation/ -q` → **559 passed, 3 skipped** (was
+  513 → +46 net new ML tests).
+- `python -m pytest simulation/test_ml/ -q` → **106 passed in 0.11 s**.
+- All cross-references in `AGENTS.md`, `README.md`, `ROADMAP.md`,
+  `TESTING.md`, `docs/architecture.md`, `docs/testing.md` updated to
+  the new totals.
+
+---
+
+## [2026-04-20] — Fix `h11._util.LocalProtocolError` on `/web/*` asset fetches
+
+### Fixed
+
+- `simulation/runtime_view/server.AuthMiddleware` was implemented as a
+  `BaseHTTPMiddleware` subclass. Starlette's `BaseHTTPMiddleware`
+  re-buffers every response body and reissues `Content-Length`, which
+  mishandles streaming responses (`FileResponse`, the
+  `/web/{filename:path}` static-asset route) and triggered
+  `h11._util.LocalProtocolError: Too much data for declared
+  Content-Length` under uvicorn's h11 protocol writer.
+- Replaced with a pure-ASGI middleware (no buffering): the gate runs
+  at the `scope`/`send` level, short-circuits with a hand-rolled JSON
+  401/403 when auth fails, and otherwise hands `scope, receive, send`
+  straight to the downstream app — `FileResponse` streams unmolested.
+- WebSocket and lifespan scopes now bypass the gate explicitly (the
+  `/ws/telemetry` stream stays open in the same local-by-default
+  policy as before).
+
+### Verified
+
+- Live regression: booted the server with `--auth-token test_token`,
+  fetched `/web/live.js` (the original failure path) → 200, full
+  18936-byte body, no h11 error. POST `/api/waypoints` without auth
+  → 401; with auth → 200.
+- `python -m pytest simulation/ -q` → **513 passed, 3 skipped** (no
+  regressions; `TestAuthAndCSRF` 16 cases all green against the new
+  middleware).
+
+---
+
+## [2026-04-19] — Maintenance pass on Phase 8 (lineage cycle guard)
+
+### Fixed
+
+- `simulation/ml/model_registry.ModelRegistry.lineage()` would have
+  spun forever if the on-disk JSON had a `parent_version` cycle.
+  Cycles can't form via `register()` (parents must already exist and
+  versions are unique), but the file is hand-editable. Added a
+  `seen` set + descriptive `ValueError` when a version is reached
+  twice. Test:
+  `TestModelRegistry.test_lineage_detects_hand_edited_cycle`.
+
+### Verification
+
+- `python -m pytest simulation/ -q` → **513 passed, 3 skipped**
+  (was 512 → +1 cycle test).
+- `python -m pytest perception/test/` → 13 passed.
+- `bash -n run_scenario.sh` clean.
+
+---
+
+## [2026-04-19] — Phase 8 (ML/CV pipeline) — Python/CI side closed
+
+### Added
+
+- `simulation/ml/` — new package shipping the CI-deliverable Phase 8
+  scaffolding (no PyTorch / Ultralytics / ONNX / TensorRT / Jetson
+  required):
+  - `sar_targets.py` — 21-class SAR target catalogue with COCO IDs +
+    physical footprints. Public + SAR-specific (casualty, stretcher,
+    raft, lifevest, …). `coco_categories()` emits the COCO
+    `categories` block; `find(name)` looks up by name.
+  - `coco_annotator.py` — pinhole-camera projection from drone+target
+    poses to COCO `xywh` bboxes. Rejects targets behind the camera or
+    fully outside the image. `annotate(frames, camera)` produces a
+    COCO 2017 dict; `write(dataset, path)` writes JSON.
+  - `image_augment.py` — Pillow-based domain randomisation
+    (brightness / contrast / blur / cutout / rain / snow) with seeded
+    `numpy.random.default_rng` so augmentations are reproducible.
+  - `model_zoo.py` — `Detection` dataclass, `Detector` ABC,
+    `MockDetector` (always available), and `ModelZoo` registry.
+    Six deferred backends (`yolo`, `rtdetr`, `detr`, `fcos`, `onnx`,
+    `tensorrt`) registered as stub loaders that raise
+    `NotImplementedError` naming the missing dep + pointing at
+    `docs/nightly_lane.md`.
+  - `inference_logger.py` — `InferenceRecord` + `InferenceLogger`
+    JSONL writer. Resumes `frame_id` across reopens. `read_log()` /
+    `replay()` consume the log.
+  - `hard_example_miner.py` — `find_uncertain` (confidence in
+    `[0.30, 0.60]`) + `find_missed` (zero detections with operator-
+    supplied `metadata.expected_targets > 0`); `mine()` combines and
+    sorts by descending re-labelling priority.
+  - `model_registry.py` — `ModelEntry` + `ModelRegistry` with
+    `register / get / latest / best_by_kpi / lineage`. JSON-backed,
+    append-only, parent_version pointers form the lineage chain.
+  - `kpi.py` — `ACCEPTANCE_THRESHOLDS` (mAP@50 ≥ 0.75, recall ≥
+    0.85, inference ≤ 50 ms — sourced from
+    `todo/ml_training_pipeline.md`); `evaluate_kpis()` returns a
+    `DetectionKPIs` dataclass with PASS/FAIL verdict; `compare_models`
+    gates promotion (≥ 0.5 % mAP improvement, no latency regression).
+
+- `simulation/test_ml/` — 8 test files covering the new modules
+  (59 tests). Class breakdown: `TestSARTargets` (7),
+  `TestCocoAnnotator` (5), `TestAugmenter` (8), `TestDetectionDataclass`
+  (1), `TestMockDetector` (3), `TestModelZoo` (4 + 6 parametrized
+  deferred-backend assertions), `TestInferenceLogger` (4),
+  `TestUncertain` (2), `TestMissed` (1), `TestMine` (2),
+  `TestModelRegistry` (6), `TestAcceptanceThresholds` (1),
+  `TestEvaluate` (4), `TestPromotion` (5).
+
+### Verification
+
+- `python -m pytest simulation/ -q` →
+  **512 passed, 3 skipped** (was 453 → +59 ML tests).
+- `python -m pytest simulation/test_ml/ -q` → 59 passed.
+- `python -m pytest perception/test/` → 13 passed.
+- `bash -n run_scenario.sh` clean.
+
+### Status board
+
+ROADMAP Phase 8 sub-phases (28 boxes total):
+- 8A: 3 done, 2 deferred (Gazebo world + RGB-D capture).
+- 8B: 1 done (KPI thresholds), 4 deferred (PyTorch training).
+- 8C: 3 done (API + stubs + tests), 2 partial/deferred (real
+  backends, ROS 2 detector swap).
+- 8D: 0 done, 6 deferred (entirely Jetson hardware).
+- 8E: 4 done, 2 deferred (CVAT + retraining).
+
+Net: **11 sub-items closed in CI**, 16 deferred — every deferral
+points at a heavy-ML dependency CI doesn't have today.
+
+---
+
 ## [2026-04-19] — ROADMAP / TODO cleanup (move closed history to CHANGELOG)
 
 ### Changed
